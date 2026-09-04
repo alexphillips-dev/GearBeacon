@@ -149,6 +149,16 @@ try {
   await evaluate("document.getElementById('wizardNext').click()");
   await waitForBrowser("document.getElementById('setupWizard').classList.contains('hidden') && app.auth.onboardingComplete", 'Guided setup did not complete');
 
+  const navigationTheme = await evaluate("document.documentElement.dataset.theme");
+  const browseTabPoint = await evaluate("(() => { const rect=document.querySelector('[data-tab=\"browse\"]').getBoundingClientRect(); return { x:rect.left+rect.width/2, y:rect.top+rect.height/2 }; })()");
+  for (const theme of ['dark', 'light']) {
+    await evaluate(`applyTheme(${JSON.stringify(theme)})`);
+    await cdp.send('Input.dispatchMouseEvent', { type:'mouseMoved', x:browseTabPoint.x, y:browseTabPoint.y });
+    const navigationHover = await evaluate("(() => { const tab=document.querySelector('[data-tab=\"browse\"]'); const tabs=document.querySelector('.tabs'); return { hovered:tab.matches(':hover'), transform:getComputedStyle(tab).transform, tabTop:tab.getBoundingClientRect().top, containerTop:tabs.getBoundingClientRect().top }; })()");
+    assert(navigationHover.hovered && navigationHover.transform === 'none' && navigationHover.tabTop >= navigationHover.containerTop, `Top navigation clipped on hover in ${theme} mode: ${JSON.stringify(navigationHover)}`);
+  }
+  await evaluate(`applyTheme(${JSON.stringify(navigationTheme)})`);
+
   await evaluate("document.querySelector('[data-tab=\"browse\"]').click()");
   await waitForBrowser("document.getElementById('browse').classList.contains('active') && document.querySelectorAll('#browseGrid .store-card:not(.skeleton-card)').length >= 5", 'Browse catalog did not render');
   await waitForBrowser("document.querySelectorAll('#browseGrid .image-loaded img[data-product-image]').length > 0", 'No product image loaded in the real browser', 250);
@@ -250,7 +260,7 @@ try {
   await evaluate("document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabSecurity').click()");
   await waitForBrowser("document.querySelectorAll('#sessionList [data-revoke-session]').length >= 1", 'Authenticated session management did not render');
 
-  console.log(`BROWSER SMOKE PASSED: ${process.platform} · setup/auth · dark/light · images · search/category/load-more · stable dialog hover · watch/rules/bulk · email settings/preview/deep-link · backup/import · operations · responsive`);
+  console.log(`BROWSER SMOKE PASSED: ${process.platform} · setup/auth · unclipped navigation · dark/light · images · search/category/load-more · stable dialog hover · watch/rules/bulk · email settings/preview/deep-link · backup/import · operations · responsive`);
 } catch (error) {
   if (serverOutput.length) process.stderr.write(`\nGearBeacon server output:\n${serverOutput.join('').slice(-12000)}\n`);
   throw error;
