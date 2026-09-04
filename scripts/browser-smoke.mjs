@@ -440,6 +440,15 @@ try {
   await cdp.send('Emulation.setDeviceMetricsOverride', { width:390, height:844, screenWidth:390, screenHeight:844, deviceScaleFactor:1, mobile:false });
   const responsive = await evaluate("({ overflow:document.documentElement.scrollWidth <= window.innerWidth + 1, width:window.innerWidth, scrollWidth:document.documentElement.scrollWidth, widest:[...document.querySelectorAll('body *')].map((element) => ({ tag:element.tagName, id:element.id, cls:element.className, right:element.getBoundingClientRect().right, width:element.getBoundingClientRect().width })).filter((item) => item.right > window.innerWidth + 1).sort((a,b) => b.right-a.right).slice(0,5) })");
   assert(responsive?.overflow && responsive.width === 390, `Responsive layout overflows a 390px viewport: ${JSON.stringify(responsive)}`);
+  await evaluate("window.scrollTo(0,document.documentElement.scrollHeight)");
+  await waitForBrowser("window.scrollY > 360 && document.getElementById('toTop').classList.contains('visible') && getComputedStyle(document.getElementById('toTop')).opacity === '1'", 'To-top control did not finish appearing after scrolling');
+  const toTop = await evaluate("(() => { const button=document.getElementById('toTop'); const rect=button.getBoundingClientRect(); const style=getComputedStyle(button); return { ariaHidden:button.getAttribute('aria-hidden'), tabIndex:button.tabIndex, opacity:style.opacity, pointerEvents:style.pointerEvents, right:rect.right, bottom:rect.bottom, width:window.innerWidth, height:window.innerHeight }; })()");
+  assert(toTop.ariaHidden === 'false' && toTop.tabIndex === 0 && toTop.opacity === '1' && toTop.pointerEvents === 'auto' && toTop.right <= toTop.width && toTop.bottom <= toTop.height, `To-top control is not visible, reachable, and contained on mobile: ${JSON.stringify(toTop)}`);
+  await cdp.send('Emulation.setEmulatedMedia', { features:[{ name:'prefers-reduced-motion', value:'reduce' }] });
+  await evaluate("document.getElementById('toTop').click()");
+  await waitForBrowser("window.scrollY === 0 && !document.getElementById('toTop').classList.contains('visible')", 'To-top control did not return to the page start and hide');
+  assert(await evaluate("document.activeElement === document.getElementById('appShell')"), 'To-top control did not restore keyboard focus to the page start');
+  await cdp.send('Emulation.setEmulatedMedia', { features:[{ name:'prefers-reduced-motion', value:'no-preference' }] });
   await cdp.send('Emulation.clearDeviceMetricsOverride');
 
   await evaluate("document.getElementById('logoutBtn').click()");

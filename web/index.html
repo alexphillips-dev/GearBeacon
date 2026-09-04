@@ -66,7 +66,7 @@
     </div>
   </section>
 
-  <main id="appShell" class="shell hidden">
+  <main id="appShell" class="shell hidden" tabindex="-1">
     <header class="topbar">
       <div class="brand-wrap">
         <img class="brand-icon" src="/assets/icon.png" alt="" width="46" height="46" />
@@ -387,6 +387,7 @@
       <span id="notifyStatus"></span>
     </footer>
   </main>
+  <button id="toTop" class="to-top" type="button" aria-label="Scroll to top" title="To top" aria-hidden="true" tabindex="-1"><span aria-hidden="true">↑</span></button>
   <section id="productDialog" class="product-dialog hidden" role="dialog" aria-modal="true" aria-labelledby="productDialogTitle">
     <button id="productDialogBackdrop" class="product-dialog-backdrop" type="button" aria-label="Close product details" tabindex="-1"></button>
     <article class="product-dialog-panel">

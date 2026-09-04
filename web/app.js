@@ -46,7 +46,7 @@ const app = {
   config: null,
   operations: null,
   wizardStep: 1,
-  notificationPreferences: { restock:true, soldOut:false, priceChange:false, statusChange:false, newProduct:false },
+  notificationPreferences: { restock:true, soldOut:false, priceChange:false, statusChange:false, newProduct:false, allActivity:false },
   activeTab: APP_TABS.includes(savedUiState.activeTab) ? savedUiState.activeTab : 'watchlist',
   browseCategory: typeof savedUiState.browse?.category === 'string' ? savedUiState.browse.category : 'All',
   browseVisibleCount: 48,
@@ -189,6 +189,18 @@ function toast(message, tone = 'neutral') {
   $('toast').classList.remove('hidden');
   clearTimeout(toast.timer);
   toast.timer = setTimeout(() => $('toast').classList.add('hidden'), 2600);
+}
+function updateToTopVisibility() {
+  const button = $('toTop');
+  const visible = window.scrollY > Math.max(360, window.innerHeight * .55) && !$('appShell').classList.contains('hidden');
+  button.classList.toggle('visible', visible);
+  button.setAttribute('aria-hidden', String(!visible));
+  button.tabIndex = visible ? 0 : -1;
+}
+function scrollToTop() {
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  window.scrollTo({ top:0, behavior:reduceMotion ? 'auto' : 'smooth' });
+  $('appShell').focus({ preventScroll:true });
 }
 async function copyText(value, label) {
   try {
@@ -1753,6 +1765,9 @@ document.querySelectorAll('[data-settings-tab]').forEach((tab) => {
   });
 });
 $('themeBtn').addEventListener('click', () => applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
+$('toTop').addEventListener('click', scrollToTop);
+window.addEventListener('scroll', updateToTopVisibility, { passive:true });
+window.addEventListener('resize', updateToTopVisibility);
 let browseSearchTimer = null;
 $('search').addEventListener('input', () => { clearTimeout(browseSearchTimer); browseSearchTimer = setTimeout(() => { app.browseVisibleCount = 48; persistUiState(); renderProducts(true); }, 180); });
 for (const id of ['watchSearch','watchStatus','watchCategory','watchSort']) $(id).addEventListener(id === 'watchSearch' ? 'input' : 'change', () => { persistUiState(); renderProducts(true); });
@@ -1912,7 +1927,7 @@ window.addEventListener('offline', () => {
 });
 window.addEventListener('online', () => { app.reconnectPending = app.browserOffline; app.browserOffline = false; renderAttentionBanner(); refresh(); });
 
-initialize();
+initialize().finally(updateToTopVisibility);
 setInterval(() => {
   if (!$('appShell').classList.contains('hidden')) refresh();
 }, 10000);
