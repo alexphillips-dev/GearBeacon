@@ -1348,6 +1348,7 @@ function showWizard() {
   app.wizardStep = app.auth?.authenticationRequired ? 2 : 1;
   $('setupWizard').classList.remove('hidden');
   $('appShell').classList.add('wizard-blur');
+  $('appShell').inert = true;
   regionChoices('wizardRegions', app.config?.config?.regions || ['us']);
   if (app.config) {
     $('wizardAccessMode').value = app.config.config.accessMode;
@@ -1377,6 +1378,8 @@ function renderWizardStep() {
     const warnings = app.operations?.securityWarnings || [];
     $('wizardSummary').innerHTML = `<dl class="settings-details"><div><dt>URL</dt><dd>${escapeHtml(c.publicBaseUrl || `${location.protocol}//${location.host}`)}</dd></div><div><dt>Access</dt><dd>${escapeHtml(c.accessMode)}</dd></div><div><dt>Regions</dt><dd>${c.regions.map((x) => escapeHtml(x.toUpperCase())).join(', ')}</dd></div><div><dt>Backups</dt><dd>Every ${c.backupIntervalHours || 'disabled'}${c.backupIntervalHours ? ' hours' : ''} · retain ${c.backupRetention}</dd></div><div><dt>Security</dt><dd>${warnings.length ? `${warnings.length} warning${warnings.length === 1 ? '' : 's'} — review Operations` : 'No warnings detected'}</dd></div></dl>${app.config.restartPending ? '<p class="warning-text">Restart GearBeacon once to apply region, access-mode, or bind changes.</p>' : '<p>No restart is required.</p>'}`;
   }
+  const heading = document.querySelector(`[data-wizard-step="${app.wizardStep}"] h1`);
+  if (heading) { heading.tabIndex = -1; heading.focus(); }
 }
 
 async function wizardSaveConfiguration(includeNotifications = false) {
@@ -1402,7 +1405,7 @@ async function wizardNext() {
     else if (app.wizardStep === 5) {
       const result = await api('/api/onboarding/complete', { method:'POST' });
       app.auth.onboardingComplete = true;
-      $('setupWizard').classList.add('hidden'); $('appShell').classList.remove('wizard-blur');
+      $('setupWizard').classList.add('hidden'); $('appShell').classList.remove('wizard-blur'); $('appShell').inert = false; $('tabWatchlist').focus();
       toast('GearBeacon setup complete'); await refreshConfiguration(); return;
     }
     app.wizardStep += 1; renderWizardStep();
@@ -1782,7 +1785,7 @@ $('closeActivityDialog').addEventListener('click', closeActivityDialog);
 $('activityDialogBackdrop').addEventListener('click', closeActivityDialog);
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Tab') {
-    const dialog = [$('watchImportDialog'), $('activityDialog'), $('productDialog')].find((item) => item && !item.classList.contains('hidden'));
+    const dialog = [$('setupWizard'), $('watchImportDialog'), $('activityDialog'), $('productDialog')].find((item) => item && !item.classList.contains('hidden'));
     if (dialog) {
       const focusable = [...dialog.querySelectorAll('button:not(:disabled):not([tabindex="-1"]),a[href]:not([tabindex="-1"]),input:not(:disabled):not([tabindex="-1"]),select:not(:disabled):not([tabindex="-1"]),textarea:not(:disabled):not([tabindex="-1"]),[tabindex]:not([tabindex="-1"])')].filter((item) => item.offsetParent !== null);
       if (focusable.length) {

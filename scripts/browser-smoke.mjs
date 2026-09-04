@@ -168,6 +168,8 @@ try {
   })()`);
   await waitForBrowser("!document.getElementById('appShell').classList.contains('hidden') && app.products.length >= 5", 'Authenticated dashboard did not load');
   await waitForBrowser("!document.getElementById('setupWizard').classList.contains('hidden') && app.wizardStep === 2", 'Guided setup did not start');
+  await assertAccessible('Guided setup wizard');
+  assert(await evaluate("document.getElementById('appShell').inert && Boolean(document.activeElement.closest('#setupWizard'))"), 'Guided setup did not isolate background content and move focus into the dialog.');
   for (const step of [3, 4, 5]) {
     await evaluate("document.getElementById('wizardNext').click()");
     await waitForBrowser(`app.wizardStep === ${step}`, `Guided setup did not advance to step ${step}`);
