@@ -1,6 +1,4 @@
 node_modules/
-mobile/.expo/
-mobile/.expo-shared/
 data/*.json
 !data/.gitkeep
 .DS_Store

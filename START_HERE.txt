@@ -1,63 +1,52 @@
-GearBeacon V1.4 — START HERE
-============================
+GearBeacon — START HERE
+=======================
+
+GearBeacon is a private, browser-based monitor that runs on your own Windows,
+macOS, Linux, NAS, home server, or Docker host. It has no public account or
+hosted GearBeacon database.
 
 Requirements
 ------------
-Node.js 22.13 or newer.
+Node.js 22.13 or newer, or Docker.
 
-Quick demo (no live store traffic)
-----------------------------------
-Windows: double-click run-mock-windows.bat
-Mac/Linux: ./run-mock-mac-linux.sh
-
-Then open http://localhost:8787
-
-Live monitor
-------------
+One-computer launch
+-------------------
 Windows: double-click run-windows.bat
-Mac/Linux: ./run-mac-linux.sh
+macOS/Linux: ./run-mac-linux.sh
 
-What's new in V1.4
-------------------
-- GitHub Releases now power Check for updates.
-- Server-side Expo push can alert a registered phone when the app is closed.
-- Settings has per-event notification controls and Send test notification.
-- Monitor health guards reject suspicious partial catalog responses.
-- Failed checks back off automatically and expose health/readiness endpoints.
-- Docker/Docker Compose can run one always-on centralized GearBeacon monitor.
-- GitHub Actions CI/release workflows are included for the project repo.
+Open http://localhost:8787. This safe default listens only on your computer.
 
-Upgrade safety
---------------
-V1.4 preserves V1.3's external SQLite database. On the first V1.4 start over a
-V1.3 database, GearBeacon creates a pre-update backup and migrates schema v2 to v3.
-Your watched products remain outside the application folder.
+Offline demo
+------------
+Windows: double-click run-mock-windows.bat
+macOS/Linux: ./run-mock-mac-linux.sh
 
-Settings
---------
-Open Settings for:
-- GearBeacon version / GitHub update checks
-- Notification event preferences
-- Test notification
-- SQLite schema / data path
-- Create backup now
-- Export / Import
+Private LAN/VPN server
+----------------------
+Windows: double-click run-private-windows.bat
+macOS/Linux: ./run-private-mac-linux.sh
 
-Real phone push
----------------
-Configure mobile/app.json with your Expo EAS projectId, create an EAS development
-or release build, then choose "Register this device for push" in mobile Settings.
+The first start prints a one-time setup token. Enter it in the dashboard and
+create the private owner password. Use a trusted LAN/VPN, or put GearBeacon
+behind an HTTPS reverse proxy before crossing an untrusted network.
 
-Cloud monitor
--------------
+Docker
+------
 docker compose up -d --build
+docker compose logs gearbeacon
 
-V1.4 is still single-watchlist and unauthenticated. Do not expose port 8787
-straight to the public internet; use a private network/VPN/authenticated proxy.
+Compose publishes only to host loopback by default. The logs show the one-time
+owner setup token. SQLite data persists in the gearbeacon-data volume.
+
+Data safety
+-----------
+Settings includes validated backups, encrypted export, restore preview/import,
+update checks, notification preferences, owner sessions, and outbound-connection
+visibility. Credentials and sessions are never included in application exports.
 
 Automated verification
 ----------------------
 node --no-warnings scripts/self-test.mjs
 
-See README.md for all configuration, GitHub release workflow, mobile push setup,
-health endpoints, and deployment details.
+See README.md and deploy/README.md for every environment variable and deployment
+pattern.

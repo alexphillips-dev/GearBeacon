@@ -22,6 +22,8 @@ applyTheme(localStorage.getItem(THEME_KEY) || 'dark');
 
 const CATEGORY_ORDER = ['Cloud Gateways', 'Switching', 'WiFi', 'Cameras & Physical Security', 'Door Access', 'Integrations', 'Accessories & Cables', 'Network Storage'];
 const app = {
+  auth: null,
+  currentRegion: localStorage.getItem('gearbeacon.region') || null,
   status: null,
   products: [],
   events: [],
@@ -29,7 +31,7 @@ const app = {
   notificationPreferences: { restock:true, soldOut:false, priceChange:false, statusChange:false, newProduct:false },
   activeTab: 'watchlist',
   browseCategory: 'All',
-  latestEventId: localStorage.getItem('gearbeacon.latestEvent') || null,
+  latestEventId: null,
 };
 
 function escapeHtml(value) {
@@ -55,10 +57,101 @@ function toast(message) {
   toast.timer = setTimeout(() => $('toast').classList.add('hidden'), 2600);
 }
 async function api(path, options = {}) {
-  const res = await fetch(path, { headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }, ...options });
+  let target = path;
+  if (path.startsWith('/api/') && !path.startsWith('/api/auth/') && app.currentRegion) {
+    const separator = path.includes('?') ? '&' : '?';
+    target = `${path}${separator}region=${encodeURIComponent(app.currentRegion)}`;
+  }
+  const method = String(options.method || 'GET').toUpperCase();
+  const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && app.auth?.csrfToken) headers['X-CSRF-Token'] = app.auth.csrfToken;
+  const res = await fetch(target, { credentials: 'same-origin', ...options, headers });
+  const data = await res.json().catch(() => ({}));
+  if ([401, 428].includes(res.status) && !path.startsWith('/api/auth/')) showAuth(Boolean(data.setupRequired));
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
+
+async function authRequest(path, options = {}) {
+  const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+  if (app.auth?.csrfToken && !['GET', 'HEAD', 'OPTIONS'].includes(String(options.method || 'GET').toUpperCase())) headers['X-CSRF-Token'] = app.auth.csrfToken;
+  const res = await fetch(path, { credentials: 'same-origin', ...options, headers });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
   return data;
+}
+
+function showAuth(setup = false) {
+  $('appShell').classList.add('hidden');
+  $('authGate').classList.remove('hidden');
+  $('setupTokenField').classList.toggle('hidden', !setup);
+  $('confirmPasswordField').classList.toggle('hidden', !setup);
+  $('authTitle').textContent = setup ? 'Secure this GearBeacon instance' : 'GearBeacon owner access';
+  $('authDescription').textContent = setup
+    ? 'Enter the one-time token from the server log and create the private owner password.'
+    : 'Sign in to your private GearBeacon instance.';
+  $('passwordLabel').textContent = setup ? 'Create owner password' : 'Owner password';
+  $('authPassword').autocomplete = setup ? 'new-password' : 'current-password';
+  $('authSubmit').textContent = setup ? 'Complete private setup' : 'Sign in';
+  $('setupToken').required = setup;
+  $('authPasswordConfirm').required = setup;
+  $('authForm').dataset.setup = setup ? '1' : '0';
+  $('authError').classList.add('hidden');
+  setTimeout(() => (setup ? $('setupToken') : $('authPassword')).focus(), 0);
+}
+
+async function enterApp() {
+  $('authGate').classList.add('hidden');
+  $('appShell').classList.remove('hidden');
+  $('logoutBtn').classList.toggle('hidden', !app.auth?.authenticationRequired);
+  await refresh();
+  await Promise.all([refreshDataInfo(), refreshNotificationPreferences(), refreshSessions()]);
+}
+
+async function initialize() {
+  try {
+    app.auth = await authRequest('/api/auth/status');
+    if (!app.auth.authenticated) return showAuth(app.auth.setupRequired);
+    await enterApp();
+  } catch (err) {
+    showAuth(false);
+    $('authError').classList.remove('hidden');
+    $('authError').textContent = `GearBeacon server unavailable: ${err.message}`;
+  }
+}
+
+async function submitAuth(event) {
+  event.preventDefault();
+  const setup = $('authForm').dataset.setup === '1';
+  const password = $('authPassword').value;
+  const error = $('authError');
+  error.classList.add('hidden');
+  if (setup && password !== $('authPasswordConfirm').value) {
+    error.textContent = 'The owner passwords do not match.';
+    error.classList.remove('hidden');
+    return;
+  }
+  $('authSubmit').disabled = true;
+  try {
+    const result = await authRequest(setup ? '/api/auth/setup' : '/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify(setup ? { setupToken: $('setupToken').value, password } : { password }),
+    });
+    app.auth = { ...(await authRequest('/api/auth/status')), csrfToken: result.csrfToken };
+    $('authForm').reset();
+    await enterApp();
+  } catch (err) {
+    error.textContent = err.message;
+    error.classList.remove('hidden');
+  } finally {
+    $('authSubmit').disabled = false;
+  }
+}
+
+async function logout() {
+  try { await authRequest('/api/auth/logout', { method: 'POST' }); } catch {}
+  app.auth = await authRequest('/api/auth/status').catch(() => ({ authenticationRequired: true }));
+  showAuth(false);
 }
 
 function productDetail(p) {
@@ -162,6 +255,11 @@ function renderStatus() {
   $('productCount').textContent = s.productCount || 0;
   $('regionName').textContent = s.region.toUpperCase();
   $('pollRate').textContent = `${s.pollSeconds}s`;
+  if (!app.currentRegion || !s.regions.some((region) => region.key === app.currentRegion)) app.currentRegion = s.region;
+  localStorage.setItem('gearbeacon.region', app.currentRegion);
+  const picker = $('regionPicker');
+  picker.innerHTML = s.regions.map((region) => `<option value="${escapeHtml(region.key)}" ${region.key === app.currentRegion ? 'selected' : ''}>${escapeHtml(region.label)}</option>`).join('');
+  $('regionPickerWrap').classList.toggle('hidden', s.regions.length < 2);
   const dot = $('statusDot');
   dot.className = 'dot';
   if (s.lastError) {
@@ -182,7 +280,9 @@ function renderStatus() {
   const channels = [];
   if (s.notifications.ntfyConfigured) channels.push('ntfy');
   if (s.notifications.discordConfigured) channels.push('Discord');
-  if (s.notifications.expoPushDevices) channels.push(`${s.notifications.expoPushDevices} push device${s.notifications.expoPushDevices === 1 ? '' : 's'}`);
+  if (s.notifications.webhookConfigured) channels.push('Webhook');
+  if (s.notifications.gotifyConfigured) channels.push('Gotify');
+  if (s.notifications.smtpConfigured) channels.push('Email');
   $('notifyStatus').textContent = channels.length ? `Alert channels: ${channels.join(' · ')}` : 'No server-side alert channel configured';
 }
 
@@ -198,6 +298,8 @@ function renderSettings() {
   const count = info.backup?.count || 0;
   $('backupBadge').textContent = `${count} backup${count === 1 ? '' : 's'}`;
   $('latestBackup').textContent = info.backup?.latest ? `${relativeTime(info.backup.latest.createdAt)} · ${info.backup.latest.name}` : 'None yet';
+  renderSecurity();
+  renderPrivacy();
   renderNotificationSettings();
 }
 
@@ -208,9 +310,45 @@ function renderNotificationSettings() {
   if ($('notifyPriceChange')) $('notifyPriceChange').checked = Boolean(prefs.priceChange);
   if ($('notifyStatusChange')) $('notifyStatusChange').checked = Boolean(prefs.statusChange);
   if ($('notifyNewProduct')) $('notifyNewProduct').checked = Boolean(prefs.newProduct);
-  if ($('pushBadge')) {
-    const count = app.status?.notifications?.expoPushDevices || 0;
-    $('pushBadge').textContent = `${count} push device${count === 1 ? '' : 's'}`;
+  if ($('channelBadge')) {
+    const notifications = app.status?.notifications || {};
+    const count = ['ntfyConfigured', 'discordConfigured', 'webhookConfigured', 'gotifyConfigured', 'smtpConfigured'].filter((key) => notifications[key]).length;
+    $('channelBadge').textContent = count ? `${count} server channel${count === 1 ? '' : 's'}` : 'Browser only';
+  }
+}
+
+function renderSecurity() {
+  if (!app.auth || !app.status) return;
+  const mode = app.status.deployment?.mode || app.auth.accessMode || 'local';
+  $('accessMode').textContent = mode;
+  $('accessBadge').textContent = mode === 'local' ? 'Local only' : mode === 'proxy' ? 'Reverse proxy' : 'Private server';
+  $('authenticationState').textContent = app.auth.authenticationRequired ? 'Owner password required' : 'Not required on loopback';
+  $('accessDescription').textContent = mode === 'local'
+    ? 'The server binds to this computer only. You can optionally create an owner password below.'
+    : 'Every dashboard and API request is protected by the private owner session.';
+  $('currentPasswordField').classList.toggle('hidden', !app.auth.authenticationRequired);
+}
+
+function renderPrivacy() {
+  const connections = app.status?.privacy?.outboundConnections || [];
+  $('outboundList').innerHTML = connections.map((item) => `<div class="outbound-item">
+    <span class="connection-dot ${item.enabled ? 'enabled' : ''}"></span>
+    <div><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.purpose)}${item.required ? ' · required' : item.enabled ? ' · enabled' : ' · disabled'}</small></div>
+    <span>${item.destination ? escapeHtml(item.destination) : 'Off'}</span>
+  </div>`).join('');
+}
+
+async function refreshSessions() {
+  try {
+    const result = await authRequest('/api/auth/sessions');
+    const sessions = result.sessions || [];
+    $('sessionCount').textContent = app.auth?.authenticationRequired ? String(sessions.length) : 'Local access';
+    $('sessionList').innerHTML = sessions.map((session) => `<div class="session-item">
+      <div><strong>${session.current ? 'Current session' : 'Signed-in browser'}</strong><small>${escapeHtml(session.remoteAddress || 'Unknown address')} · used ${escapeHtml(relativeTime(session.lastUsedAt))}</small></div>
+      <button data-revoke-session="${escapeHtml(session.id)}">${session.current ? 'Sign out' : 'Revoke'}</button>
+    </div>`).join('');
+  } catch (err) {
+    $('sessionCount').textContent = 'Unavailable';
   }
 }
 
@@ -277,40 +415,68 @@ async function refreshDataInfo() {
   }
 }
 
-async function exportData() {
-  const button = $('exportBtn');
+async function saveDownloadResponse(res, fallbackName) {
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `HTTP ${res.status}`);
+  }
+  const blob = await res.blob();
+  const disposition = res.headers.get('content-disposition') || '';
+  const match = disposition.match(/filename="?([^";]+)"?/i);
+  const href = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = href;
+  link.download = match?.[1] || fallbackName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(href), 1000);
+}
+
+async function exportData(encrypted = true) {
+  const button = encrypted ? $('exportBtn') : $('exportPlainBtn');
   button.disabled = true;
   try {
-    const res = await fetch('/api/data/export', { cache: 'no-store' });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(body.error || `HTTP ${res.status}`);
+    const region = app.currentRegion ? `?region=${encodeURIComponent(app.currentRegion)}` : '';
+    if (encrypted) {
+      const passphrase = window.prompt('Create an export passphrase (at least 12 characters). You will need it to restore this file.');
+      if (passphrase == null) return;
+      const confirmation = window.prompt('Enter the export passphrase again.');
+      if (passphrase !== confirmation) throw new Error('The export passphrases do not match.');
+      const res = await fetch(`/api/data/export/encrypted${region}`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', ...(app.auth?.csrfToken ? { 'X-CSRF-Token': app.auth.csrfToken } : {}) },
+        body: JSON.stringify({ passphrase }),
+      });
+      await saveDownloadResponse(res, `GearBeacon-Backup-${new Date().toISOString().slice(0,10)}.encrypted.gearbeacon.json`);
+      toast('Encrypted GearBeacon data exported');
+    } else {
+      if (!window.confirm('Plain JSON exports are not encrypted and may contain your watchlist and history. Continue?')) return;
+      const res = await fetch(`/api/data/export${region}`, { cache: 'no-store', credentials: 'same-origin' });
+      await saveDownloadResponse(res, `GearBeacon-Backup-${new Date().toISOString().slice(0,10)}.gearbeacon.json`);
+      toast('Plain GearBeacon data exported');
     }
-    const blob = await res.blob();
-    const disposition = res.headers.get('content-disposition') || '';
-    const match = disposition.match(/filename="?([^";]+)"?/i);
-    const filename = match?.[1] || `GearBeacon-Backup-${new Date().toISOString().slice(0,10)}.gearbeacon.json`;
-    const href = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = href; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(href), 1000);
-    toast('GearBeacon data exported');
   } catch (err) { toast(err.message); }
   finally { button.disabled = false; }
 }
 
 async function importDataFile(file) {
   if (!file) return;
-  if (!window.confirm('Importing replaces this monitor\'s current watchlist and history. GearBeacon will create a safety backup first. Continue?')) return;
   const button = $('importBtn');
   button.disabled = true;
   try {
     const text = await file.text();
-    JSON.parse(text); // fail early with a friendly local validation error
-    const result = await api('/api/data/import', { method: 'POST', body: text });
+    const backup = JSON.parse(text);
+    const encrypted = backup?.format === 'GearBeaconEncryptedBackup';
+    const passphrase = encrypted ? window.prompt('Enter the passphrase for this encrypted GearBeacon backup.') : '';
+    if (encrypted && passphrase == null) return;
+    const preview = await api('/api/data/preview', { method: 'POST', body: JSON.stringify({ backup, passphrase }) });
+    const summary = preview.regions.map((region) => `${region.region.toUpperCase()}: ${region.watchCount} watched, ${region.eventCount} events${region.configured ? '' : ' (not configured; skipped)'}`).join('\n');
+    if (!window.confirm(`Restore this GearBeacon backup?\n\n${summary}\n\nA validated SQLite safety backup will be created first.`)) return;
+    const result = await api('/api/data/import', { method: 'POST', body: JSON.stringify({ backup, passphrase }) });
     await refresh();
     await refreshDataInfo();
-    toast(`Import complete · ${result.watchCount} watched product${result.watchCount === 1 ? '' : 's'}`);
+    toast(`Restore complete · ${result.watchCount} watched product${result.watchCount === 1 ? '' : 's'}`);
   } catch (err) { toast(`Import failed: ${err.message}`); }
   finally { button.disabled = false; $('importFile').value = ''; }
 }
@@ -339,12 +505,56 @@ async function checkUpdates() {
   }
 }
 
+async function updateOwnerPassword(event) {
+  event.preventDefault();
+  const resultEl = $('securityResult');
+  const newPassword = $('newPassword').value;
+  if (newPassword !== $('newPasswordConfirm').value) {
+    resultEl.textContent = 'The new owner passwords do not match.';
+    resultEl.classList.remove('hidden');
+    return;
+  }
+  const button = event.submitter || $('passwordForm').querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const result = await authRequest('/api/auth/password', {
+      method: 'PUT',
+      body: JSON.stringify({ currentPassword: $('currentPassword').value, newPassword }),
+    });
+    app.auth = { ...(await authRequest('/api/auth/status')), csrfToken: result.csrfToken };
+    $('passwordForm').reset();
+    $('logoutBtn').classList.remove('hidden');
+    resultEl.innerHTML = '<strong>Owner password updated.</strong> Other signed-in sessions were revoked.';
+    resultEl.classList.remove('hidden');
+    renderSecurity();
+    await refreshSessions();
+  } catch (err) {
+    resultEl.textContent = err.message;
+    resultEl.classList.remove('hidden');
+  } finally { button.disabled = false; }
+}
+
+async function revokeSession(id) {
+  try {
+    const result = await authRequest(`/api/auth/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (result.currentRevoked) {
+      app.auth = { authenticationRequired: true };
+      showAuth(false);
+      return;
+    }
+    await refreshSessions();
+    toast('Session revoked');
+  } catch (err) { toast(err.message); }
+}
+
 function maybeBrowserNotify(events) {
   if (!events.length) return;
+  const eventStorageKey = `gearbeacon.latestEvent.${app.currentRegion || 'default'}`;
+  if (app.latestEventId == null) app.latestEventId = localStorage.getItem(eventStorageKey);
   const newest = events[0].id;
   if (!app.latestEventId) {
     app.latestEventId = newest;
-    localStorage.setItem('gearbeacon.latestEvent', newest);
+    localStorage.setItem(eventStorageKey, newest);
     return;
   }
   const fresh = [];
@@ -353,8 +563,8 @@ function maybeBrowserNotify(events) {
     fresh.push(e);
   }
   app.latestEventId = newest;
-  localStorage.setItem('gearbeacon.latestEvent', newest);
-  if (Notification.permission !== 'granted') return;
+  localStorage.setItem(eventStorageKey, newest);
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
   const prefs = app.notificationPreferences || {};
   fresh.filter((e) => {
     if (e.type === 'new_product') return prefs.newProduct;
@@ -380,6 +590,11 @@ async function refresh() {
     app.events = events.events || [];
     renderStatus(); renderProducts(); renderEvents(); renderSettings();
   } catch (err) {
+    if (/Region must be one of/i.test(err.message) && app.currentRegion) {
+      app.currentRegion = null;
+      localStorage.removeItem('gearbeacon.region');
+      return refresh();
+    }
     $('statusDot').className = 'dot bad';
     $('statusTitle').textContent = 'GearBeacon server unavailable';
     $('statusSub').textContent = err.message;
@@ -405,11 +620,13 @@ document.addEventListener('click', (event) => {
   if (category) { app.browseCategory = category.dataset.category; renderProducts(); return; }
   const go = event.target.closest('[data-goto]');
   if (go) activateTab(go.dataset.goto);
+  const revoke = event.target.closest('[data-revoke-session]');
+  if (revoke) revokeSession(revoke.dataset.revokeSession);
 });
 
 function activateTab(tab) {
   app.activeTab = tab;
-  if (tab === 'settings') { refreshDataInfo(); refreshNotificationPreferences(); }
+  if (tab === 'settings') { refreshDataInfo(); refreshNotificationPreferences(); refreshSessions(); }
   if (['watchlist','browse','activity','settings'].includes(tab)) history.replaceState(null, '', `#${tab}`);
   document.querySelectorAll('.tab').forEach((x) => x.classList.toggle('active', x.dataset.tab === tab));
   document.querySelectorAll('.page').forEach((x) => x.classList.toggle('active', x.id === tab));
@@ -434,12 +651,23 @@ $('backupBtn').addEventListener('click', async () => {
   } catch (err) { toast(err.message); }
   finally { button.disabled = false; }
 });
-$('exportBtn').addEventListener('click', exportData);
+$('exportBtn').addEventListener('click', () => exportData(true));
+$('exportPlainBtn').addEventListener('click', () => exportData(false));
 $('importBtn').addEventListener('click', () => $('importFile').click());
 $('importFile').addEventListener('change', () => importDataFile($('importFile').files?.[0]));
 $('updateBtn').addEventListener('click', checkUpdates);
 $('saveNotificationPrefs').addEventListener('click', saveNotificationPreferences);
 $('testNotificationBtn').addEventListener('click', testServerNotification);
+$('passwordForm').addEventListener('submit', updateOwnerPassword);
+$('authForm').addEventListener('submit', submitAuth);
+$('logoutBtn').addEventListener('click', logout);
+$('regionPicker').addEventListener('change', async () => {
+  app.currentRegion = $('regionPicker').value;
+  app.latestEventId = null;
+  localStorage.setItem('gearbeacon.region', app.currentRegion);
+  await refresh();
+  toast(`Switched to ${$('regionPicker').selectedOptions[0].textContent}`);
+});
 
 $('notifyBtn').addEventListener('click', async () => {
   if (!('Notification' in window)) return toast('This browser does not support notifications.');
@@ -452,7 +680,7 @@ if ('Notification' in window && Notification.permission === 'granted') $('notify
 const initialTab = location.hash.slice(1);
 if (['watchlist','browse','activity','settings'].includes(initialTab)) activateTab(initialTab);
 
-refresh();
-refreshDataInfo();
-refreshNotificationPreferences();
-setInterval(refresh, 10000);
+initialize();
+setInterval(() => {
+  if (!$('appShell').classList.contains('hidden')) refresh();
+}, 10000);

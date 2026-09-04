@@ -1,8 +1,8 @@
 {
   "name": "GearBeacon",
-  "latestVersion": "1.4.0",
-  "publishedAt": "2026-09-03T00:00:00Z",
+  "latestVersion": "1.5.0",
+  "publishedAt": "2026-09-04T00:00:00Z",
   "downloadUrl": "https://github.com/alexphillips-dev/GearBeacon/releases",
   "releasePageUrl": "https://github.com/alexphillips-dev/GearBeacon/releases",
-  "releaseNotes": "Production notifications, GitHub-powered updates/releases, cloud-ready deployment, monitor health guards, notification controls, and CI."
+  "releaseNotes": "Private self-hosting, owner authentication, web-only operation, multi-region monitoring, encrypted backups, and safer platform defaults."
 }

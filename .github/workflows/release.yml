@@ -7,11 +7,12 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   release:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -48,7 +49,7 @@ jobs:
           mkdir -p "$STAGE"
           rsync -a ./ "$STAGE/" \
             --exclude '.git' \
-            --exclude '.github' \
+            --exclude '.github/workflows' \
             --exclude 'node_modules' \
             --exclude "$STAGE" \
             --exclude '*.zip' \
@@ -67,3 +68,35 @@ jobs:
             "GearBeacon-v${VERSION}.sha256.txt" \
             --title "GearBeacon V${VERSION}" \
             --generate-notes
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Sign in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate container metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/gearbeacon
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - name: Publish multi-platform container
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

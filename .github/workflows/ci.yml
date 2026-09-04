@@ -32,13 +32,8 @@ jobs:
       - name: Check browser JavaScript
         run: node --check web/app.js
 
-      - name: Install mobile dependencies
-        working-directory: mobile
-        run: npm install --ignore-scripts --no-audit --no-fund
-
-      - name: Type-check mobile app
-        working-directory: mobile
-        run: npx tsc --noEmit
-
       - name: Run GearBeacon self-test
         run: node --no-warnings scripts/self-test.mjs
+
+      - name: Build Docker image
+        run: docker build -t gearbeacon:test .
