@@ -188,6 +188,15 @@ try {
   await evaluate(`(() => { const input=document.getElementById('search'); input.value='U7 Pro XGS'; input.dispatchEvent(new Event('input',{bubbles:true})); })()`);
   await waitForBrowser("document.querySelectorAll('#browseGrid .store-card').length === 1", 'Debounced Browse search failed');
   assert(await evaluate("!document.getElementById('resetBrowseFilters').classList.contains('hidden')"), 'Browse reset action did not appear for an active search.');
+  await evaluate("openProductDialog('u7-pro-xgs')");
+  await waitForBrowser("!document.getElementById('productDialog').classList.contains('hidden') && document.querySelector('#productDialogBody .product-watch-prompt [data-watch]')", 'Unwatched product details did not render');
+  const productPromptActions = await evaluate(`(() => {
+    const watchButton=document.querySelector('#productDialogBody .product-watch-prompt [data-watch]');
+    const storeButton=document.querySelector('#productDialogBody .product-link-actions a.button-link');
+    return { watchHeight:watchButton?.getBoundingClientRect().height, storeHeight:storeButton?.getBoundingClientRect().height, watchFont:getComputedStyle(watchButton).fontSize, storeFont:getComputedStyle(storeButton).fontSize };
+  })()`);
+  assert(Math.abs(productPromptActions.watchHeight - productPromptActions.storeHeight) <= 1 && productPromptActions.watchFont === productPromptActions.storeFont, `Product watch action does not match the compact store action: ${JSON.stringify(productPromptActions)}`);
+  await evaluate("document.getElementById('closeProductDialog').click()");
   await evaluate("document.querySelector('#browseGrid [data-watch=\"u7-pro-xgs\"]').click()");
   await waitForBrowser("app.products.find((product) => product.slug === 'u7-pro-xgs')?.watched === true", 'Browser watch action failed');
   await evaluate(`(() => { const input=document.getElementById('search'); input.value=''; input.dispatchEvent(new Event('input',{bubbles:true})); })()`);
