@@ -8,6 +8,8 @@ GearBeacon is a private, self-hosted Ubiquiti and UniFi Store inventory monitor.
 
 There is no GearBeacon cloud account, hosted database, public registration, subscription, analytics, or telemetry. GearBeacon is independent and is not affiliated with or endorsed by Ubiquiti Inc.
 
+The current `0.1.x` builds are pre-1.0 development milestones on `dev`. GearBeacon's first release promoted to `main` will be `1.0.0`.
+
 ## What it does
 
 - Monitors the United States, Canada, Europe, and United Kingdom UniFi Stores from one private installation.
@@ -44,7 +46,7 @@ Download the package for your operating system from [GitHub Releases](https://gi
 - **macOS Intel or Apple Silicon:** run `./gearbeacon`, or use `sudo ./install-macos-service.sh` for a LaunchDaemon.
 - **Linux x64 or ARM64:** run `./gearbeacon`, or use `sudo ./install-linux-service.sh` for a hardened systemd service.
 
-The uninstallers preserve GearBeacon data by default. Their explicit `-RemoveData` or `--remove-data` option is required to delete it. Every release archive includes an adjacent SHA-256 checksum and SPDX JSON SBOM and is covered by GitHub artifact provenance. Release packages are currently unsigned; signing and macOS notarization remain outside the V1.10 scope.
+The uninstallers preserve GearBeacon data by default. Their explicit `-RemoveData` or `--remove-data` option is required to delete it. Every release archive includes an adjacent SHA-256 checksum and SPDX JSON SBOM and is covered by GitHub artifact provenance. Release packages are currently unsigned; signing and macOS notarization remain outside the V0.1.10 scope.
 
 ### Source checkout
 
@@ -258,11 +260,11 @@ npm run test:update-helpers
 docker compose build
 ```
 
-CI exercises fresh installs and backup-protected upgrades from V1.5–V1.7 on Windows, macOS, and Linux; confirmation and unlisting behavior; searchable/exportable activity; primary and encrypted-secondary restore tests; diagnostics and support-bundle redaction; deterministic rate-limit, partial-catalog, restart, storage, key, 500-product, and 10k-activity fault scenarios; real Chrome workflows with axe WCAG scans, keyboard/focus behavior, reduced motion, persistent filters, reset states, offline recovery, copy actions, responsive widths, both themes, product images, rules, scheduling and bulk actions; integration-secret encryption; every notification mock; webhook signing; SMTP STARTTLS; authentication, CSRF, origin, secure-cookie, and forwarded-header behavior; update-helper safety; launcher syntax; real Docker Compose startup; amd64/arm64 containers; and native standalone packages. CodeQL and Trivy scan source and container images.
+CI exercises fresh installs and backup-protected upgrades from V0.1.5–V0.1.7 on Windows, macOS, and Linux; confirmation and unlisting behavior; searchable/exportable activity; primary and encrypted-secondary restore tests; diagnostics and support-bundle redaction; deterministic rate-limit, partial-catalog, restart, storage, key, 500-product, and 10k-activity fault scenarios; real Chrome workflows with axe WCAG scans, keyboard/focus behavior, reduced motion, persistent filters, reset states, offline recovery, copy actions, responsive widths, both themes, product images, rules, scheduling and bulk actions; integration-secret encryption; every notification mock; webhook signing; SMTP STARTTLS; authentication, CSRF, origin, secure-cookie, and forwarded-header behavior; update-helper safety; launcher syntax; real Docker Compose startup; amd64/arm64 containers; and native standalone packages. CodeQL and Trivy scan source and container images.
 
-Run **Candidate packages** manually with a prerelease version such as `1.10.0-rc.1` to create retained Actions artifacts without publishing a release. It uses the exact reusable packaging jobs used by a tag, extracts every archive, starts every native executable, validates the source archive, generates SBOMs, and records attestations.
+Run **Candidate packages** manually with a prerelease version such as `0.1.10-rc.1` to create retained Actions artifacts without publishing a release. It uses the exact reusable packaging jobs used by a tag, extracts every archive, starts every native executable, validates the source archive, generates SBOMs, and records attestations.
 
-Prerelease tags such as `v1.10.0-rc.1` must point to a commit on `dev` and never move the stable container `latest` tag. Stable tags such as `v1.10.0` must point to a commit on protected `main`. Publication also requires successful CI and security workflows at the exact SHA, consistent version/changelog/manifest data, checksummed and rehearsed packages, amd64/arm64 images, SBOMs, and provenance. The GitHub release stays a draft until those steps succeed. Use the [stable release checklist](.github/RELEASE_CHECKLIST.md) for real installation, upgrade, rollback, accessibility, and 24–48 hour soak evidence.
+Pre-1.0 candidate tags such as `v0.1.10-rc.1` must point to a commit on `dev` and never move the stable container `latest` tag. The first public stable tag will be `v1.0.0` on protected `main`. Publication also requires successful CI and security workflows at the exact SHA, consistent version/changelog/manifest data, checksummed and rehearsed packages, amd64/arm64 images, SBOMs, and provenance. The GitHub release stays a draft until those steps succeed. Use the [stable release checklist](.github/RELEASE_CHECKLIST.md) for real installation, upgrade, rollback, accessibility, and 24–48 hour soak evidence.
 
 ## Project layout
 

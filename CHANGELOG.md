@@ -1,6 +1,8 @@
 # GearBeacon changelog
 
-## V1.10.0 — Release readiness, accessibility, and trust
+The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. The first release promoted to `main` will be V1.0.0.
+
+## V0.1.10 — Release readiness, accessibility, and trust
 
 - Added a responsive, keyboard-accessible To top arrow that fades in after scrolling, restores focus to the page start, and respects reduced-motion preferences.
 - Added an opt-in All activity updates notification preference that alerts on every new Activity feed entry, including unwatched products, while remaining disabled by default and clearly overriding individual event filters.
@@ -17,7 +19,7 @@
 - Added deterministic checks for reduced motion, keyboard focus, dialog behavior, responsive reflow, product images, and both color themes to the real Chrome suite.
 - Added Dependabot coverage for npm tooling, GitHub Actions, and Docker plus security reporting, contribution, issue, pull-request, and real-install release-checklist guidance.
 
-## V1.9.0 — Daily-use polish and fault testing
+## V0.1.9 — Daily-use polish and fault testing
 
 - Preserved the selected main tab, Settings subsection, Browse filters, Watchlist filters, and Activity filters across browser refreshes using local browser storage only.
 - Added clear reset actions to every filtered view and specific no-match explanations for Browse, Watchlist, and retained Activity results.
@@ -27,7 +29,7 @@
 - Added automated recovery failure coverage for unavailable secondary storage, corrupt primary and encrypted backups, and missing or incorrect local encryption keys.
 - Added scale coverage for 500-product catalogs and more than 10,000 retained Activity rows, including pagination and the disclosed 10,000-row export cap.
 
-## V1.8.0 — Reliability, history, and recovery
+## V0.1.8 — Reliability, history, and recovery
 
 - Added persisted two-observation confirmation for sellouts, price changes, status changes, and delistings while preserving a one-observation fast path for restocks from complete, valid catalogs.
 - Preserved last-known-good product values while a change is pending, exposed pending evidence in Operations, and made unlisted products explicit after two complete catalogs omit them.
@@ -38,10 +40,10 @@
 - Added non-destructive restore tests for primary and secondary backups and kept primary backups successful when an unavailable secondary destination fails.
 - Added one-click installation diagnostics for database integrity, directory access, encryption-key readability, restore readiness, free space, delivery health, store connectivity, and access security.
 - Added a privacy-redacted support bundle, a persistent owner-attention banner for operational issues and reconnects, and richer recovery status throughout Operations and Data settings.
-- Added schema-v7 migration and verified fresh installs plus automatic, backup-protected upgrades from V1.5, V1.6, and V1.7.
+- Added schema-v7 migration and verified fresh installs plus automatic, backup-protected upgrades from V0.1.5, V0.1.6, and V0.1.7.
 - Added release-candidate publication support so prerelease tags create GitHub prereleases without replacing the stable `latest` container tag.
 
-## V1.7.0 — Watch intelligence and alert control
+## V0.1.7 — Watch intelligence and alert control
 
 - Added a Watchlist-page importer for pasted UniFi Store links, product SKUs/slugs, and TXT, CSV, or JSON files, with regional catalog matching, duplicate and already-watched detection, review-before-add selection, and non-destructive bulk import.
 - Enriched the Stock activity feed with exact before/after transitions, price movement, prior-state duration, region context, exact detection times, and server-alert outcomes while preserving the compact 64-pixel row height across desktop and mobile.
@@ -62,7 +64,7 @@
 - Added real headless-browser coverage for private setup/login/logout, dark/light themes, product images, Browse filters and loading, watch/rule/bulk flows, settings tabs, backup preview/import, Operations, sessions, and responsive layout.
 - Added a schema-v6 migration with automatic pre-update backup, exact-host image scoring, generic public 500 errors, a smaller Node 24 Alpine runtime image without package-manager tooling, and improved native standalone startup diagnostics.
 
-## V1.6.0 — Easier setup and self-hosting
+## V0.1.6 — Easier setup and self-hosting
 
 - Added a five-step browser first-run wizard for owner security, regions, access mode, notifications, backups, live tests, and a final security summary.
 - Added validated browser configuration for monitoring, access, backup retention, and every supported server notification channel.
@@ -76,7 +78,7 @@
 - Added prebuilt amd64/arm64 Compose images while retaining source builds and loopback-only host publication.
 - Expanded CI across Windows, macOS, Linux, Compose, amd64/arm64 containers, standalone binaries, database upgrades, reverse-proxy security behavior, all notification mocks, STARTTLS, CodeQL, and Trivy.
 
-## V1.5.0 — Private self-hosting and web-only operation
+## V0.1.5 — Private self-hosting and web-only operation
 
 - Made GearBeacon an explicitly private, single-owner, self-hosted web application for Windows, macOS, Linux, servers, NAS systems, and Docker.
 - Removed the separate client application, its dependencies, push registration API, push-token persistence, and related CI/release paths.
@@ -92,7 +94,7 @@
 - Changed Docker Compose to loopback-only host publishing, hardened the image to run as an unprivileged user, and added multi-platform GHCR release publication.
 - Added private-server launchers and expanded Windows, macOS, Linux, Docker, VPN, and reverse-proxy deployment guidance.
 
-## V1.4.0 — Production alerts & release infrastructure
+## V0.1.4 — Production alerts & release infrastructure
 
 - Connected **Check for updates** to `alexphillips-dev/GearBeacon` GitHub Releases with bundled-manifest fallback.
 - Added GitHub Actions CI for `dev`, `main`, and pull requests.
@@ -104,20 +106,20 @@
 - Added catalog-size health guard, partial-response degraded health, stale-monitor detection, and exponential retry/backoff.
 - Added `/healthz`, `/readyz`, and `/api/health` health endpoints.
 - Added Dockerfile, Docker Compose, persistent cloud volume, and deployment guidance for a centralized always-on monitor.
-- Preserved V1.3 external SQLite data, automatic pre-update backups, migrations, import/export, and watchlist safety.
+- Preserved V0.1.3 external SQLite data, automatic pre-update backups, migrations, import/export, and watchlist safety.
 
-## V1.3.0 — Upgrade-safe persistence
+## V0.1.3 — Upgrade-safe persistence
 
 - Replaced application-folder JSON persistence with SQLite.
 - Moved runtime user data to the operating system's per-user application-data folder.
 - Added transactional database migrations and automatic pre-update safety backups.
 - Added Export / Import, version information, and the original update-check foundation.
 
-## V1.2
+## V0.1.2
 
 - Unified neutral dark/light theme across GearBeacon.
 - Added theme switching on the web dashboard.
 
-## V1.1
+## V0.1.1
 
 - Added category tabs, image-first UniFi Store-style Browse cards, and Ubiquiti-hosted product preview image extraction.

@@ -37,4 +37,4 @@ Record OS versions, CPU architecture, package names, commit SHA, tester, and res
 - [ ] After merge and green checks on the exact `main` SHA, place the stable `vMAJOR.MINOR.PATCH` tag on that SHA.
 - [ ] Verify the published release remains a draft until archives, checksums, SBOMs, container images, and attestations all succeed.
 
-Code signing and platform notarization are intentionally outside V1.10 scope.
+Code signing and platform notarization are intentionally outside V0.1.10 scope.

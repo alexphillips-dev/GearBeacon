@@ -1,6 +1,6 @@
 {
   "name": "gearbeacon-build-tools",
-  "version": "1.10.0",
+  "version": "0.1.10",
   "private": true,
   "description": "Locked development and release tooling for GearBeacon",
   "license": "Apache-2.0",
