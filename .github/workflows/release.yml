@@ -1,0 +1,69 @@
+name: GearBeacon Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+
+      - name: Verify tag matches app version
+        shell: bash
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          APP_VERSION=$(node -p "require('./backend/package.json').version")
+          if [ "$TAG_VERSION" != "$APP_VERSION" ]; then
+            echo "Tag v$TAG_VERSION does not match backend/package.json $APP_VERSION"
+            exit 1
+          fi
+
+      - name: Verify version consistency
+        run: node scripts/check-versions.mjs
+
+      - name: Compile backend
+        run: npx --yes -p typescript@5.8.3 tsc -p backend/tsconfig.json
+
+      - name: Run self-test
+        run: node --no-warnings scripts/self-test.mjs
+
+      - name: Build release archive
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          STAGE="GearBeacon-v${VERSION}"
+          mkdir -p "$STAGE"
+          rsync -a ./ "$STAGE/" \
+            --exclude '.git' \
+            --exclude '.github' \
+            --exclude 'node_modules' \
+            --exclude "$STAGE" \
+            --exclude '*.zip' \
+            --exclude '*.sha256.txt'
+          zip -qr "GearBeacon-v${VERSION}.zip" "$STAGE"
+          sha256sum "GearBeacon-v${VERSION}.zip" > "GearBeacon-v${VERSION}.sha256.txt"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" \
+            "GearBeacon-v${VERSION}.zip" \
+            "GearBeacon-v${VERSION}.sha256.txt" \
+            --title "GearBeacon V${VERSION}" \
+            --generate-notes
