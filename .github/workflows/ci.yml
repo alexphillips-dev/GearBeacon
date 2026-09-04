@@ -30,10 +30,13 @@ jobs:
           npx --yes -p typescript@5.8.3 tsc -p backend/tsconfig.json
           node --check web/app.js
           node --check scripts/self-test.mjs
+          node --check scripts/fault-test.mjs
           node --check scripts/browser-smoke.mjs
           node scripts/check-web-contract.mjs
       - name: Fresh install, V1.5-V1.7 upgrades, reliability, recovery and integration tests
         run: node --no-warnings scripts/self-test.mjs
+      - name: Deterministic fault, restart, recovery and scale tests
+        run: node --no-warnings scripts/fault-test.mjs
       - name: Validate shell launchers and installers
         if: runner.os != 'Windows'
         run: sh -n run-mac-linux.sh run-private-mac-linux.sh run-mock-mac-linux.sh deploy/*.sh
@@ -161,4 +164,4 @@ jobs:
         shell: bash
         env:
           EXPECTED_BUILD_COMMIT: ${{ github.sha }}
-        run: node scripts/standalone-smoke.mjs dist/standalone/GearBeacon-v1.8.0-*/
+        run: node scripts/standalone-smoke.mjs dist/standalone/GearBeacon-v1.9.0-*/

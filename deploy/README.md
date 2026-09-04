@@ -185,4 +185,4 @@ Use **Run diagnostics** after initial setup and whenever storage, notifications,
 
 ## Release candidates
 
-Tags containing a prerelease suffix, for example `v1.8.0-rc.1`, publish checksummed standalone packages and a GitHub prerelease. They publish only prerelease-specific container tags and never replace the stable `latest` image tag. Test a release candidate with a copied data directory or after both restore tests pass; then use the normal owner-controlled update procedure. Stable release tags such as `v1.8.0` move `latest` only after the release workflow succeeds.
+Tags containing a prerelease suffix, for example `v1.9.0-rc.1`, publish checksummed standalone packages and a GitHub prerelease. They publish only prerelease-specific container tags and never replace the stable `latest` image tag. Test a release candidate with a copied data directory or after both restore tests pass; then use the normal owner-controlled update procedure. Stable release tags such as `v1.9.0` move `latest` only after the release workflow succeeds.

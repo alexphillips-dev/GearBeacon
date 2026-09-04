@@ -123,6 +123,7 @@
         <select id="watchStatus"><option value="all">All statuses</option><option value="in">In stock</option><option value="out">Unavailable</option><option value="paused">Paused</option></select>
         <select id="watchCategory"><option value="all">All categories</option></select>
         <select id="watchSort"><option value="changed">Recently changed</option><option value="added">Recently added</option><option value="name">Name</option><option value="price-low">Price: low to high</option><option value="price-high">Price: high to low</option><option value="availability">Availability</option></select>
+        <button id="resetWatchFilters" class="filter-reset hidden" type="button">Reset filters</button>
       </div>
       <div id="bulkActions" class="bulk-actions hidden"><strong id="bulkCount">0 selected</strong><select id="bulkPauseDuration"><option value="60">Pause 1 hour</option><option value="1440">Pause 1 day</option><option value="10080">Pause 1 week</option><option value="0">Pause until resumed</option></select><button id="bulkPause">Pause</button><button id="bulkResume">Resume</button><button id="bulkRemove" class="danger-button">Remove</button><button id="bulkClear" class="ghost">Clear selection</button></div>
       <div id="watchGrid" class="grid watch-grid"></div>
@@ -131,6 +132,7 @@
         <h3>No products watched yet</h3>
         <p>Open Browse and add the gear you are waiting for.</p>
         <button class="primary" data-goto="browse">Browse products</button>
+        <button id="resetWatchEmpty" class="hidden" type="button">Reset Watchlist filters</button>
       </div>
     </section>
 
@@ -161,12 +163,12 @@
       </div>
       <div id="categoryTabs" class="store-category-tabs" role="tablist" aria-label="Product categories"></div>
       <div class="store-results-bar">
-        <strong id="browseTitle">All products</strong>
+        <div class="store-results-title"><strong id="browseTitle">All products</strong><button id="resetBrowseFilters" class="filter-reset hidden" type="button">Reset filters</button></div>
         <span id="browseCount">0 products</span>
       </div>
       <div id="browseGrid" class="store-grid"></div>
       <div class="browse-more"><button id="browseLoadMore" class="hidden">Load more products</button></div>
-      <div id="browseEmpty" class="store-empty hidden"><h3>No matching products</h3><p>Try another category or search.</p></div>
+      <div id="browseEmpty" class="store-empty hidden"><h3>No matching products</h3><p>Try another category or search.</p><button id="resetBrowseEmpty" type="button">Reset Browse filters</button></div>
     </section>
 
     <section id="activity" class="page">
@@ -182,11 +184,11 @@
         <label class="field"><span>From</span><input id="activityFrom" type="date" /></label>
         <label class="field"><span>Through</span><input id="activityTo" type="date" /></label>
         <button class="primary" type="submit">Apply filters</button>
-        <button id="clearActivityFilters" type="button">Clear</button>
+        <button id="clearActivityFilters" type="button">Reset filters</button>
       </form>
       <div class="activity-results-bar"><strong id="activityResultCount">Loading activity…</strong><span id="activityRetention">Retained activity</span></div>
       <div id="activityList" class="activity-list"></div>
-      <div id="activityEmpty" class="empty hidden"><h3>No stock changes detected yet</h3><p>The first check establishes a baseline. Changes appear here after that.</p></div>
+      <div id="activityEmpty" class="empty hidden"><h3>No stock changes detected yet</h3><p>The first check establishes a baseline. Changes appear here after that.</p><button id="resetActivityEmpty" class="hidden" type="button">Reset Activity filters</button></div>
       <div id="activityPagination" class="activity-pagination hidden"><button id="activityPrevious" type="button">Previous</button><span id="activityPage">Page 1</span><button id="activityNext" type="button">Next</button></div>
     </section>
 
@@ -208,7 +210,7 @@
         <div class="settings-grid">
         <article class="settings-card">
           <div class="settings-card-head">
-            <div><span class="settings-kicker">Application</span><h3>GearBeacon <span id="settingsVersion">V1.8.0</span></h3></div>
+            <div><span class="settings-kicker">Application</span><h3>GearBeacon <span id="settingsVersion">V1.9.0</span></h3></div>
             <span id="schemaBadge" class="settings-badge">SQLite</span>
           </div>
           <p>Your watched products live in a persistent SQLite database outside the GearBeacon application folder.</p>
@@ -380,7 +382,7 @@
     </section>
 
     <footer>
-      <span>GearBeacon V1.8 · Private self-hosted monitoring</span>
+      <span>GearBeacon V1.9 · Private self-hosted monitoring</span>
       <span id="notifyStatus"></span>
     </footer>
   </main>
@@ -424,7 +426,7 @@
       <div id="activityDialogBody" class="product-dialog-body"></div>
     </article>
   </section>
-  <div id="toast" class="toast hidden"></div>
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
   <script src="/app.js"></script>
 </body>
 </html>

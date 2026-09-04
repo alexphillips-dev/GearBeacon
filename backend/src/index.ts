@@ -1,4 +1,4 @@
-// GearBeacon V1.8 backend
+// GearBeacon V1.9 backend
 // Private, owner-operated stock monitoring for local and self-hosted installs.
 // @ts-nocheck
 
@@ -14,7 +14,7 @@ const { URL } = require('node:url');
 const { DatabaseSync } = require('node:sqlite');
 const { renderEmail, buildMimeEmail } = require('./email');
 
-const APP_VERSION = '1.8.0';
+const APP_VERSION = '1.9.0';
 const DATABASE_SCHEMA_VERSION = 7;
 const STORE_BASE = 'https://store.ui.com';
 const REGIONS = {
@@ -1210,6 +1210,17 @@ const monitors = Object.fromEntries(ACTIVE_REGIONS.map((region) => [region, {
 const monitor = contextualProxy(monitors);
 
 const mockOverrides = {};
+if (MOCK_MODE && process.env.GEARBEACON_MOCK_OVERRIDES_JSON) {
+  try {
+    const startupOverrides = JSON.parse(process.env.GEARBEACON_MOCK_OVERRIDES_JSON);
+    if (!startupOverrides || typeof startupOverrides !== 'object' || Array.isArray(startupOverrides)) throw new Error('expected an object');
+    Object.assign(mockOverrides, startupOverrides);
+  } catch (err) { throw new Error(`GEARBEACON_MOCK_OVERRIDES_JSON is invalid: ${err?.message || err}`); }
+}
+const requestedMockCatalogSize = Number(process.env.GEARBEACON_MOCK_CATALOG_SIZE || 6);
+const defaultMockCatalogSize = Number.isInteger(requestedMockCatalogSize) ? Math.max(6, Math.min(1000, requestedMockCatalogSize)) : 6;
+let mockFaults = { rateLimitOnceSeconds:0, partialOmitSlugs:[], catalogSize:defaultMockCatalogSize };
+const MOCK_CATEGORIES = ['Cloud Gateways', 'Switching', 'WiFi', 'Cameras & Physical Security', 'Door Access', 'Accessories & Cables', 'Network Storage'];
 const MOCK_PRODUCTS = [
   { slug: 'u7-pro-xgs', name: 'U7 Pro XGS', category: 'WiFi', price: '$299.00', status: 'SoldOut', imageUrl: 'https://images.svc.ui.com/?q=75&u=https%3A%2F%2Fcdn.ecomm.ui.com%2Fproducts%2F1604d78c-6e51-4fe8-a8e5-0110cc332ba0%2F73d680d3-c54b-48fb-a5f5-51c31c97b5d6.png&w=256' },
   { slug: 'uvc-ai-turret', name: 'AI Turret', category: 'Cameras & Physical Security', price: '$399.00', status: 'SoldOut', imageUrl: 'https://images.svc.ui.com/?q=75&u=https%3A%2F%2Fcdn.ecomm.ui.com%2Fproducts%2F995b6a91-fab1-4c15-b5b9-6dfdede19bab%2Fc5c464e2-6c87-4397-9f9a-6dc09d7afca3.png&w=256' },
@@ -1219,9 +1230,24 @@ const MOCK_PRODUCTS = [
   { slug: 'uvc-g5-ptz', name: 'G5 PTZ', category: 'Cameras & Physical Security', price: '$299.00', status: 'SoldOut', imageUrl: 'https://images.svc.ui.com/?q=75&u=https%3A%2F%2Fcdn.ecomm.ui.com%2Fproducts%2Fe3cbecf3-07dc-4f09-82e1-b88dca942d7a%2F8db989da-7174-4288-8d46-b486a20e11c3.png&w=256' },
 ];
 
+function mockCatalogSource() {
+  const products = [...MOCK_PRODUCTS];
+  for (let index = products.length + 1; index <= mockFaults.catalogSize; index += 1) {
+    products.push({
+      slug:`mock-product-${String(index).padStart(4, '0')}`,
+      name:`Mock Product ${String(index).padStart(4, '0')}`,
+      category:MOCK_CATEGORIES[(index - 1) % MOCK_CATEGORIES.length],
+      price:`$${(49 + index).toFixed(2)}`,
+      status:index % 4 === 0 ? 'SoldOut' : 'Available',
+      imageUrl:null,
+    });
+  }
+  return products;
+}
+
 function mockCatalog() {
   const region = currentRegion();
-  return MOCK_PRODUCTS.filter((p) => mockOverrides[p.slug]?.present !== false).map((p) => {
+  return mockCatalogSource().filter((p) => mockOverrides[p.slug]?.present !== false).map((p) => {
     const override = mockOverrides[p.slug] || {};
     const status = override.status || p.status;
     return {
@@ -1492,7 +1518,19 @@ async function fetchCatalogWithBuild(buildId) {
 }
 
 async function fetchCatalog() {
-  if (MOCK_MODE) return mockCatalog();
+  if (MOCK_MODE) {
+    if (mockFaults.rateLimitOnceSeconds > 0) {
+      const seconds = mockFaults.rateLimitOnceSeconds;
+      mockFaults.rateLimitOnceSeconds = 0;
+      const error = new Error(`Mock UniFi Store returned HTTP 429; retry after ${seconds} seconds.`);
+      error.statusCode = 429;
+      error.retryAfterAt = new Date(Date.now() + seconds * 1000).toISOString();
+      throw error;
+    }
+    const omitted = new Set(mockFaults.partialOmitSlugs);
+    if (omitted.size) monitor.partialErrors = [`Mock partial catalog omitted ${omitted.size} product${omitted.size === 1 ? '' : 's'}.`];
+    return mockCatalog().filter((product) => !omitted.has(product.slug));
+  }
   let buildId = await getBuildId(false);
   try {
     return await fetchCatalogWithBuild(buildId);
@@ -4185,6 +4223,26 @@ async function handleRegionApi(req, res, url) {
     const price = body?.price === undefined ? (mockOverrides[slug]?.price ?? source.price) : String(body.price);
     mockOverrides[slug] = { status, price, present:body?.present !== false };
     return sendJson(res, 200, { ok:true, slug, ...mockOverrides[slug] });
+  }
+
+  if (MOCK_MODE && req.method === 'POST' && url.pathname === '/api/mock/fault') {
+    const body = await readJsonBody(req);
+    if (body?.reset === true) mockFaults = { rateLimitOnceSeconds:0, partialOmitSlugs:[], catalogSize:defaultMockCatalogSize };
+    if (body?.rateLimitOnceSeconds !== undefined) {
+      const seconds = Number(body.rateLimitOnceSeconds);
+      if (!Number.isFinite(seconds) || seconds < 0 || seconds > 86400) return sendJson(res, 400, { error:'Mock rate-limit delay must be between 0 and 86400 seconds.' });
+      mockFaults.rateLimitOnceSeconds = Math.round(seconds);
+    }
+    if (body?.partialOmitSlugs !== undefined) {
+      if (!Array.isArray(body.partialOmitSlugs) || body.partialOmitSlugs.length > 1000) return sendJson(res, 400, { error:'Mock partial omissions must be an array of at most 1,000 slugs.' });
+      mockFaults.partialOmitSlugs = [...new Set(body.partialOmitSlugs.map((slug) => String(slug).trim()).filter(Boolean))];
+    }
+    if (body?.catalogSize !== undefined) {
+      const size = Number(body.catalogSize);
+      if (!Number.isInteger(size) || size < 6 || size > 1000) return sendJson(res, 400, { error:'Mock catalog size must be an integer from 6 to 1,000.' });
+      mockFaults.catalogSize = size;
+    }
+    return sendJson(res, 200, { ok:true, faults:{ ...mockFaults } });
   }
 
   return sendJson(res, 404, { error: 'Not found' });

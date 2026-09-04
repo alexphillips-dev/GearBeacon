@@ -1,5 +1,15 @@
 # GearBeacon changelog
 
+## V1.9.0 — Daily-use polish and fault testing
+
+- Preserved the selected main tab, Settings subsection, Browse filters, Watchlist filters, and Activity filters across browser refreshes using local browser storage only.
+- Added clear reset actions to every filtered view and specific no-match explanations for Browse, Watchlist, and retained Activity results.
+- Added explicit browser-offline, reconnecting, and connection-restored feedback while preserving the last successfully loaded dashboard state.
+- Added one-click copy actions for product SKUs and UniFi Store links, plus visually distinct success and failure feedback for dashboard actions.
+- Added deterministic mock-only fault controls and an automated reliability suite covering HTTP 429 `Retry-After`, repeated partial catalogs, oscillating observations, pending-confirmation restarts, and queued-notification restarts.
+- Added automated recovery failure coverage for unavailable secondary storage, corrupt primary and encrypted backups, and missing or incorrect local encryption keys.
+- Added scale coverage for 500-product catalogs and more than 10,000 retained Activity rows, including pagination and the disclosed 10,000-row export cap.
+
 ## V1.8.0 — Reliability, history, and recovery
 
 - Added persisted two-observation confirmation for sellouts, price changes, status changes, and delistings while preserving a one-observation fast path for restocks from complete, valid catalogs.

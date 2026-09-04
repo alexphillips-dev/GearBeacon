@@ -11,8 +11,8 @@ const testRoot = await mkdtemp(join(tmpdir(), 'gearbeacon-browser-smoke-'));
 const chromeProfile = await mkdtemp(join(tmpdir(), 'gearbeacon-chrome-'));
 const port = 9200 + (process.pid % 500);
 const baseUrl = `http://127.0.0.1:${port}`;
-const setupToken = 'v18-browser-setup-token';
-const password = 'V1.8 browser owner password';
+const setupToken = 'v19-browser-setup-token';
+const password = 'V1.9 browser owner password';
 const serverOutput = [];
 let server = null;
 let chrome = null;
@@ -188,12 +188,17 @@ try {
 
   await evaluate(`(() => { const input=document.getElementById('search'); input.value='U7 Pro XGS'; input.dispatchEvent(new Event('input',{bubbles:true})); })()`);
   await waitForBrowser("document.querySelectorAll('#browseGrid .store-card').length === 1", 'Debounced Browse search failed');
+  assert(await evaluate("!document.getElementById('resetBrowseFilters').classList.contains('hidden')"), 'Browse reset action did not appear for an active search.');
   await evaluate("document.querySelector('#browseGrid [data-watch=\"u7-pro-xgs\"]').click()");
   await waitForBrowser("app.products.find((product) => product.slug === 'u7-pro-xgs')?.watched === true", 'Browser watch action failed');
   await evaluate(`(() => { const input=document.getElementById('search'); input.value=''; input.dispatchEvent(new Event('input',{bubbles:true})); })()`);
   await waitForBrowser("document.querySelectorAll('#browseGrid .store-card').length >= 5", 'Browse search did not clear');
   await evaluate("document.querySelector('[data-category=\"WiFi\"]').click()");
   await waitForBrowser("app.browseCategory === 'WiFi' && app.products.filter((product) => product.category === 'WiFi').length === document.querySelectorAll('#browseGrid .store-card').length", 'Browse category filtering failed');
+  await evaluate(`(() => { const input=document.getElementById('search'); input.value='no-such-product'; input.dispatchEvent(new Event('input',{bubbles:true})); })()`);
+  await waitForBrowser("!document.getElementById('browseEmpty').classList.contains('hidden') && !document.getElementById('resetBrowseEmpty').classList.contains('hidden')", 'Filtered Browse empty state did not offer a reset action');
+  await evaluate("document.getElementById('resetBrowseEmpty').click()");
+  await waitForBrowser("app.browseCategory === 'All' && document.getElementById('search').value === '' && document.querySelectorAll('#browseGrid .store-card').length >= 5", 'Browse reset action did not restore the catalog');
   await evaluate("document.querySelector('[data-category=\"All\"]').click(); app.browseVisibleCount=2; renderProducts(true)");
   await waitForBrowser("!document.getElementById('browseLoadMore').classList.contains('hidden') && document.querySelectorAll('#browseGrid .store-card').length === 2", 'Incremental catalog loading did not activate');
   await evaluate("document.getElementById('browseLoadMore').click()");
@@ -201,6 +206,15 @@ try {
 
   await evaluate("openProductDialog('u7-pro-xgs')");
   await waitForBrowser("!document.getElementById('productDialog').classList.contains('hidden') && document.getElementById('productRuleForm')", 'Product details or rule editor did not open');
+  const copiedProductDetails = await evaluate(`(async () => {
+    window.__gearbeaconCopies=[];
+    Object.defineProperty(navigator, 'clipboard', { configurable:true, value:{ writeText:async (value) => window.__gearbeaconCopies.push(value) } });
+    const buttons=[...document.querySelectorAll('#productDialogBody [data-copy-text]')];
+    buttons[0].click(); await new Promise((resolve) => setTimeout(resolve, 20));
+    buttons[1].click(); await new Promise((resolve) => setTimeout(resolve, 20));
+    return { copies:window.__gearbeaconCopies, toast:document.getElementById('toast').textContent, success:document.getElementById('toast').classList.contains('success') };
+  })()`);
+  assert(copiedProductDetails.copies[0] === 'u7-pro-xgs' && /^https:\/\/store\.ui\.com\//.test(copiedProductDetails.copies[1]) && copiedProductDetails.success && /Store link copied/.test(copiedProductDetails.toast), `Product copy actions failed: ${JSON.stringify(copiedProductDetails)}`);
   const dialogHoverPoints = await evaluate("(() => { const panel=document.querySelector('.product-dialog-panel').getBoundingClientRect(); return { panelX:window.innerWidth-20, backdropX:Math.max(4,Math.floor(panel.left/2)), y:Math.min(window.innerHeight-20,220) }; })()");
   for (const theme of ['dark', 'light']) {
     await evaluate(`applyTheme(${JSON.stringify(theme)})`);
@@ -218,6 +232,10 @@ try {
 
   await evaluate("document.querySelector('[data-tab=\"watchlist\"]').click()");
   await waitForBrowser("document.querySelectorAll('#watchGrid .watch-card').length === 2", 'Watchlist did not render watched products');
+  await evaluate(`(() => { const input=document.getElementById('watchSearch'); input.value='no watched product'; input.dispatchEvent(new Event('input',{bubbles:true})); })()`);
+  await waitForBrowser("!document.getElementById('watchEmpty').classList.contains('hidden') && !document.getElementById('resetWatchEmpty').classList.contains('hidden')", 'Filtered Watchlist empty state did not offer a reset action');
+  await evaluate("document.getElementById('resetWatchEmpty').click()");
+  await waitForBrowser("document.getElementById('watchSearch').value === '' && document.querySelectorAll('#watchGrid .watch-card').length === 2", 'Watchlist reset action did not restore watched products');
   await evaluate(`document.querySelectorAll('#watchGrid [data-watch-select]').forEach((input) => { input.checked=true; input.dispatchEvent(new Event('change',{bubbles:true})); })`);
   await waitForBrowser("!document.getElementById('bulkActions').classList.contains('hidden') && app.selectedWatch.size === 2", 'Bulk watchlist selection failed');
   await evaluate("document.getElementById('bulkPause').click()");
@@ -291,6 +309,10 @@ try {
   await evaluate("document.getElementById('closeProductDialog').click()");
   await evaluate("document.getElementById('clearActivityFilters').click()");
   await waitForBrowser("app.activity.loaded && document.getElementById('activitySearch').value === '' && document.getElementById('activityType').value === 'all'", 'Activity filters did not clear');
+  await evaluate(`(() => { document.getElementById('activitySearch').value='no such activity'; document.getElementById('activityFilters').requestSubmit(); })()`);
+  await waitForBrowser("app.activity.loaded && app.activity.count === 0 && !document.getElementById('activityEmpty').classList.contains('hidden') && !document.getElementById('resetActivityEmpty').classList.contains('hidden')", 'Filtered Activity empty state did not offer a reset action');
+  await evaluate("document.getElementById('resetActivityEmpty').click()");
+  await waitForBrowser("app.activity.loaded && app.activity.count > 0 && document.getElementById('activitySearch').value === ''", 'Activity reset action did not restore retained events');
   await cdp.send('Emulation.setDeviceMetricsOverride', { width:390, height:844, screenWidth:390, screenHeight:844, deviceScaleFactor:1, mobile:false });
   const compactActivity = await evaluate("(() => { const row=document.querySelector('#activityList .event'); return { height:row.getBoundingClientRect().height, overflow:document.documentElement.scrollWidth <= window.innerWidth + 1, alertLabel:getComputedStyle(row.querySelector('.event-alert-label')).display, timeColumn:row.querySelector('time').getBoundingClientRect().top - row.getBoundingClientRect().top, filterColumns:getComputedStyle(document.getElementById('activityFilters')).gridTemplateColumns.split(' ').length }; })()");
   assert(compactActivity?.height === 64 && compactActivity.overflow && compactActivity.alertLabel === 'none' && compactActivity.timeColumn < 32 && compactActivity.filterColumns === 1, `Mobile activity feed or filters did not remain compact: ${JSON.stringify(compactActivity)}`);
@@ -324,7 +346,7 @@ try {
   await evaluate("document.getElementById('closeProductDialog').click(); document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabData').click()");
   await waitForBrowser("!document.getElementById('settingsPanelData').hidden && document.getElementById('settingsPanelNotifications').hidden", 'Data settings tab failed');
   const recoverySettings = await evaluate("({ activityRetention:document.getElementById('configEventRetention').value, secondaryDirectory:document.getElementById('configSecondaryBackupDir').value, encrypted:document.getElementById('configSecondaryEncrypted').checked, hasPrimaryTest:Boolean(document.getElementById('testPrimaryBackup')), hasSecondaryTest:Boolean(document.getElementById('testSecondaryBackup')) })");
-  assert(recoverySettings.activityRetention === '365' && recoverySettings.secondaryDirectory === '' && !recoverySettings.encrypted && recoverySettings.hasPrimaryTest && recoverySettings.hasSecondaryTest, `V1.8 recovery settings are incomplete: ${JSON.stringify(recoverySettings)}`);
+  assert(recoverySettings.activityRetention === '365' && recoverySettings.secondaryDirectory === '' && !recoverySettings.encrypted && recoverySettings.hasPrimaryTest && recoverySettings.hasSecondaryTest, `V1.9 recovery settings are incomplete: ${JSON.stringify(recoverySettings)}`);
   const browserBackup = await evaluate(`(async () => {
     const backup = await api('/api/data/export/encrypted', { method:'POST', body:JSON.stringify({ passphrase:'browser backup passphrase' }) });
     const preview = await api('/api/data/preview', { method:'POST', body:JSON.stringify({ backup, passphrase:'browser backup passphrase' }) });
@@ -355,7 +377,26 @@ try {
   await evaluate("document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabSecurity').click()");
   await waitForBrowser("document.querySelectorAll('#sessionList [data-revoke-session]').length >= 1", 'Authenticated session management did not render');
 
-  console.log(`BROWSER SMOKE PASSED: ${process.platform} · setup/auth · unclipped navigation · dark/light · images · search/category/load-more · stable dialog hover · watch/rules/bulk/import · compact searchable activity/evidence · email settings/preview/deep-link · backup/import · diagnostics/operations · responsive`);
+  await evaluate("history.replaceState(null, '', location.pathname + '#settings'); location.reload()");
+  await waitForBrowser("!document.getElementById('appShell').classList.contains('hidden') && document.getElementById('settings').classList.contains('active') && !document.getElementById('settingsPanelSecurity').hidden", 'Selected tab and Settings subsection did not survive refresh');
+  await evaluate(`(() => {
+    document.querySelector('[data-tab="browse"]').click();
+    document.querySelector('[data-category="WiFi"]').click();
+    const input=document.getElementById('search'); input.value='U7'; input.dispatchEvent(new Event('input',{bubbles:true}));
+  })()`);
+  await waitForBrowser("app.browseCategory === 'WiFi' && document.getElementById('search').value === 'U7' && JSON.parse(localStorage.getItem('gearbeacon.uiState.v1')).browse.search === 'U7' && document.querySelectorAll('#browseGrid .store-card').length === 1", 'Browse state was not ready to persist');
+  await evaluate("location.reload()");
+  await waitForBrowser("!document.getElementById('appShell').classList.contains('hidden') && app.products.length >= 5", 'Dashboard did not reload for filter persistence');
+  const restoredBrowse = await evaluate("({ active:document.getElementById('browse').classList.contains('active'), category:app.browseCategory, search:document.getElementById('search').value, cards:document.querySelectorAll('#browseGrid .store-card').length, stored:JSON.parse(localStorage.getItem('gearbeacon.uiState.v1')) })");
+  assert(restoredBrowse.active && restoredBrowse.category === 'WiFi' && restoredBrowse.search === 'U7' && restoredBrowse.cards === 1, `Browse filters and active tab did not survive refresh: ${JSON.stringify(restoredBrowse)}`);
+  const savedFilters = await evaluate("JSON.parse(localStorage.getItem('gearbeacon.uiState.v1'))");
+  assert(savedFilters.browse.category === 'WiFi' && savedFilters.browse.search === 'U7' && savedFilters.watch.search === '' && savedFilters.activity.search === '', `Saved filter state is incomplete: ${JSON.stringify(savedFilters)}`);
+  await evaluate("document.getElementById('resetBrowseFilters').click(); window.dispatchEvent(new Event('offline'))");
+  await waitForBrowser("app.browserOffline && !document.getElementById('attentionBanner').classList.contains('hidden') && document.getElementById('attentionTitle').textContent.includes('offline') && document.getElementById('attentionAction').classList.contains('hidden')", 'Offline state did not preserve the dashboard with clear feedback');
+  await evaluate("window.dispatchEvent(new Event('online'))");
+  await waitForBrowser("!app.browserOffline && document.getElementById('toast').textContent === 'Connection restored' && document.getElementById('toast').classList.contains('success')", 'Reconnect state did not confirm recovery');
+
+  console.log(`BROWSER SMOKE PASSED: ${process.platform} · setup/auth · persistent navigation/filters · resettable empty states · offline recovery · copy actions · unclipped navigation · dark/light · images · watch/rules/bulk/import · compact searchable activity/evidence · email settings/preview/deep-link · backup/import · diagnostics/operations · responsive`);
 } catch (error) {
   if (serverOutput.length) process.stderr.write(`\nGearBeacon server output:\n${serverOutput.join('').slice(-12000)}\n`);
   throw error;
