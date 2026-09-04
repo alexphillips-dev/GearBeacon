@@ -11,6 +11,7 @@ const tls = require('node:tls');
 const { AsyncLocalStorage } = require('node:async_hooks');
 const { URL } = require('node:url');
 const { DatabaseSync } = require('node:sqlite');
+const { renderEmail, buildMimeEmail } = require('./email');
 const APP_VERSION = '1.7.0';
 const DATABASE_SCHEMA_VERSION = 6;
 const STORE_BASE = 'https://store.ui.com';
@@ -98,6 +99,15 @@ let QUIET_HOURS_END = String(process.env.GEARBEACON_QUIET_HOURS_END || '07:00').
 let DIGEST_ENABLED = ['1', 'true', 'yes'].includes(String(process.env.GEARBEACON_DIGEST_ENABLED || '').toLowerCase());
 let DIGEST_TIME = String(process.env.GEARBEACON_DIGEST_TIME || '09:00').trim();
 let NOTIFICATION_COOLDOWN_MINUTES = Math.max(0, Math.min(10080, Number(process.env.GEARBEACON_NOTIFICATION_COOLDOWN_MINUTES || 30)));
+let EMAIL_DETAIL_LEVEL = ['compact', 'standard', 'detailed'].includes(String(process.env.GEARBEACON_EMAIL_DETAIL_LEVEL || '').toLowerCase()) ? String(process.env.GEARBEACON_EMAIL_DETAIL_LEVEL).toLowerCase() : 'standard';
+let EMAIL_EMBED_IMAGES = !['0', 'false', 'no'].includes(String(process.env.GEARBEACON_EMAIL_EMBED_IMAGES ?? '1').toLowerCase());
+let EMAIL_EXPLAIN_REASON = !['0', 'false', 'no'].includes(String(process.env.GEARBEACON_EMAIL_EXPLAIN_REASON ?? '1').toLowerCase());
+let EMAIL_PRICE_CALCULATIONS = !['0', 'false', 'no'].includes(String(process.env.GEARBEACON_EMAIL_PRICE_CALCULATIONS ?? '1').toLowerCase());
+let EMAIL_DIGEST_MAX_ITEMS = Math.max(1, Math.min(50, Number(process.env.GEARBEACON_EMAIL_DIGEST_MAX_ITEMS || 12)));
+let EMAIL_SUBJECT_PREFIX = String(process.env.GEARBEACON_EMAIL_SUBJECT_PREFIX ?? '[GearBeacon]').trim().slice(0, 60);
+let EMAIL_THEME = ['auto', 'light', 'dark'].includes(String(process.env.GEARBEACON_EMAIL_THEME || '').toLowerCase()) ? String(process.env.GEARBEACON_EMAIL_THEME).toLowerCase() : 'auto';
+if (/[\r\n]/.test(EMAIL_SUBJECT_PREFIX))
+    throw new Error('GEARBEACON_EMAIL_SUBJECT_PREFIX must not contain line breaks.');
 try {
     new Intl.DateTimeFormat('en-US', { timeZone: NOTIFICATION_TIME_ZONE }).format();
 }
@@ -661,6 +671,13 @@ const DEFAULT_APP_CONFIG = Object.freeze({
     digestEnabled: DIGEST_ENABLED,
     digestTime: DIGEST_TIME,
     notificationCooldownMinutes: NOTIFICATION_COOLDOWN_MINUTES,
+    emailDetailLevel: EMAIL_DETAIL_LEVEL,
+    emailEmbedImages: EMAIL_EMBED_IMAGES,
+    emailExplainReason: EMAIL_EXPLAIN_REASON,
+    emailPriceCalculations: EMAIL_PRICE_CALCULATIONS,
+    emailDigestMaxItems: EMAIL_DIGEST_MAX_ITEMS,
+    emailSubjectPrefix: EMAIL_SUBJECT_PREFIX,
+    emailTheme: EMAIL_THEME,
     operationalAlerts: { ...OPERATIONAL_ALERTS },
     channelEnabled: { ...CHANNEL_ENABLED },
     ntfyBaseUrl: NTFY_BASE_URL,
@@ -745,6 +762,20 @@ function normalizeAppConfig(input, base = DEFAULT_APP_CONFIG) {
     const notificationCooldownMinutes = Number(body.notificationCooldownMinutes ?? base.notificationCooldownMinutes);
     if (!Number.isFinite(notificationCooldownMinutes) || notificationCooldownMinutes < 0 || notificationCooldownMinutes > 10080)
         throw new Error('Notification cooldown must be between 0 and 10080 minutes.');
+    const emailDetailLevel = String(body.emailDetailLevel ?? base.emailDetailLevel).toLowerCase();
+    if (!['compact', 'standard', 'detailed'].includes(emailDetailLevel))
+        throw new Error('Email detail level must be compact, standard, or detailed.');
+    const emailTheme = String(body.emailTheme ?? base.emailTheme).toLowerCase();
+    if (!['auto', 'light', 'dark'].includes(emailTheme))
+        throw new Error('Email theme must be auto, light, or dark.');
+    const emailDigestMaxItems = Number(body.emailDigestMaxItems ?? base.emailDigestMaxItems);
+    if (!Number.isInteger(emailDigestMaxItems) || emailDigestMaxItems < 1 || emailDigestMaxItems > 50)
+        throw new Error('Email digest items must be between 1 and 50.');
+    const emailSubjectPrefix = String(body.emailSubjectPrefix ?? base.emailSubjectPrefix).trim();
+    if (/[\r\n]/.test(emailSubjectPrefix))
+        throw new Error('Email subject prefix must not contain line breaks.');
+    if (emailSubjectPrefix.length > 60)
+        throw new Error('Email subject prefix must be 60 characters or fewer.');
     const operationalAlerts = { ...base.operationalAlerts };
     for (const key of Object.keys(operationalAlerts))
         if (typeof body.operationalAlerts?.[key] === 'boolean')
@@ -782,6 +813,13 @@ function normalizeAppConfig(input, base = DEFAULT_APP_CONFIG) {
         digestEnabled: Boolean(body.digestEnabled ?? base.digestEnabled),
         digestTime: validTimeOfDay(body.digestTime ?? base.digestTime, 'Digest time'),
         notificationCooldownMinutes,
+        emailDetailLevel,
+        emailEmbedImages: Boolean(body.emailEmbedImages ?? base.emailEmbedImages),
+        emailExplainReason: Boolean(body.emailExplainReason ?? base.emailExplainReason),
+        emailPriceCalculations: Boolean(body.emailPriceCalculations ?? base.emailPriceCalculations),
+        emailDigestMaxItems,
+        emailSubjectPrefix,
+        emailTheme,
         operationalAlerts,
         channelEnabled,
         ntfyBaseUrl: validHttpUrl(String(body.ntfyBaseUrl ?? base.ntfyBaseUrl).trim()),
@@ -820,6 +858,13 @@ function applyAppConfig(config, secrets, { startup = false } = {}) {
     DIGEST_ENABLED = config.digestEnabled;
     DIGEST_TIME = config.digestTime;
     NOTIFICATION_COOLDOWN_MINUTES = config.notificationCooldownMinutes;
+    EMAIL_DETAIL_LEVEL = config.emailDetailLevel;
+    EMAIL_EMBED_IMAGES = config.emailEmbedImages;
+    EMAIL_EXPLAIN_REASON = config.emailExplainReason;
+    EMAIL_PRICE_CALCULATIONS = config.emailPriceCalculations;
+    EMAIL_DIGEST_MAX_ITEMS = config.emailDigestMaxItems;
+    EMAIL_SUBJECT_PREFIX = config.emailSubjectPrefix;
+    EMAIL_THEME = config.emailTheme;
     OPERATIONAL_ALERTS = { ...config.operationalAlerts };
     CHANNEL_ENABLED = { ...config.channelEnabled };
     NTFY_BASE_URL = config.ntfyBaseUrl || 'https://ntfy.sh';
@@ -1371,21 +1416,86 @@ async function fetchCatalog() {
         throw err;
     }
 }
+function productDashboardUrl(slug, region = currentRegion()) {
+    if (!PUBLIC_BASE_URL || !slug)
+        return null;
+    try {
+        const url = new URL(PUBLIC_BASE_URL);
+        url.pathname = `${url.pathname.replace(/\/$/, '')}/`;
+        url.search = new URLSearchParams({ region, product: slug }).toString();
+        url.hash = 'browse';
+        return url.toString();
+    }
+    catch {
+        return null;
+    }
+}
+function eventPriceSnapshot(previous, current) {
+    const currentValue = priceValue(current?.price);
+    const previousValue = priceValue(previous?.price);
+    const difference = currentValue !== null && previousValue !== null ? Math.round((currentValue - previousValue) * 100) / 100 : null;
+    const differencePercent = difference !== null && previousValue ? Math.round((difference / previousValue) * 1000) / 10 : null;
+    return { currentValue, previousValue, difference, differencePercent };
+}
+function eventAlertKind(type, previous, current, rule) {
+    if (type !== 'price_change')
+        return type;
+    const prices = eventPriceSnapshot(previous, current);
+    const crossedTarget = rule?.targetPrice !== null && rule?.targetPrice !== undefined && prices.currentValue !== null
+        && prices.currentValue <= rule.targetPrice && (prices.previousValue === null || prices.previousValue > rule.targetPrice);
+    if (crossedTarget)
+        return 'target_price';
+    if (prices.difference !== null && prices.difference < 0)
+        return 'price_drop';
+    return 'price_change';
+}
+function eventTriggerReason(type, alertKind, rule, watchedAtDetection) {
+    if (alertKind === 'target_price')
+        return `Price reached the configured target of ${rule.targetPrice}.`;
+    if (alertKind === 'price_drop')
+        return rule?.priceDropOnly ? 'Price-drop-only monitoring detected a lower price.' : 'The price decreased on a watched product.';
+    if (type === 'price_change')
+        return 'The price changed on a watched product.';
+    if (type === 'restock')
+        return rule?.immediateRestock ? 'Immediate restock alerts are enabled for this product.' : 'A watched product became available.';
+    if (type === 'sold_out')
+        return 'A watched product became unavailable.';
+    if (type === 'status_change')
+        return 'The store status changed on a watched product.';
+    if (type === 'new_product')
+        return 'New-product alerts are enabled for this store region.';
+    return watchedAtDetection ? 'A watched product changed on the UniFi Store.' : 'GearBeacon detected a store change.';
+}
 function createEvent(type, previous, current, watchedAtDetection) {
+    const region = currentRegion();
+    const rule = watchedAtDetection ? watchRule(current.slug, region) : { ...DEFAULT_WATCH_RULE };
+    const prices = eventPriceSnapshot(previous, current);
+    const alertKind = eventAlertKind(type, previous, current, rule);
     return {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         type,
         slug: current.slug,
         name: current.name,
         category: current.category,
+        imageUrl: current.imageUrl || null,
         price: current.price,
+        priceValue: prices.currentValue,
         previousPrice: previous?.price || null,
+        previousPriceValue: prices.previousValue,
+        priceDifference: prices.difference,
+        priceDifferencePercent: prices.differencePercent,
         previousStatus: previous?.status || null,
         status: current.status,
         inStock: current.inStock,
         watchedAtDetection,
+        alertKind,
+        triggerReason: eventTriggerReason(type, alertKind, rule, watchedAtDetection),
+        targetPrice: rule.targetPrice,
+        immediateRestock: rule.immediateRestock,
         url: current.url,
-        region: currentRegion(),
+        dashboardUrl: productDashboardUrl(current.slug, region),
+        notificationTimeZone: NOTIFICATION_TIME_ZONE,
+        region,
         detectedAt: isoNow(),
     };
 }
@@ -1563,6 +1673,20 @@ async function sendGotify(event) {
 function smtpConfigured() {
     return Boolean(SMTP_HOST && SMTP_FROM && SMTP_TO.length);
 }
+function emailRenderOptions(overrides = {}) {
+    return {
+        detailLevel: EMAIL_DETAIL_LEVEL,
+        embedImages: EMAIL_EMBED_IMAGES,
+        explainReason: EMAIL_EXPLAIN_REASON,
+        priceCalculations: EMAIL_PRICE_CALCULATIONS,
+        digestMaxItems: EMAIL_DIGEST_MAX_ITEMS,
+        subjectPrefix: EMAIL_SUBJECT_PREFIX,
+        theme: EMAIL_THEME,
+        timeZone: NOTIFICATION_TIME_ZONE,
+        regions: REGIONS,
+        ...overrides,
+    };
+}
 function smtpAddress(value) {
     const match = String(value || '').match(/<([^<>\r\n]+)>\s*$/);
     const address = (match ? match[1] : String(value || '')).trim();
@@ -1669,26 +1793,22 @@ async function connectSmtp() {
 async function sendSmtp(event) {
     if (!smtpConfigured())
         return null;
-    const copy = notificationCopy(event);
+    const rendered = await buildMimeEmail(event, emailRenderOptions({
+        iconPath: path.join(WEB_DIR, 'assets', 'icon.png'),
+        from: SMTP_FROM,
+        to: SMTP_TO.join(', '),
+        messageIdHost: SMTP_HOST,
+    }));
+    for (const warning of rendered.warnings)
+        writeAppLog('warn', 'email', warning, { eventId: event.id });
     const { socket, reader, command } = await connectSmtp();
     try {
         await command(`MAIL FROM:<${smtpAddress(SMTP_FROM)}>`, [250]);
         for (const recipient of SMTP_TO)
             await command(`RCPT TO:<${smtpAddress(recipient)}>`, [250, 251]);
         await command('DATA', [354]);
-        const subject = `=?UTF-8?B?${Buffer.from(copy.title, 'utf8').toString('base64')}?=`;
-        const body = `${copy.body}${event.url ? `\r\n\r\n${event.url}` : ''}`.replace(/\r?\n/g, '\r\n').replace(/^\./gm, '..');
-        const message = [
-            `From: ${SMTP_FROM.replace(/[\r\n]/g, '')}`,
-            `To: ${SMTP_TO.join(', ').replace(/[\r\n]/g, '')}`,
-            `Subject: ${subject}`,
-            `Date: ${new Date().toUTCString()}`,
-            'MIME-Version: 1.0',
-            'Content-Type: text/plain; charset=UTF-8',
-            'Content-Transfer-Encoding: 8bit',
-            '', body, '.', '',
-        ].join('\r\n');
-        socket.write(message);
+        const message = rendered.message.replace(/\r?\n/g, '\r\n').replace(/^\./gm, '..');
+        socket.write(`${message}\r\n.\r\n`);
         await smtpResponse(reader, [250]);
         await command('QUIT', [221]);
     }
@@ -1768,8 +1888,57 @@ function testEvent() {
         inStock: false,
         watchedAtDetection: false,
         url: PUBLIC_BASE_URL || null,
+        dashboardUrl: PUBLIC_BASE_URL || null,
+        notificationTimeZone: NOTIFICATION_TIME_ZONE,
+        alertKind: 'test',
+        triggerReason: 'You requested a test from GearBeacon notification settings.',
         region: currentRegion(),
         detectedAt: isoNow(),
+    };
+    return event;
+}
+const EMAIL_PREVIEW_TYPES = new Set(['restock', 'target_price', 'price_drop', 'price_change', 'sold_out', 'status_change', 'new_product', 'digest', 'operational', 'test']);
+function previewNotificationEvent(slug, requestedType = 'restock') {
+    if (!EMAIL_PREVIEW_TYPES.has(requestedType))
+        throw new Error('Unsupported email preview type.');
+    if (requestedType === 'test')
+        return testEvent();
+    if (requestedType === 'operational')
+        return {
+            id: 'preview-operational', type: 'operational', alertKind: 'operational', code: 'monitor', slug: null,
+            name: 'Store monitoring needs attention', detail: 'The UniFi Store could not be checked after several attempts. Open Operations to review the latest diagnostic details.',
+            triggerReason: 'Operational alerts are enabled for this GearBeacon installation.', region: currentRegion(), detectedAt: isoNow(),
+            notificationTimeZone: NOTIFICATION_TIME_ZONE, watchedAtDetection: false, url: PUBLIC_BASE_URL || null, dashboardUrl: PUBLIC_BASE_URL || null,
+        };
+    if (requestedType === 'digest') {
+        const preferred = slug && state.products[slug] ? [state.products[slug]] : [];
+        const products = [...preferred, ...Object.values(state.products).filter((item) => item.slug !== slug)].slice(0, 6);
+        const kinds = ['restock', 'target_price', 'price_drop', 'new_product', 'sold_out', 'status_change'];
+        const events = products.map((item, index) => previewNotificationEvent(item.slug, kinds[index % kinds.length]));
+        if (events[0])
+            events.push({ ...events[0], id: 'preview-duplicate' });
+        return { id: 'preview-digest', type: 'digest', alertKind: 'digest', events, region: currentRegion(), detectedAt: isoNow(), notificationTimeZone: NOTIFICATION_TIME_ZONE, url: PUBLIC_BASE_URL || null, dashboardUrl: PUBLIC_BASE_URL || null };
+    }
+    const product = (slug && state.products[slug]) || Object.values(state.products)[0] || null;
+    const currentPriceValue = priceValue(product?.price) ?? 199;
+    const isAvailable = !['sold_out'].includes(requestedType);
+    const underlyingType = ['target_price', 'price_drop'].includes(requestedType) ? 'price_change' : requestedType;
+    const previousPriceValue = ['target_price', 'price_drop', 'price_change'].includes(requestedType) ? currentPriceValue + 50 : null;
+    const priceDifference = previousPriceValue === null ? null : Math.round((currentPriceValue - previousPriceValue) * 100) / 100;
+    const priceDifferencePercent = previousPriceValue ? Math.round((priceDifference / previousPriceValue) * 1000) / 10 : null;
+    const targetPrice = requestedType === 'target_price' ? currentPriceValue : null;
+    const event = {
+        id: 'preview', type: underlyingType, alertKind: requestedType, slug: product?.slug || slug || 'example-product',
+        name: product?.name || 'Example UniFi product', category: product?.category || 'WiFi', imageUrl: product?.imageUrl || null,
+        price: product?.price || '$199.00', priceValue: currentPriceValue,
+        previousPrice: previousPriceValue === null ? null : `$${previousPriceValue.toFixed(2)}`, previousPriceValue, priceDifference, priceDifferencePercent,
+        previousStatus: requestedType === 'status_change' ? 'ComingSoon' : requestedType === 'restock' ? 'SoldOut' : null,
+        status: requestedType === 'sold_out' ? 'SoldOut' : requestedType === 'status_change' ? 'Available' : product?.status || 'Available',
+        inStock: isAvailable, watchedAtDetection: Boolean(product ? state.watchlist.includes(product.slug) : true),
+        targetPrice, immediateRestock: requestedType === 'restock',
+        triggerReason: eventTriggerReason(underlyingType, requestedType, { targetPrice, priceDropOnly: requestedType === 'price_drop', immediateRestock: requestedType === 'restock' }, true),
+        url: product?.url || `${STORE_BASE}/${REGIONS[currentRegion()].path}/products/${product?.slug || slug || 'example-product'}`,
+        dashboardUrl: productDashboardUrl(product?.slug || slug || 'example-product'), region: currentRegion(), detectedAt: isoNow(), notificationTimeZone: NOTIFICATION_TIME_ZONE,
     };
     return event;
 }
@@ -1856,7 +2025,7 @@ function enqueueOperationalAlert(code, name, detail, region = currentRegion(), o
     const preference = ({ monitor: 'monitorFailures', notifications: 'notificationFailures', backup: 'backupFailures', disk: 'lowDiskSpace' })[code];
     if (preference && !OPERATIONAL_ALERTS[preference])
         return 0;
-    return enqueueAlert({ id: `operational-${code}-${region}-${Date.now()}`, type: 'operational', code, slug: null, name, detail, region, detectedAt: isoNow(), watchedAtDetection: false, url: PUBLIC_BASE_URL || null }, options);
+    return enqueueAlert({ id: `operational-${code}-${region}-${Date.now()}`, type: 'operational', alertKind: 'operational', code, slug: null, name, detail, triggerReason: 'Operational alerts are enabled for this GearBeacon installation.', notificationTimeZone: NOTIFICATION_TIME_ZONE, region, detectedAt: isoNow(), watchedAtDetection: false, url: PUBLIC_BASE_URL || null, dashboardUrl: PUBLIC_BASE_URL || null }, options);
 }
 function notificationQueueSummary() {
     const rows = db.prepare('SELECT status,COUNT(*) AS count FROM notification_queue GROUP BY status').all();
@@ -1895,7 +2064,7 @@ async function processNotificationQueue() {
             }
             db.prepare(`UPDATE notification_queue SET status='processing',updated_at=? WHERE id IN (${marks})`).run(isoNow(), ...ids);
             const events = rows.map((row) => safeJsonParse(row.payload_json, {}));
-            const event = events.length > 1 ? { id: `digest-${rows[0].id}`, type: 'digest', events, region: rows[0].region, detectedAt: isoNow(), url: PUBLIC_BASE_URL || null } : events[0];
+            const event = events.length > 1 ? { id: `digest-${rows[0].id}`, type: 'digest', alertKind: 'digest', events, region: rows[0].region, detectedAt: isoNow(), notificationTimeZone: NOTIFICATION_TIME_ZONE, url: PUBLIC_BASE_URL || null, dashboardUrl: PUBLIC_BASE_URL || null } : events[0];
             try {
                 await regionContext.run(rows[0].region, () => sendChannel(rows[0].channel, event));
                 db.prepare(`UPDATE notification_queue SET status='sent',attempts=attempts+1,last_error=NULL,updated_at=? WHERE id IN (${marks})`).run(isoNow(), ...ids);
@@ -2831,6 +3000,14 @@ function sendText(res, status, text, type = 'text/plain; charset=utf-8') {
     });
     res.end(text);
 }
+function sendEmailPreviewHtml(res, html) {
+    const headers = { ...commonResponseHeaders(res) };
+    delete headers['X-Frame-Options'];
+    headers['Content-Security-Policy'] = "default-src 'none'; img-src 'self' data: https://ui.com https://*.ui.com; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
+    headers['Cross-Origin-Resource-Policy'] = 'same-origin';
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Length': Buffer.byteLength(html), 'Cache-Control': 'no-store', ...headers });
+    res.end(html);
+}
 function readBody(req, maxBytes = 1024 * 1024) {
     return new Promise((resolve, reject) => {
         let size = 0;
@@ -3117,10 +3294,58 @@ async function handleRegionApi(req, res, url) {
     if (req.method === 'GET' && url.pathname === '/api/notifications/preview') {
         const slug = String(url.searchParams.get('slug') || '').trim();
         const eventType = String(url.searchParams.get('eventType') || 'restock').trim();
-        const product = slug ? state.products[slug] : null;
-        const event = { id: 'preview', type: eventType, slug: product?.slug || slug || null, name: product?.name || 'Example product', price: product?.price || '$199.00', previousPrice: '$249.00', previousStatus: 'SoldOut', status: eventType === 'restock' ? 'Available' : 'SoldOut', inStock: eventType === 'restock', watchedAtDetection: Boolean(product && state.watchlist.includes(product.slug)), url: product?.url || null, region: currentRegion(), detectedAt: isoNow() };
+        let event;
+        try {
+            event = previewNotificationEvent(slug, eventType);
+        }
+        catch (err) {
+            return sendJson(res, 400, { error: err.message });
+        }
+        const product = event.slug ? state.products[event.slug] : null;
         const decision = product ? notificationDecision(event) : { allowed: true, reason: 'preview', rule: { ...DEFAULT_WATCH_RULE } };
-        return sendJson(res, 200, { event, decision, delivery: deliveryPlan(event, decision.rule), copy: notificationCopy(event), configuredChannels: CHANNEL_NAMES.filter(channelConfigured) });
+        const email = renderEmail(event, emailRenderOptions({ allowRemoteImages: !EMAIL_EMBED_IMAGES, logoSource: '/assets/icon.png' }));
+        return sendJson(res, 200, { event, decision, delivery: deliveryPlan(event, decision.rule), copy: notificationCopy(event), email: { subject: email.subject, text: email.text }, configuredChannels: CHANNEL_NAMES.filter(channelConfigured) });
+    }
+    if (req.method === 'GET' && url.pathname === '/api/notifications/email-preview') {
+        const slug = String(url.searchParams.get('slug') || '').trim();
+        const eventType = String(url.searchParams.get('eventType') || 'restock').trim();
+        const theme = String(url.searchParams.get('theme') || EMAIL_THEME).trim().toLowerCase();
+        if (!['auto', 'light', 'dark'].includes(theme))
+            return sendJson(res, 400, { error: 'Email preview theme must be auto, light, or dark.' });
+        let event;
+        try {
+            event = previewNotificationEvent(slug, eventType);
+        }
+        catch (err) {
+            return sendJson(res, 400, { error: err.message });
+        }
+        let previewConfig;
+        try {
+            const current = storedAppConfig();
+            previewConfig = normalizeAppConfig({
+                ...current,
+                emailDetailLevel: url.searchParams.get('detailLevel') ?? current.emailDetailLevel,
+                emailTheme: theme,
+                emailSubjectPrefix: url.searchParams.has('subjectPrefix') ? url.searchParams.get('subjectPrefix') : current.emailSubjectPrefix,
+                emailDigestMaxItems: url.searchParams.get('digestMaxItems') ?? current.emailDigestMaxItems,
+                emailExplainReason: url.searchParams.has('explainReason') ? url.searchParams.get('explainReason') === '1' : current.emailExplainReason,
+                emailPriceCalculations: url.searchParams.has('priceCalculations') ? url.searchParams.get('priceCalculations') === '1' : current.emailPriceCalculations,
+            }, current);
+        }
+        catch (err) {
+            return sendJson(res, 400, { error: err.message });
+        }
+        const email = renderEmail(event, emailRenderOptions({
+            theme: previewConfig.emailTheme,
+            detailLevel: previewConfig.emailDetailLevel,
+            subjectPrefix: previewConfig.emailSubjectPrefix,
+            digestMaxItems: previewConfig.emailDigestMaxItems,
+            explainReason: previewConfig.emailExplainReason,
+            priceCalculations: previewConfig.emailPriceCalculations,
+            allowRemoteImages: true,
+            logoSource: '/assets/icon.png',
+        }));
+        return sendEmailPreviewHtml(res, email.html);
     }
     if (req.method === 'GET' && url.pathname.startsWith('/api/products/')) {
         const slug = decodeURIComponent(url.pathname.slice('/api/products/'.length));

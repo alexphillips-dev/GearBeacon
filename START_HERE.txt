@@ -55,7 +55,9 @@ with a local key outside SQLite and excluded from application exports.
 Open any product to review its price and availability history or give it custom
 alert rules. The watchlist supports search, filters, sorting, and bulk actions.
 Settings > Notifications controls quiet hours, digests, cooldowns, and optional
-operational alerts; Settings > Data controls backups and history retention.
+operational alerts. It also controls responsive email appearance, safe inline
+product images, digest size, and exact desktop/mobile previews. Settings > Data
+controls backups and history retention.
 
 Automated verification
 ----------------------
