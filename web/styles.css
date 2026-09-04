@@ -445,6 +445,8 @@ button.product-dialog-backdrop:hover { border:0; background:rgba(0,0,0,.58); tra
 .activity-detail-hero h3 { margin:5px 0 4px; font-size:20px; }.activity-detail-hero > p { margin:0; color:var(--muted); }
 .activity-evidence { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
 .activity-evidence .settings-card { padding:16px; }.activity-evidence h3 { margin:5px 0 12px; }
+.activity-detail-actions { align-items:center; }
+.activity-detail-actions .button-link { min-height:38px; margin-top:0; align-items:center; justify-content:center; }
 .diagnostics-panel { margin-bottom:12px; border:1px solid var(--border); border-radius:14px; padding:14px; background:var(--panel); }
 .diagnostics-panel-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:8px; }.diagnostics-panel-head h3 { margin:0; }
 .diagnostic-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
@@ -576,6 +578,8 @@ button.watch-import-backdrop:hover { border:0; background:rgba(0,0,0,.64); trans
   .activity-filters button { width:100%; }
   .activity-results-bar { flex-direction:column; }
   .activity-evidence { grid-template-columns:1fr; }
+  .activity-detail-actions { flex-direction:row; align-items:center; }
+  .activity-detail-actions button { width:auto; }
 }
 
 @media (prefers-reduced-motion:reduce) {

@@ -297,8 +297,13 @@ try {
   await waitForBrowser("app.activity.loaded && app.activity.count === 1 && document.querySelectorAll('#activityList .event').length === 1 && document.getElementById('activityResultCount').textContent === '1 matching event'", 'Searchable activity filters did not return the expected event');
   await evaluate("document.querySelector('#activityList .event time').click()");
   await waitForBrowser("!document.getElementById('activityDialog').classList.contains('hidden') && document.getElementById('activityDialogTitle').textContent === 'U7 Pro XGS' && document.getElementById('activityDialogBody').textContent.includes('1 of 1')", 'Whole-row activity navigation did not open confirmation evidence');
-  const activityEvidence = await evaluate("({ text:document.getElementById('activityDialogBody').textContent, productButton:Boolean(document.querySelector('#activityDialogBody [data-activity-product=\"u7-pro-xgs\"]')) })");
+  const activityEvidence = await evaluate(`(() => {
+    const productButton=document.querySelector('#activityDialogBody [data-activity-product="u7-pro-xgs"]');
+    const storeButton=document.querySelector('#activityDialogBody .activity-detail-actions a.button-link');
+    return { text:document.getElementById('activityDialogBody').textContent, productButton:Boolean(productButton), productButtonHeight:productButton?.getBoundingClientRect().height, storeButtonHeight:storeButton?.getBoundingClientRect().height };
+  })()`);
   assert(/Monitor evidence/.test(activityEvidence.text) && /Server notification/.test(activityEvidence.text) && /No channel/.test(activityEvidence.text) && activityEvidence.productButton, `Activity evidence drawer is incomplete: ${JSON.stringify(activityEvidence)}`);
+  assert(Math.abs(activityEvidence.productButtonHeight - activityEvidence.storeButtonHeight) <= 1, `Activity detail actions do not share compact sizing: ${JSON.stringify(activityEvidence)}`);
   await cdp.send('Emulation.setDeviceMetricsOverride', { width:390, height:844, screenWidth:390, screenHeight:844, deviceScaleFactor:1, mobile:false });
   const responsiveEvidence = await evaluate("(() => { const panel=document.querySelector('#activityDialog .product-dialog-panel').getBoundingClientRect(); return { width:panel.width, overflow:document.documentElement.scrollWidth <= window.innerWidth + 1, columns:getComputedStyle(document.querySelector('.activity-evidence')).gridTemplateColumns.split(' ').length }; })()");
   assert(responsiveEvidence?.width === 390 && responsiveEvidence.overflow && responsiveEvidence.columns === 1, `Activity evidence drawer is not responsive at 390px: ${JSON.stringify(responsiveEvidence)}`);
