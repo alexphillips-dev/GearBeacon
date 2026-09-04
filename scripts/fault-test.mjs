@@ -134,7 +134,7 @@ await Promise.all([mkdir(dataDir), mkdir(secondaryDir)]);
 try {
   await startServer();
   let status = await fetchJson('/api/status');
-  assert(status.version === '1.10.0' && status.productCount === 6, 'Fault suite did not start on the V1.10 six-product baseline.');
+  assert(status.version === '0.1.10' && status.productCount === 6, 'Fault suite did not start on the V0.1.10 six-product baseline.');
 
   // 429 handling must preserve state and never schedule before Retry-After.
   await post('/api/mock/fault', { rateLimitOnceSeconds:120 });

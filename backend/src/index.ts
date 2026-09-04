@@ -1,4 +1,4 @@
-// GearBeacon V1.10 backend
+// GearBeacon V0.1.10 backend
 // Private, owner-operated stock monitoring for local and self-hosted installs.
 // @ts-nocheck
 
@@ -14,7 +14,7 @@ const { URL } = require('node:url');
 const { DatabaseSync } = require('node:sqlite');
 const { renderEmail, buildMimeEmail } = require('./email');
 
-const APP_VERSION = '1.10.0';
+const APP_VERSION = '0.1.10';
 const DATABASE_SCHEMA_VERSION = 7;
 const STORE_BASE = 'https://store.ui.com';
 const REGIONS = {
@@ -1039,11 +1039,11 @@ function findLegacyStateFile(region = currentRegion()) {
   if (explicit) candidates.push(path.resolve(explicit));
   candidates.push(path.join(LEGACY_DATA_DIR, filename));
 
-  // Helps users who unzip a newer GearBeacon release beside an older V1.x folder instead of over it.
+  // Helps users who unzip a newer GearBeacon release beside an early development folder instead of over it.
   try {
     const parent = path.dirname(PROJECT_ROOT);
     for (const entry of fs.readdirSync(parent, { withFileTypes: true })) {
-      if (!entry.isDirectory() || !/^GearBeacon-v1\.(?:0|1|2)(?:\.|$)/i.test(entry.name)) continue;
+      if (!entry.isDirectory() || !/^GearBeacon-(?:v1\.(?:0|1|2)(?:\.|$)|v0\.1\.(?:1|2)(?:\.|$))/i.test(entry.name)) continue;
       candidates.push(path.join(parent, entry.name, 'data', filename));
     }
   } catch {}

@@ -90,7 +90,7 @@ try {
   const statuses = await waitForCatalogs();
   for (const status of statuses) {
     const region = status.region;
-    if (status.version !== '1.10.0' || status.mockMode || status.catalogHealth !== 'healthy' || status.lastError) {
+    if (status.version !== '0.1.10' || status.mockMode || status.catalogHealth !== 'healthy' || status.lastError) {
       throw new Error(`${region} catalog is not healthy: ${status.lastError || status.catalogHealth}`);
     }
     const result = await json(`/api/products?region=${encodeURIComponent(region)}`);
