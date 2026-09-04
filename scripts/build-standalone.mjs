@@ -25,8 +25,22 @@ const indexSource = readFileSync(join(root, 'backend', 'dist', 'index.js'), 'utf
 const emailSource = readFileSync(join(root, 'backend', 'dist', 'email.js'), 'utf8');
 const emailRequire = "const { renderEmail, buildMimeEmail } = require('./email');";
 if (!indexSource.includes(emailRequire)) throw new Error('Standalone bundling could not find the GearBeacon email module import.');
-const bundledSource = indexSource.replace(emailRequire, `const { renderEmail, buildMimeEmail } = (() => {\n  const module = { exports: {} };\n  const exports = module.exports;\n${emailSource}\n  return module.exports;\n})();`);
+const bundledEmailModule = [
+  'const { renderEmail, buildMimeEmail } = (() => {',
+  '  const module = { exports: {} };',
+  '  const exports = module.exports;',
+  emailSource,
+  '  return module.exports;',
+  '})();',
+].join('\n');
+const bundledSource = indexSource.replace(emailRequire, () => bundledEmailModule);
 writeFileSync(bundledMainFile, bundledSource);
+
+const syntaxCheck = spawnSync(process.execPath, ['--check', bundledMainFile], { cwd: root, stdio: 'inherit' });
+if (syntaxCheck.status !== 0) {
+  rmSync(bundledMainFile, { force: true });
+  throw new Error(`Standalone bundled source failed its syntax check with exit code ${syntaxCheck.status}.`);
+}
 
 rmSync(outputDir, { recursive: true, force: true });
 mkdirSync(outputDir, { recursive: true });

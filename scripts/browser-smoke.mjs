@@ -12,7 +12,6 @@ const chromeProfile = await mkdtemp(join(tmpdir(), 'gearbeacon-chrome-'));
 const port = 9200 + (process.pid % 500);
 const baseUrl = `http://127.0.0.1:${port}`;
 const setupToken = 'v19-browser-setup-token';
-const password = 'V1.9 browser owner password';
 const serverOutput = [];
 let server = null;
 let chrome = null;
@@ -143,9 +142,9 @@ try {
 
   await waitForBrowser("!document.getElementById('authGate').classList.contains('hidden')", 'Owner setup screen did not appear');
   await evaluate(`(() => {
-    document.getElementById('setupToken').value = ${JSON.stringify(setupToken)};
-    document.getElementById('authPassword').value = ${JSON.stringify(password)};
-    document.getElementById('authPasswordConfirm').value = ${JSON.stringify(password)};
+    document.getElementById('setupToken').value = 'v19-browser-setup-token';
+    document.getElementById('authPassword').value = 'V1.9 browser owner password';
+    document.getElementById('authPasswordConfirm').value = 'V1.9 browser owner password';
     document.getElementById('authForm').requestSubmit();
   })()`);
   await waitForBrowser("!document.getElementById('appShell').classList.contains('hidden') && app.products.length >= 5", 'Authenticated dashboard did not load');
@@ -372,7 +371,7 @@ try {
 
   await evaluate("document.getElementById('logoutBtn').click()");
   await waitForBrowser("!document.getElementById('authGate').classList.contains('hidden')", 'Browser logout did not return to the owner gate');
-  await evaluate(`(() => { document.getElementById('authPassword').value=${JSON.stringify(password)}; document.getElementById('authForm').requestSubmit(); })()`);
+  await evaluate("(() => { document.getElementById('authPassword').value='V1.9 browser owner password'; document.getElementById('authForm').requestSubmit(); })()");
   await waitForBrowser("!document.getElementById('appShell').classList.contains('hidden') && app.auth.authenticated", 'Browser login after logout failed');
   await evaluate("document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabSecurity').click()");
   await waitForBrowser("document.querySelectorAll('#sessionList [data-revoke-session]').length >= 1", 'Authenticated session management did not render');
