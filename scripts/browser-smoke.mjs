@@ -172,6 +172,8 @@ try {
 
   await evaluate("document.querySelector('[data-tab=\"browse\"]').click()");
   await waitForBrowser("document.getElementById('browse').classList.contains('active') && document.querySelectorAll('#browseGrid .store-card:not(.skeleton-card)').length >= 5", 'Browse catalog did not render');
+  const browseAvailabilityLabel = await evaluate("(() => { const label=document.querySelector('#browseGrid .stock-label'); const style=getComputedStyle(label); return { text:label.textContent, fontSize:style.fontSize, fontWeight:Number(style.fontWeight), nowrap:style.whiteSpace }; })()");
+  assert(browseAvailabilityLabel.fontSize === '13px' && browseAvailabilityLabel.fontWeight >= 600 && browseAvailabilityLabel.nowrap === 'nowrap', `Browse availability labels are not large and readable: ${JSON.stringify(browseAvailabilityLabel)}`);
   await waitForBrowser("document.querySelectorAll('#browseGrid .image-loaded img[data-product-image]').length > 0", 'No product image loaded in the real browser', 250);
   const retryImageUrl = await evaluate("(() => { const image=document.querySelector('#browseGrid .image-loaded img[data-product-image]'); const url=image.dataset.productImage; image.dispatchEvent(new Event('error')); return url; })()");
   await waitForBrowser("document.querySelector('#browseGrid [data-image-retry]')", 'Failed image did not expose a retry action');
