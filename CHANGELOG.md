@@ -2,6 +2,7 @@
 
 ## V1.10.0 — Release readiness, accessibility, and trust
 
+- Added an opt-in All activity updates notification preference that alerts on every new Activity feed entry, including unwatched products, while remaining disabled by default and clearly overriding individual event filters.
 - Locked TypeScript, axe-core, postject, Node build versions, GitHub Actions, security scanners, Docker build actions, and the multi-platform runtime image to reviewable versions or immutable identities.
 - Added manually dispatched candidate packages that use the same reusable Windows, macOS, Linux, and source packaging path as tagged releases without creating a public release.
 - Added archive extraction and real executable startup rehearsals for every standalone package plus extracted-source validation before an artifact can be published.

@@ -388,6 +388,9 @@ try {
   await evaluate("document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabNotifications').click()");
   await waitForBrowser("!document.getElementById('settingsPanelNotifications').hidden && document.getElementById('settingsPanelData').hidden", 'Notification settings tab failed');
   await assertAccessible('Notification settings');
+  assert(await evaluate("Boolean(document.getElementById('notifyAllActivity')) && !document.getElementById('notifyAllActivity').checked"), 'All-activity notification setting is missing or not safely disabled by default');
+  await evaluate("document.getElementById('notifyAllActivity').click(); document.getElementById('saveNotificationPrefs').click()");
+  await waitForBrowser("app.notificationPreferences?.allActivity === true && document.getElementById('notifyAllActivity').checked", 'All-activity notification setting did not save');
   await waitForBrowser("document.getElementById('emailPreviewProduct').options.length >= 5", 'Email preview products did not load');
   await evaluate(`(() => {
     document.getElementById('emailDetailLevel').value='detailed';

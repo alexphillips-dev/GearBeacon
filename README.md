@@ -137,7 +137,7 @@ A product omitted from two consecutive complete catalogs becomes **Unlisted** ra
 
 ## Notifications
 
-Channel configuration, delivery timing, previews, and individual test buttons are in Settings. A channel can be configured but independently disabled. Restock alerts for watched products are enabled by default; sellout, price, status, and new-product alerts are opt-in.
+Channel configuration, delivery timing, previews, and individual test buttons are in Settings. A channel can be configured but independently disabled. Restock alerts for watched products are enabled by default; sellout, price, status, and new-product alerts are opt-in. The separate **All activity updates** option alerts for every new Activity feed entry, including changes to unwatched products, and overrides the individual event filters while enabled. It is disabled by default to avoid unexpected notification volume.
 
 Each watched product can inherit those global event choices or override them. Product rules can limit price notifications to drops, wait for a target price, pause alerts, or force restocks to deliver immediately. Immediate restocks bypass quiet hours and digest scheduling. Other queued events can be held until quiet hours end, collected for the next daily digest, and suppressed during a configurable per-product event cooldown.
 

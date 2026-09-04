@@ -329,9 +329,14 @@ try {
 
   const preferences = await request('/api/notifications/preferences?region=us', {
     method: 'PUT',
-    body: JSON.stringify({ preferences: { restock: true, soldOut: true, priceChange: true, statusChange: false, newProduct: true } }),
+    body: JSON.stringify({ preferences: { restock: true, soldOut: true, priceChange: false, statusChange: false, newProduct: true, allActivity: true } }),
   });
-  if (!preferences.preferences.soldOut || !preferences.preferences.newProduct) throw new Error('Notification preferences did not save.');
+  if (!preferences.preferences.soldOut || !preferences.preferences.newProduct || !preferences.preferences.allActivity || preferences.preferences.priceChange) throw new Error('Notification preferences did not save.');
+  await request('/api/mock/product/unas-pro?region=us', { method:'POST', body:JSON.stringify({ price:'$439.00', status:'Available' }) });
+  await request('/api/check?region=us', { method:'POST' });
+  const allActivityCheck = await request('/api/check?region=us', { method:'POST' });
+  const allActivityEvent = (await request('/api/events?limit=100&region=us')).events.find((event) => event.slug === 'unas-pro' && event.type === 'price_change' && event.price === '$439.00');
+  if (allActivityCheck.notifications < 1 || !allActivityEvent || allActivityEvent.watchedAtDetection || allActivityEvent.notificationDecision?.reason !== 'all-activity-enabled' || ['muted', 'no-channel'].includes(allActivityEvent.serverAlert?.state)) throw new Error(`All-activity notifications did not deliver an unwatched Activity event: ${JSON.stringify({ allActivityCheck, allActivityEvent })}`);
   const notificationTest = await request('/api/notifications/test?region=us', { method: 'POST' });
   if (!notificationTest.outcomes.every((outcome) => outcome.ok) || smtpMessages < 1) throw new Error('One or more notification mock deliveries failed.');
   const testMime = smtpBodies.at(-1) || '';
@@ -359,7 +364,7 @@ try {
   }
   if (retryingActivity?.serverAlert?.state !== 'retrying' || retryingActivity.serverAlert.label !== 'Retrying' || !/another delivery attempt/i.test(retryingActivity.serverAlert.detail || '')) throw new Error(`Activity feed did not reflect the live server retry outcome: ${JSON.stringify(retryingActivity?.serverAlert)}`);
   const groupedDelivery = await request('/api/notifications/log?limit=100');
-  if (!groupedDelivery.notifications.some((row) => row.status === 'sent' && /grouped 2/.test(row.detail || ''))) throw new Error('Notification grouping did not combine nearby events.');
+  if (!groupedDelivery.notifications.some((row) => row.status === 'sent' && /grouped 3/.test(row.detail || ''))) throw new Error('Notification grouping did not combine the two watched changes and the all-activity event.');
   let groupedEmail = null;
   for (let attempt = 0; attempt < 80 && !groupedEmail; attempt += 1) {
     groupedEmail = smtpBodies.map((raw) => ({ raw, html:decodedMimePart(raw, 'text/html'), text:decodedMimePart(raw, 'text/plain') })).find((message) => /U7 Pro XGS/.test(message.html) && /AI Turret/.test(message.html));
@@ -455,7 +460,7 @@ try {
   const persistedProduct = usPersisted.products.find((product) => product.slug === 'u7-pro-xgs');
   if (persistedProduct.watchedAt !== watchedAtBeforeRestart || persistedProduct.watchRule?.targetPrice !== 250 || !persistedProduct.watchRule?.immediateRestock) throw new Error(`Watch creation time or product alert rules did not survive restart: ${JSON.stringify({ watchedAtBeforeRestart, persistedProduct })}`);
   const persistedPreferences = await request('/api/notifications/preferences?region=us');
-  if (!persistedPreferences.preferences.soldOut || !persistedPreferences.preferences.newProduct) throw new Error('Notification preferences did not survive restart.');
+  if (!persistedPreferences.preferences.soldOut || !persistedPreferences.preferences.newProduct || !persistedPreferences.preferences.allActivity) throw new Error('Notification preferences did not survive restart.');
   const persistedConfig = await request('/api/config');
   if (persistedConfig.config.notificationTimeZone !== 'UTC' || persistedConfig.config.historyRetentionDays !== 400 || persistedConfig.config.eventRetentionDays !== 730 || persistedConfig.config.secondaryBackupDir !== secondaryData || !persistedConfig.secretsConfigured.secondaryBackupPassphrase) throw new Error('Delivery, activity, or recovery configuration did not survive restart.');
   const beforeUpgrade = (await request('/api/data/info?region=us')).backup.count;
