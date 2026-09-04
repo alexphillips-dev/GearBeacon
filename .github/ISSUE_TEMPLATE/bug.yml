@@ -1,0 +1,55 @@
+name: Bug report
+description: Report a reproducible GearBeacon problem without private data.
+title: '[Bug]: '
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not post vulnerabilities, credentials, private URLs, backups, or unredacted logs. Use private vulnerability reporting for security issues.
+  - type: input
+    id: version
+    attributes:
+      label: GearBeacon version
+      placeholder: 1.10.0 or a commit SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment
+      options:
+        - Docker Compose
+        - Windows standalone
+        - macOS standalone
+        - Linux standalone
+        - Source checkout
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened?
+      description: Include the expected behavior and the actual result.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      placeholder: '1. Open...'
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Share only the minimum relevant, reviewed output. Never attach a database or secrets.key.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed credentials, private URLs, personal data, owner-session data, and notification endpoints.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true

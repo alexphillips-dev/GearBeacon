@@ -1,0 +1,156 @@
+name: Candidate packages
+
+on:
+  workflow_call:
+    inputs:
+      package_version:
+        description: Version or tag to place in package filenames
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      package_version:
+        description: Prerelease version, for example 1.10.0-rc.1
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+jobs:
+  standalone:
+    name: Standalone ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux-x64
+            archive: tar
+          - os: ubuntu-24.04-arm
+            name: linux-arm64
+            archive: tar
+          - os: windows-latest
+            name: windows-x64
+            archive: zip
+          - os: macos-latest
+            name: macos-arm64
+            archive: tar
+          - os: macos-26-intel
+            name: macos-x64
+            archive: tar
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '26.8.1'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run check
+      - name: Build standalone application
+        env:
+          GEARBEACON_BUILD_COMMIT: ${{ github.sha }}
+          GEARBEACON_PACKAGE_VERSION: ${{ inputs.package_version }}
+        run: node scripts/build-standalone.mjs
+      - name: Smoke test built package
+        shell: bash
+        env:
+          EXPECTED_BUILD_COMMIT: ${{ github.sha }}
+        run: |
+          PACKAGE_DIR=$(find dist/standalone -mindepth 1 -maxdepth 1 -type d | head -1)
+          node scripts/standalone-smoke.mjs "$PACKAGE_DIR"
+      - id: syft
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.21.0
+        with:
+          syft-version: v1.51.1
+      - name: Archive, inventory, and rehearse Unix package
+        if: matrix.archive == 'tar'
+        shell: bash
+        env:
+          EXPECTED_BUILD_COMMIT: ${{ github.sha }}
+        run: |
+          mkdir -p dist/packages "$RUNNER_TEMP/package-rehearsal"
+          PACKAGE_DIR=$(find dist/standalone -mindepth 1 -maxdepth 1 -type d | head -1)
+          NAME=$(basename "$PACKAGE_DIR")
+          "${{ steps.syft.outputs.cmd }}" "dir:$PACKAGE_DIR" -o "spdx-json=dist/packages/$NAME.spdx.json"
+          tar -czf "dist/packages/$NAME.tar.gz" -C "$(dirname "$PACKAGE_DIR")" "$NAME"
+          (cd dist/packages && shasum -a 256 "$NAME.tar.gz" > "$NAME.tar.gz.sha256")
+          tar -xzf "dist/packages/$NAME.tar.gz" -C "$RUNNER_TEMP/package-rehearsal"
+          node scripts/standalone-smoke.mjs "$RUNNER_TEMP/package-rehearsal/$NAME"
+      - name: Archive, inventory, and rehearse Windows package
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        env:
+          EXPECTED_BUILD_COMMIT: ${{ github.sha }}
+        run: |
+          New-Item -ItemType Directory -Force dist/packages | Out-Null
+          $package = Get-ChildItem dist/standalone -Directory | Select-Object -First 1
+          $archive = "dist/packages/$($package.Name).zip"
+          $sbom = "dist/packages/$($package.Name).spdx.json"
+          & '${{ steps.syft.outputs.cmd }}' "dir:$($package.FullName)" -o "spdx-json=$sbom"
+          if ($LASTEXITCODE) { throw "Syft failed with exit code $LASTEXITCODE." }
+          Compress-Archive -Path $package.FullName -DestinationPath $archive
+          $leaf = Split-Path $archive -Leaf
+          $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $leaf" | Set-Content "$archive.sha256" -Encoding ascii
+          $rehearsal = Join-Path $env:RUNNER_TEMP 'package-rehearsal'
+          Expand-Archive -LiteralPath $archive -DestinationPath $rehearsal
+          node scripts/standalone-smoke.mjs (Join-Path $rehearsal $package.Name)
+      - name: Attest candidate contents
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.0.0
+        with:
+          subject-path: dist/packages/*
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: standalone-${{ matrix.name }}
+          path: dist/packages/*
+          if-no-files-found: error
+          retention-days: 30
+
+  source:
+    name: Source archive
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run check
+      - run: npm run test
+      - run: npm run test:browser
+      - id: syft
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.21.0
+        with:
+          syft-version: v1.51.1
+      - name: Archive, inventory, and rehearse source package
+        shell: bash
+        run: |
+          VERSION="${{ inputs.package_version }}"
+          VERSION="${VERSION#v}"
+          STAGE="GearBeacon-v${VERSION}-source"
+          mkdir -p "$STAGE" dist/packages "$RUNNER_TEMP/source-rehearsal"
+          rsync -a ./ "$STAGE/" --exclude '/.git/' --exclude '/node_modules/' --exclude '/dist/' --exclude '/release-assets/' --exclude "/$STAGE/"
+          "${{ steps.syft.outputs.cmd }}" "dir:$STAGE" -o "spdx-json=dist/packages/$STAGE.spdx.json"
+          zip -qr "dist/packages/$STAGE.zip" "$STAGE"
+          (cd dist/packages && sha256sum "$STAGE.zip" > "$STAGE.zip.sha256")
+          unzip -q "dist/packages/$STAGE.zip" -d "$RUNNER_TEMP/source-rehearsal"
+          (cd "$RUNNER_TEMP/source-rehearsal/$STAGE" && node scripts/check-versions.mjs && node --no-warnings scripts/self-test.mjs)
+      - name: Attest candidate contents
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.0.0
+        with:
+          subject-path: dist/packages/*
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: source
+          path: dist/packages/*
+          if-no-files-found: error
+          retention-days: 30

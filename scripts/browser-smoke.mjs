@@ -7,6 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
 const projectRoot = fileURLToPath(new URL('..', import.meta.url));
+const axeSource = await readFile(fileURLToPath(import.meta.resolve('axe-core/axe.min.js')), 'utf8');
 const testRoot = await mkdtemp(join(tmpdir(), 'gearbeacon-browser-smoke-'));
 const chromeProfile = await mkdtemp(join(tmpdir(), 'gearbeacon-chrome-'));
 const port = 9200 + (process.pid % 500);
@@ -95,6 +96,21 @@ async function waitForBrowser(expression, message, attempts = 200) {
   await waitFor(async () => Boolean(await evaluate(`Boolean(${expression})`)), message, attempts, 100);
 }
 
+async function assertAccessible(label) {
+  if (!await evaluate("Boolean(globalThis.axe?.run)")) {
+    const injected = await cdp.send('Runtime.evaluate', { expression:axeSource });
+    if (injected.exceptionDetails) throw new Error(`Could not load axe-core for ${label}.`);
+  }
+  const violations = await evaluate(`axe.run(document, {
+    runOnly:{ type:'tag', values:['wcag2a','wcag2aa','wcag21aa','wcag22aa'] },
+    resultTypes:['violations']
+  }).then(({ violations }) => violations.map((violation) => ({
+    id:violation.id, impact:violation.impact, help:violation.help,
+    targets:violation.nodes.slice(0,5).map((node) => node.target.join(' '))
+  })))`);
+  assert(violations.length === 0, `${label} has accessibility violations: ${JSON.stringify(violations)}`);
+}
+
 function assert(value, message) {
   if (!value) throw new Error(message);
 }
@@ -141,10 +157,11 @@ try {
   await cdp.send('Page.enable');
 
   await waitForBrowser("!document.getElementById('authGate').classList.contains('hidden')", 'Owner setup screen did not appear');
+  await assertAccessible('Owner setup screen');
   await evaluate(`(() => {
     document.getElementById('setupToken').value = 'v19-browser-setup-token';
-    document.getElementById('authPassword').value = 'V1.9 browser owner password';
-    document.getElementById('authPasswordConfirm').value = 'V1.9 browser owner password';
+    document.getElementById('authPassword').value = 'V1.10 browser owner password';
+    document.getElementById('authPasswordConfirm').value = 'V1.10 browser owner password';
     document.getElementById('authForm').requestSubmit();
   })()`);
   await waitForBrowser("!document.getElementById('appShell').classList.contains('hidden') && app.products.length >= 5", 'Authenticated dashboard did not load');
@@ -155,14 +172,28 @@ try {
   }
   await evaluate("document.getElementById('wizardNext').click()");
   await waitForBrowser("document.getElementById('setupWizard').classList.contains('hidden') && app.auth.onboardingComplete", 'Guided setup did not complete');
+  await assertAccessible('Watchlist dashboard');
+
+  await evaluate("document.getElementById('tabWatchlist').focus(); document.getElementById('tabWatchlist').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}))");
+  assert(await evaluate("document.activeElement === document.getElementById('tabBrowse') && document.getElementById('browse').classList.contains('active') && document.getElementById('watchlist').hidden"), 'Main tabs do not support roving keyboard focus and panel state.');
+  await evaluate("activateTab('watchlist')");
+
+  await cdp.send('Emulation.setEmulatedMedia', { features:[{ name:'prefers-reduced-motion', value:'reduce' }] });
+  const reducedMotion = await evaluate("(() => { const item=document.createElement('div'); item.className='skeleton'; document.body.append(item); const animation=getComputedStyle(item,'::after').animationName; item.remove(); return animation; })()");
+  assert(reducedMotion === 'none', `Reduced-motion preference did not disable loading animation: ${reducedMotion}`);
+  await cdp.send('Emulation.setEmulatedMedia', { features:[{ name:'prefers-reduced-motion', value:'no-preference' }] });
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width:640, height:450, screenWidth:1280, screenHeight:900, deviceScaleFactor:2, mobile:false });
+  const zoomReflow = await evaluate("({ viewport:window.innerWidth, overflow:document.documentElement.scrollWidth <= window.innerWidth + 1, scrollWidth:document.documentElement.scrollWidth })");
+  assert(zoomReflow.viewport === 640 && zoomReflow.overflow, `Dashboard does not reflow at a 200% equivalent viewport: ${JSON.stringify(zoomReflow)}`);
+  await cdp.send('Emulation.clearDeviceMetricsOverride');
 
   const watchImportPlacement = await evaluate("(() => { const heading=document.querySelector('#watchlist .section-heading').getBoundingClientRect(); const button=document.getElementById('openWatchImport').getBoundingClientRect(); return { headingRight:heading.right, buttonRight:button.right, buttonLeft:button.left, headingMid:heading.left + heading.width / 2, visible:button.width > 0 && button.height > 0 }; })()");
   assert(watchImportPlacement.visible && Math.abs(watchImportPlacement.headingRight - watchImportPlacement.buttonRight) <= 3 && watchImportPlacement.buttonLeft > watchImportPlacement.headingMid, `Watchlist import action is not positioned at the top right: ${JSON.stringify(watchImportPlacement)}`);
 
   const navigationTheme = await evaluate("document.documentElement.dataset.theme");
-  const browseTabPoint = await evaluate("(() => { const rect=document.querySelector('[data-tab=\"browse\"]').getBoundingClientRect(); return { x:rect.left+rect.width/2, y:rect.top+rect.height/2 }; })()");
   for (const theme of ['dark', 'light']) {
     await evaluate(`applyTheme(${JSON.stringify(theme)})`);
+    const browseTabPoint = await evaluate("(() => { const rect=document.querySelector('[data-tab=\"browse\"]').getBoundingClientRect(); return { x:rect.left+rect.width/2, y:rect.top+rect.height/2 }; })()");
     await cdp.send('Input.dispatchMouseEvent', { type:'mouseMoved', x:browseTabPoint.x, y:browseTabPoint.y });
     const navigationHover = await evaluate("(() => { const tab=document.querySelector('[data-tab=\"browse\"]'); const tabs=document.querySelector('.tabs'); return { hovered:tab.matches(':hover'), transform:getComputedStyle(tab).transform, tabTop:tab.getBoundingClientRect().top, containerTop:tabs.getBoundingClientRect().top }; })()");
     assert(navigationHover.hovered && navigationHover.transform === 'none' && navigationHover.tabTop >= navigationHover.containerTop, `Top navigation clipped on hover in ${theme} mode: ${JSON.stringify(navigationHover)}`);
@@ -171,6 +202,7 @@ try {
 
   await evaluate("document.querySelector('[data-tab=\"browse\"]').click()");
   await waitForBrowser("document.getElementById('browse').classList.contains('active') && document.querySelectorAll('#browseGrid .store-card:not(.skeleton-card)').length >= 5", 'Browse catalog did not render');
+  await assertAccessible('Browse catalog');
   const browseAvailabilityLabel = await evaluate("(() => { const label=document.querySelector('#browseGrid .stock-label'); const style=getComputedStyle(label); return { text:label.textContent, fontSize:style.fontSize, fontWeight:Number(style.fontWeight), nowrap:style.whiteSpace }; })()");
   assert(browseAvailabilityLabel.fontSize === '13px' && browseAvailabilityLabel.fontWeight >= 600 && browseAvailabilityLabel.nowrap === 'nowrap', `Browse availability labels are not large and readable: ${JSON.stringify(browseAvailabilityLabel)}`);
   const soldOutBadge = await evaluate("(() => { const label=document.querySelector('#browseGrid .stock-label.sold-out'); const style=getComputedStyle(label); return { text:label?.textContent, borderStyle:style.borderStyle, borderWidth:style.borderWidth, borderRadius:style.borderRadius, paddingLeft:style.paddingLeft }; })()");
@@ -188,8 +220,22 @@ try {
   await evaluate(`(() => { const input=document.getElementById('search'); input.value='U7 Pro XGS'; input.dispatchEvent(new Event('input',{bubbles:true})); })()`);
   await waitForBrowser("document.querySelectorAll('#browseGrid .store-card').length === 1", 'Debounced Browse search failed');
   assert(await evaluate("!document.getElementById('resetBrowseFilters').classList.contains('hidden')"), 'Browse reset action did not appear for an active search.');
-  await evaluate("openProductDialog('u7-pro-xgs')");
+  await evaluate("document.getElementById('search').focus(); openProductDialog('u7-pro-xgs')");
   await waitForBrowser("!document.getElementById('productDialog').classList.contains('hidden') && document.querySelector('#productDialogBody .product-watch-prompt [data-watch]')", 'Unwatched product details did not render');
+  await assertAccessible('Product details dialog');
+  const dialogTrap = await evaluate(`(() => {
+    const dialog=document.getElementById('productDialog');
+    const focusable=[...dialog.querySelectorAll('button:not(:disabled):not([tabindex="-1"]),a[href]:not([tabindex="-1"]),input:not(:disabled):not([tabindex="-1"]),select:not(:disabled):not([tabindex="-1"]),textarea:not(:disabled):not([tabindex="-1"]),[tabindex]:not([tabindex="-1"])')].filter((item) => item.offsetParent !== null);
+    focusable.at(-1).focus();
+    document.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',bubbles:true,cancelable:true}));
+    return { first:focusable[0].id, active:document.activeElement.id };
+  })()`);
+  assert(dialogTrap.first === 'closeProductDialog' && dialogTrap.active === 'closeProductDialog', `Product dialog focus is not trapped: ${JSON.stringify(dialogTrap)}`);
+  await evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))");
+  await waitForBrowser("document.getElementById('productDialog').classList.contains('hidden')", 'Escape did not close product details');
+  assert(await evaluate("document.activeElement === document.getElementById('search')"), 'Product details did not restore focus after Escape.');
+  await evaluate("openProductDialog('u7-pro-xgs')");
+  await waitForBrowser("!document.getElementById('productDialog').classList.contains('hidden')", 'Product details did not reopen after the Escape test');
   const productPromptActions = await evaluate(`(() => {
     const watchButton=document.querySelector('#productDialogBody .product-watch-prompt [data-watch]');
     const storeButton=document.querySelector('#productDialogBody .product-link-actions a.button-link');
@@ -279,6 +325,7 @@ try {
     document.querySelector('[data-tab="activity"]').click();
   })()`);
   await waitForBrowser("document.getElementById('activity').classList.contains('active') && document.querySelector('#activityList .event')", 'Stock activity did not render');
+  await assertAccessible('Stock activity');
   const activityRow = await evaluate(`(() => {
     const row = document.querySelector('#activityList .event');
     const meta = row.querySelector('.event-meta');
@@ -306,6 +353,7 @@ try {
   await waitForBrowser("app.activity.loaded && app.activity.count === 1 && document.querySelectorAll('#activityList .event').length === 1 && document.getElementById('activityResultCount').textContent === '1 matching event'", 'Searchable activity filters did not return the expected event');
   await evaluate("document.querySelector('#activityList .event time').click()");
   await waitForBrowser("!document.getElementById('activityDialog').classList.contains('hidden') && document.getElementById('activityDialogTitle').textContent === 'U7 Pro XGS' && document.getElementById('activityDialogBody').textContent.includes('1 of 1')", 'Whole-row activity navigation did not open confirmation evidence');
+  await assertAccessible('Activity evidence dialog');
   const activityEvidence = await evaluate(`(() => {
     const productButton=document.querySelector('#activityDialogBody [data-activity-product="u7-pro-xgs"]');
     const storeButton=document.querySelector('#activityDialogBody .activity-detail-actions a.button-link');
@@ -333,6 +381,7 @@ try {
 
   await evaluate("document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabNotifications').click()");
   await waitForBrowser("!document.getElementById('settingsPanelNotifications').hidden && document.getElementById('settingsPanelData').hidden", 'Notification settings tab failed');
+  await assertAccessible('Notification settings');
   await waitForBrowser("document.getElementById('emailPreviewProduct').options.length >= 5", 'Email preview products did not load');
   await evaluate(`(() => {
     document.getElementById('emailDetailLevel').value='detailed';
@@ -359,7 +408,7 @@ try {
   await evaluate("document.getElementById('closeProductDialog').click(); document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabData').click()");
   await waitForBrowser("!document.getElementById('settingsPanelData').hidden && document.getElementById('settingsPanelNotifications').hidden", 'Data settings tab failed');
   const recoverySettings = await evaluate("({ activityRetention:document.getElementById('configEventRetention').value, secondaryDirectory:document.getElementById('configSecondaryBackupDir').value, encrypted:document.getElementById('configSecondaryEncrypted').checked, hasPrimaryTest:Boolean(document.getElementById('testPrimaryBackup')), hasSecondaryTest:Boolean(document.getElementById('testSecondaryBackup')) })");
-  assert(recoverySettings.activityRetention === '365' && recoverySettings.secondaryDirectory === '' && !recoverySettings.encrypted && recoverySettings.hasPrimaryTest && recoverySettings.hasSecondaryTest, `V1.9 recovery settings are incomplete: ${JSON.stringify(recoverySettings)}`);
+  assert(recoverySettings.activityRetention === '365' && recoverySettings.secondaryDirectory === '' && !recoverySettings.encrypted && recoverySettings.hasPrimaryTest && recoverySettings.hasSecondaryTest, `V1.10 recovery settings are incomplete: ${JSON.stringify(recoverySettings)}`);
   const browserBackup = await evaluate(`(async () => {
     const backup = await api('/api/data/export/encrypted', { method:'POST', body:JSON.stringify({ passphrase:'browser backup passphrase' }) });
     const preview = await api('/api/data/preview', { method:'POST', body:JSON.stringify({ backup, passphrase:'browser backup passphrase' }) });
@@ -374,6 +423,7 @@ try {
 
   await evaluate("document.querySelector('[data-tab=\"operations\"]').click()");
   await waitForBrowser("app.operations?.summary?.state && document.getElementById('operationsSummary').textContent.trim().length > 0", 'Operations summary did not render');
+  await assertAccessible('Operations dashboard');
   await evaluate("document.getElementById('runDiagnostics').click()");
   await waitForBrowser("!document.getElementById('runDiagnostics').disabled && document.querySelectorAll('#diagnosticsPanel .diagnostic-item').length >= 7", 'Installation diagnostics did not render');
   const diagnostics = await evaluate("({ heading:document.querySelector('#diagnosticsPanel h3')?.textContent, text:document.getElementById('diagnosticsPanel').textContent, hidden:document.getElementById('diagnosticsPanel').classList.contains('hidden') })");
@@ -385,7 +435,7 @@ try {
 
   await evaluate("document.getElementById('logoutBtn').click()");
   await waitForBrowser("!document.getElementById('authGate').classList.contains('hidden')", 'Browser logout did not return to the owner gate');
-  await evaluate("(() => { document.getElementById('authPassword').value='V1.9 browser owner password'; document.getElementById('authForm').requestSubmit(); })()");
+  await evaluate("(() => { document.getElementById('authPassword').value='V1.10 browser owner password'; document.getElementById('authForm').requestSubmit(); })()");
   await waitForBrowser("!document.getElementById('appShell').classList.contains('hidden') && app.auth.authenticated", 'Browser login after logout failed');
   await evaluate("document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabSecurity').click()");
   await waitForBrowser("document.querySelectorAll('#sessionList [data-revoke-session]').length >= 1", 'Authenticated session management did not render');
@@ -409,7 +459,7 @@ try {
   await evaluate("window.dispatchEvent(new Event('online'))");
   await waitForBrowser("!app.browserOffline && document.getElementById('toast').textContent === 'Connection restored' && document.getElementById('toast').classList.contains('success')", 'Reconnect state did not confirm recovery');
 
-  console.log(`BROWSER SMOKE PASSED: ${process.platform} · setup/auth · persistent navigation/filters · resettable empty states · offline recovery · copy actions · unclipped navigation · dark/light · images · watch/rules/bulk/import · compact searchable activity/evidence · email settings/preview/deep-link · backup/import · diagnostics/operations · responsive`);
+  console.log(`BROWSER SMOKE PASSED: ${process.platform} · setup/auth · WCAG axe scans · keyboard/focus/reduced-motion · persistent navigation/filters · resettable empty states · offline recovery · copy actions · unclipped navigation · dark/light · images · watch/rules/bulk/import · compact searchable activity/evidence · email settings/preview/deep-link · backup/import · diagnostics/operations · responsive`);
 } catch (error) {
   if (serverOutput.length) process.stderr.write(`\nGearBeacon server output:\n${serverOutput.join('').slice(-12000)}\n`);
   throw error;

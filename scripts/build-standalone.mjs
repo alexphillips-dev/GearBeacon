@@ -77,7 +77,7 @@ if (usePostject) {
   const unsigned = spawnSync('codesign', ['--remove-signature', executable], { stdio: 'inherit' });
   if (unsigned.status !== 0) throw new Error('Could not remove the Node signature before macOS x64 SEA injection.');
   const injection = spawnSync('npx', [
-    '--yes', 'postject@1.0.0-alpha.6', executable, 'NODE_SEA_BLOB', seaBlobFile,
+    '--no-install', 'postject', executable, 'NODE_SEA_BLOB', seaBlobFile,
     '--sentinel-fuse', 'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2',
     '--macho-segment-name', 'NODE_SEA', '--overwrite',
   ], { cwd: root, stdio: 'inherit' });

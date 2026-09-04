@@ -185,4 +185,6 @@ Use **Run diagnostics** after initial setup and whenever storage, notifications,
 
 ## Release candidates
 
-Tags containing a prerelease suffix, for example `v1.9.0-rc.1`, publish checksummed standalone packages and a GitHub prerelease. They publish only prerelease-specific container tags and never replace the stable `latest` image tag. Test a release candidate with a copied data directory or after both restore tests pass; then use the normal owner-controlled update procedure. Stable release tags such as `v1.9.0` move `latest` only after the release workflow succeeds.
+Manually run the **Candidate packages** workflow with a version such as `1.10.0-rc.1` to build downloadable Actions artifacts without creating a public release. It uses the same locked packaging jobs as tag publication, then extracts and starts each native package and validates the source package. Each archive includes a checksum and SPDX JSON SBOM and receives a GitHub artifact attestation.
+
+Prerelease tags such as `v1.10.0-rc.1` must point to `dev`, publish only prerelease-specific container tags, and never replace the stable `latest` image. Stable tags such as `v1.10.0` must point to protected `main` and pass exact-commit CI, security, version, changelog, manifest, package, container, SBOM, and provenance gates. Complete the repository's stable release checklist—including real installs, updates, rollbacks, and a 24–48 hour soak—before creating the stable tag.

@@ -26,7 +26,7 @@
     </div>
   </section>
 
-  <section id="setupWizard" class="wizard-shell hidden" aria-labelledby="wizardTitle">
+  <section id="setupWizard" class="wizard-shell hidden" role="dialog" aria-modal="true" aria-labelledby="wizardTitle">
     <div class="wizard-card">
       <div class="wizard-progress"><span id="wizardStepLabel">Step 1 of 5</span><progress id="wizardProgress" max="5" value="1"></progress></div>
       <div class="wizard-page" data-wizard-step="1">
@@ -90,9 +90,9 @@
       <button id="attentionAction" type="button">Open Operations</button>
     </section>
 
-    <section id="statusPanel" class="status-card">
+    <section id="statusPanel" class="status-card" role="status" aria-live="polite" aria-atomic="true">
       <div class="status-left">
-        <span id="statusDot" class="dot"></span>
+        <span id="statusDot" class="dot" aria-hidden="true"></span>
         <div>
           <strong id="statusTitle">Starting monitor…</strong>
           <span id="statusSub">Establishing baseline</span>
@@ -105,27 +105,27 @@
       </div>
     </section>
 
-    <nav class="tabs" aria-label="GearBeacon sections">
-      <button data-tab="watchlist" class="tab active">Watchlist <span id="watchCount" class="count">0</span></button>
-      <button data-tab="browse" class="tab">Browse</button>
-      <button data-tab="activity" class="tab">Activity</button>
-      <button data-tab="operations" class="tab">Operations</button>
-      <button data-tab="settings" class="tab">Settings</button>
+    <nav class="tabs" role="tablist" aria-label="GearBeacon sections">
+      <button id="tabWatchlist" data-tab="watchlist" class="tab active" role="tab" aria-selected="true" aria-controls="watchlist">Watchlist <span id="watchCount" class="count">0</span></button>
+      <button id="tabBrowse" data-tab="browse" class="tab" role="tab" aria-selected="false" aria-controls="browse" tabindex="-1">Browse</button>
+      <button id="tabActivity" data-tab="activity" class="tab" role="tab" aria-selected="false" aria-controls="activity" tabindex="-1">Activity</button>
+      <button id="tabOperations" data-tab="operations" class="tab" role="tab" aria-selected="false" aria-controls="operations" tabindex="-1">Operations</button>
+      <button id="tabSettings" data-tab="settings" class="tab" role="tab" aria-selected="false" aria-controls="settings" tabindex="-1">Settings</button>
     </nav>
 
-    <section id="watchlist" class="page active">
+    <section id="watchlist" class="page active" role="tabpanel" aria-labelledby="tabWatchlist">
       <div class="section-heading">
         <div><h2>Your watchlist</h2><p>Restocks on these products trigger GearBeacon alerts.</p></div>
         <div class="watch-heading-actions"><button id="openWatchImport" class="primary" type="button">Import watchlist</button></div>
       </div>
       <div class="watch-toolbar" aria-label="Watchlist filters">
-        <input id="watchSearch" type="search" placeholder="Search watchlist" autocomplete="off" />
-        <select id="watchStatus"><option value="all">All statuses</option><option value="in">In stock</option><option value="out">Unavailable</option><option value="paused">Paused</option></select>
-        <select id="watchCategory"><option value="all">All categories</option></select>
-        <select id="watchSort"><option value="changed">Recently changed</option><option value="added">Recently added</option><option value="name">Name</option><option value="price-low">Price: low to high</option><option value="price-high">Price: high to low</option><option value="availability">Availability</option></select>
+        <input id="watchSearch" type="search" placeholder="Search watchlist" autocomplete="off" aria-label="Search watchlist" />
+        <select id="watchStatus" aria-label="Filter watchlist by status"><option value="all">All statuses</option><option value="in">In stock</option><option value="out">Unavailable</option><option value="paused">Paused</option></select>
+        <select id="watchCategory" aria-label="Filter watchlist by category"><option value="all">All categories</option></select>
+        <select id="watchSort" aria-label="Sort watchlist"><option value="changed">Recently changed</option><option value="added">Recently added</option><option value="name">Name</option><option value="price-low">Price: low to high</option><option value="price-high">Price: high to low</option><option value="availability">Availability</option></select>
         <button id="resetWatchFilters" class="filter-reset hidden" type="button">Reset filters</button>
       </div>
-      <div id="bulkActions" class="bulk-actions hidden"><strong id="bulkCount">0 selected</strong><select id="bulkPauseDuration"><option value="60">Pause 1 hour</option><option value="1440">Pause 1 day</option><option value="10080">Pause 1 week</option><option value="0">Pause until resumed</option></select><button id="bulkPause">Pause</button><button id="bulkResume">Resume</button><button id="bulkRemove" class="danger-button">Remove</button><button id="bulkClear" class="ghost">Clear selection</button></div>
+      <div id="bulkActions" class="bulk-actions hidden"><strong id="bulkCount">0 selected</strong><select id="bulkPauseDuration" aria-label="Bulk pause duration"><option value="60">Pause 1 hour</option><option value="1440">Pause 1 day</option><option value="10080">Pause 1 week</option><option value="0">Pause until resumed</option></select><button id="bulkPause">Pause</button><button id="bulkResume">Resume</button><button id="bulkRemove" class="danger-button">Remove</button><button id="bulkClear" class="ghost">Clear selection</button></div>
       <div id="watchGrid" class="grid watch-grid"></div>
       <div id="watchEmpty" class="empty hidden">
         <div class="empty-icon">⌁</div>
@@ -136,7 +136,7 @@
       </div>
     </section>
 
-    <section id="operations" class="page">
+    <section id="operations" class="page" role="tabpanel" aria-labelledby="tabOperations" hidden>
       <div class="section-heading"><div><h2>Operations</h2><p>Region health, delivery reliability, backups, storage, security, and local logs.</p></div><div class="settings-actions"><button id="runDiagnostics" class="primary">Run diagnostics</button><button id="refreshOperations">Refresh</button><button id="downloadSupportBundle">Support bundle</button><button id="downloadLogs">Download logs</button></div></div>
       <div id="operationsSummary" class="operations-summary"><strong>Checking installation health…</strong></div>
       <section id="diagnosticsPanel" class="diagnostics-panel hidden" aria-live="polite"></section>
@@ -144,12 +144,12 @@
       <div id="operationsGrid" class="ops-grid"></div>
       <article class="settings-card ops-log-card">
         <div class="settings-card-head"><div><span class="settings-kicker">Application logs</span><h3>Recent activity</h3></div><span id="runtimeBadge" class="settings-badge">Runtime</span></div>
-        <div class="log-filters"><select id="logLevel"><option value="">All levels</option><option value="info">Info</option><option value="warn">Warning</option><option value="error">Error</option></select><input id="logSearch" type="search" placeholder="Filter logs" /><button id="applyLogFilter">Filter</button></div>
+        <div class="log-filters"><select id="logLevel" aria-label="Filter logs by level"><option value="">All levels</option><option value="info">Info</option><option value="warn">Warning</option><option value="error">Error</option></select><input id="logSearch" type="search" placeholder="Filter logs" aria-label="Search logs" /><button id="applyLogFilter">Filter</button></div>
         <div id="operationsLogs" class="log-list"></div>
       </article>
     </section>
 
-    <section id="browse" class="page store-surface">
+    <section id="browse" class="page store-surface" role="tabpanel" aria-labelledby="tabBrowse" hidden>
       <div class="store-header">
         <div>
           <span class="store-eyebrow">UniFi catalog</span>
@@ -157,8 +157,8 @@
           <p>Pick a category, then watch anything you want GearBeacon to alert on.</p>
         </div>
         <label class="store-search-wrap">
-          <span>⌕</span>
-          <input id="search" type="search" placeholder="Search products" autocomplete="off" />
+          <span aria-hidden="true">⌕</span>
+          <input id="search" type="search" placeholder="Search products" autocomplete="off" aria-label="Search products" />
         </label>
       </div>
       <div id="categoryTabs" class="store-category-tabs" role="tablist" aria-label="Product categories"></div>
@@ -171,7 +171,7 @@
       <div id="browseEmpty" class="store-empty hidden"><h3>No matching products</h3><p>Try another category or search.</p><button id="resetBrowseEmpty" type="button">Reset Browse filters</button></div>
     </section>
 
-    <section id="activity" class="page">
+    <section id="activity" class="page" role="tabpanel" aria-labelledby="tabActivity" hidden>
       <div class="section-heading">
         <div><h2>Stock activity</h2><p>Search, explain, and export confirmed transitions from this GearBeacon monitor.</p></div>
         <div class="settings-actions"><button id="exportActivityCsv">Export CSV</button><button id="exportActivityJson">Export JSON</button></div>
@@ -193,24 +193,24 @@
     </section>
 
 
-    <section id="settings" class="page">
+    <section id="settings" class="page" role="tabpanel" aria-labelledby="tabSettings" hidden>
       <div class="section-heading">
         <div><h2>Settings</h2><p>Private access, notifications, updates, and upgrade-safe data management.</p></div>
       </div>
 
       <div class="settings-tabs" role="tablist" aria-label="Settings sections">
         <button id="settingsTabGeneral" class="settings-tab active" type="button" role="tab" aria-selected="true" aria-controls="settingsPanelGeneral" data-settings-tab="general">General</button>
-        <button id="settingsTabNotifications" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelNotifications" data-settings-tab="notifications">Notifications</button>
-        <button id="settingsTabData" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelData" data-settings-tab="data">Data</button>
-        <button id="settingsTabSecurity" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelSecurity" data-settings-tab="security">Security</button>
-        <button id="settingsTabPrivacy" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelPrivacy" data-settings-tab="privacy">Privacy</button>
+        <button id="settingsTabNotifications" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelNotifications" data-settings-tab="notifications" tabindex="-1">Notifications</button>
+        <button id="settingsTabData" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelData" data-settings-tab="data" tabindex="-1">Data</button>
+        <button id="settingsTabSecurity" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelSecurity" data-settings-tab="security" tabindex="-1">Security</button>
+        <button id="settingsTabPrivacy" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelPrivacy" data-settings-tab="privacy" tabindex="-1">Privacy</button>
       </div>
 
       <section id="settingsPanelGeneral" class="settings-panel active" role="tabpanel" aria-labelledby="settingsTabGeneral" data-settings-panel="general">
         <div class="settings-grid">
         <article class="settings-card">
           <div class="settings-card-head">
-            <div><span class="settings-kicker">Application</span><h3>GearBeacon <span id="settingsVersion">V1.9.0</span></h3></div>
+            <div><span class="settings-kicker">Application</span><h3>GearBeacon <span id="settingsVersion">V1.10.0</span></h3></div>
             <span id="schemaBadge" class="settings-badge">SQLite</span>
           </div>
           <p>Your watched products live in a persistent SQLite database outside the GearBeacon application folder.</p>
@@ -382,19 +382,19 @@
     </section>
 
     <footer>
-      <span>GearBeacon V1.9 · Private self-hosted monitoring</span>
+      <span>GearBeacon V1.10 · Private self-hosted monitoring</span>
       <span id="notifyStatus"></span>
     </footer>
   </main>
   <section id="productDialog" class="product-dialog hidden" role="dialog" aria-modal="true" aria-labelledby="productDialogTitle">
-    <button id="productDialogBackdrop" class="product-dialog-backdrop" type="button" aria-label="Close product details"></button>
+    <button id="productDialogBackdrop" class="product-dialog-backdrop" type="button" aria-label="Close product details" tabindex="-1"></button>
     <article class="product-dialog-panel">
       <div class="product-dialog-head"><div><span id="productDialogCategory" class="settings-kicker">Product</span><h2 id="productDialogTitle">Product details</h2></div><button id="closeProductDialog" class="icon-button" type="button" aria-label="Close product details">×</button></div>
       <div id="productDialogBody" class="product-dialog-body"></div>
     </article>
   </section>
   <section id="watchImportDialog" class="watch-import-dialog hidden" role="dialog" aria-modal="true" aria-labelledby="watchImportTitle">
-    <button id="watchImportBackdrop" class="watch-import-backdrop" type="button" aria-label="Close watchlist importer"></button>
+    <button id="watchImportBackdrop" class="watch-import-backdrop" type="button" aria-label="Close watchlist importer" tabindex="-1"></button>
     <article class="watch-import-panel">
       <div class="watch-import-head">
         <div><span class="settings-kicker">Local catalog matching</span><h2 id="watchImportTitle">Import watchlist</h2></div>
@@ -420,7 +420,7 @@
     </article>
   </section>
   <section id="activityDialog" class="product-dialog hidden" role="dialog" aria-modal="true" aria-labelledby="activityDialogTitle">
-    <button id="activityDialogBackdrop" class="product-dialog-backdrop" type="button" aria-label="Close activity details"></button>
+    <button id="activityDialogBackdrop" class="product-dialog-backdrop" type="button" aria-label="Close activity details" tabindex="-1"></button>
     <article class="product-dialog-panel activity-dialog-panel">
       <div class="product-dialog-head"><div><span class="settings-kicker">Confirmed monitor evidence</span><h2 id="activityDialogTitle">Activity details</h2></div><button id="closeActivityDialog" class="icon-button" type="button" aria-label="Close activity details">×</button></div>
       <div id="activityDialogBody" class="product-dialog-body"></div>

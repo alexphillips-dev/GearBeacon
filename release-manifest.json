@@ -1,11 +1,11 @@
 {
   "name": "GearBeacon",
-  "latestVersion": "1.9.0",
+  "latestVersion": "1.10.0",
   "publishedAt": "2026-09-04T00:00:00Z",
   "downloadUrl": "https://github.com/alexphillips-dev/GearBeacon/releases",
   "releasePageUrl": "https://github.com/alexphillips-dev/GearBeacon/releases",
   "minimumSchemaVersion": 4,
   "maximumSchemaVersion": 7,
   "minimumNodeVersion": "22.13.0",
-  "releaseNotes": "Persistent dashboard tabs and filters, resettable filtered-empty states, offline and reconnect feedback, product SKU and store-link copy actions, and deterministic fault coverage for catalog, restart, recovery, key, and scale failures."
+  "releaseNotes": "Reproducible release tooling, guarded candidate and stable publishing, real-package rehearsals, a read-only live catalog canary, automated accessibility coverage, and stronger project security and contribution guidance."
 }
