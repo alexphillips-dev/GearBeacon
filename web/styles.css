@@ -274,6 +274,7 @@ button.ghost { background: transparent; }
 .stock-label { font-size:13px; line-height:1.2; font-weight:650; color:var(--store-muted); white-space:nowrap; }
 .stock-label.in { color:var(--good); }
 .stock-label.out { color:var(--bad); }
+.stock-label.sold-out { border:1px solid currentColor; border-radius:5px; padding:3px 7px; }
 .stock-label.soon { color:var(--warn); }
 .store-watch {
   width:100%; margin-top:13px; border:1px solid var(--store-line); border-radius:7px; background:transparent;
