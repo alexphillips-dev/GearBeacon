@@ -2,8 +2,8 @@ const $ = (id) => document.getElementById(id);
 const THEME_KEY = 'gearbeacon.theme';
 const SETTINGS_TAB_KEY = 'gearbeacon.settingsTab';
 const UI_STATE_KEY = 'gearbeacon.uiState.v1';
-const SETTINGS_TABS = ['general', 'notifications', 'data', 'security', 'privacy'];
-const APP_TABS = ['watchlist', 'browse', 'activity', 'operations', 'settings'];
+const SETTINGS_TABS = ['general', 'notifications', 'data', 'security', 'privacy', 'operations'];
+const APP_TABS = ['watchlist', 'browse', 'activity', 'settings'];
 const initialDeepLink = new URLSearchParams(location.search);
 
 function readUiState() {
@@ -47,7 +47,8 @@ const app = {
   operations: null,
   wizardStep: 1,
   notificationPreferences: { restock:true, soldOut:false, priceChange:false, statusChange:false, newProduct:false, allActivity:false },
-  activeTab: APP_TABS.includes(savedUiState.activeTab) ? savedUiState.activeTab : 'watchlist',
+  activeTab: savedUiState.activeTab === 'operations' ? 'settings' : APP_TABS.includes(savedUiState.activeTab) ? savedUiState.activeTab : 'watchlist',
+  activeSettingsTab: savedUiState.activeTab === 'operations' ? 'operations' : SETTINGS_TABS.includes(localStorage.getItem(SETTINGS_TAB_KEY)) ? localStorage.getItem(SETTINGS_TAB_KEY) : 'general',
   browseCategory: typeof savedUiState.browse?.category === 'string' ? savedUiState.browse.category : 'All',
   browseVisibleCount: 48,
   selectedWatch: new Set(),
@@ -1612,7 +1613,7 @@ async function refresh() {
     renderAttentionBanner();
     if (wasDisconnected) toast('Connection restored', 'success');
     if (app.activeTab === 'activity') await refreshActivity(app.activity.page || 1);
-    if (Date.now() - app.lastOperationsRefresh > 60000 && app.activeTab !== 'operations') refreshOperations();
+    if (Date.now() - app.lastOperationsRefresh > 60000 && !(app.activeTab === 'settings' && app.activeSettingsTab === 'operations')) refreshOperations();
   } catch (err) {
     if (/Region must be one of/i.test(err.message) && app.currentRegion) {
       app.currentRegion = null;
@@ -1704,10 +1705,17 @@ document.addEventListener('submit', (event) => {
 });
 
 function activateTab(tab) {
+  if (tab === 'operations') {
+    activateTab('settings');
+    activateSettingsTab('operations');
+    return;
+  }
   if (!APP_TABS.includes(tab)) tab = 'watchlist';
   app.activeTab = tab;
-  if (tab === 'settings') { refreshDataInfo(); refreshNotificationPreferences(); refreshSessions(); refreshConfiguration(); }
-  if (tab === 'operations') refreshOperations();
+  if (tab === 'settings') {
+    refreshDataInfo(); refreshNotificationPreferences(); refreshSessions(); refreshConfiguration();
+    if (app.activeSettingsTab === 'operations') refreshOperations();
+  }
   if (tab === 'activity') refreshActivity(app.activity.page || 1);
   history.replaceState(null, '', `#${tab}`);
   document.querySelectorAll('.tab').forEach((button) => {
@@ -1725,6 +1733,7 @@ function activateTab(tab) {
 }
 function activateSettingsTab(tab, focus = false) {
   const selected = SETTINGS_TABS.includes(tab) ? tab : 'general';
+  app.activeSettingsTab = selected;
   localStorage.setItem(SETTINGS_TAB_KEY, selected);
   document.querySelectorAll('[data-settings-tab]').forEach((button) => {
     const active = button.dataset.settingsTab === selected;
@@ -1738,6 +1747,7 @@ function activateSettingsTab(tab, focus = false) {
     panel.classList.toggle('active', active);
     panel.hidden = !active;
   });
+  if (selected === 'operations') refreshOperations();
 }
 document.querySelectorAll('.tab').forEach((tab) => {
   tab.addEventListener('click', () => activateTab(tab.dataset.tab));
@@ -1857,7 +1867,7 @@ $('channelConfigForm').addEventListener('submit', (event) => { event.preventDefa
 $('saveChannels').addEventListener('click', saveChannelConfiguration);
 $('refreshOperations').addEventListener('click', refreshOperations);
 $('runDiagnostics').addEventListener('click', runInstallationDiagnostics);
-$('attentionAction').addEventListener('click', () => activateTab('operations'));
+$('attentionAction').addEventListener('click', () => { activateTab('settings'); activateSettingsTab('operations'); });
 $('activityFilters').addEventListener('submit', (event) => { event.preventDefault(); persistUiState(); refreshActivity(1); });
 $('clearActivityFilters').addEventListener('click', resetActivityFilters);
 $('resetActivityEmpty').addEventListener('click', resetActivityFilters);
@@ -1917,8 +1927,9 @@ if ('Notification' in window && Notification.permission === 'granted') $('notify
 
 restoreUiControls();
 const initialTab = location.hash.slice(1);
-activateTab(APP_TABS.includes(initialTab) ? initialTab : app.activeTab);
-activateSettingsTab(localStorage.getItem(SETTINGS_TAB_KEY) || 'general');
+const initialOperationsTab = initialTab === 'operations';
+activateTab(initialOperationsTab ? 'settings' : APP_TABS.includes(initialTab) ? initialTab : app.activeTab);
+activateSettingsTab(initialOperationsTab ? 'operations' : app.activeSettingsTab);
 
 window.addEventListener('offline', () => {
   app.browserOffline = true;

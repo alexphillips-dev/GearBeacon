@@ -4,6 +4,7 @@ The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. 
 
 ## V0.1.10 — Release readiness, accessibility, and trust
 
+- Moved Operations from the primary navigation into the final Settings subtab while preserving saved navigation and legacy `#operations` links.
 - Added a responsive, keyboard-accessible To top arrow that fades in after scrolling, restores focus to the page start, and respects reduced-motion preferences.
 - Added an opt-in All activity updates notification preference that alerts on every new Activity feed entry, including unwatched products, while remaining disabled by default and clearly overriding individual event filters.
 - Locked TypeScript, axe-core, postject, Node build versions, GitHub Actions, security scanners, Docker build actions, and the multi-platform runtime image to reviewable versions or immutable identities.
