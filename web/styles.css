@@ -151,6 +151,7 @@ button.ghost { background: transparent; }
 .status-metrics strong { font-size:14px; margin-top:2px; }
 .tabs { display:flex; gap:4px; margin:24px 0 8px; padding-bottom:8px; border-bottom:1px solid var(--border); overflow-x:auto; scrollbar-width:thin; }
 .tab { background:transparent; border-color:transparent; color:var(--muted); padding:10px 12px; }
+.tabs .tab:hover { transform:none; }
 .tab.active { color:var(--text); background:var(--panel); border-color:var(--border); }
 .count {
   display:inline-grid; place-items:center; min-width:20px; height:20px; padding:0 6px; margin-left:5px;
