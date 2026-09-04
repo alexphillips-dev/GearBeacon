@@ -11,13 +11,13 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
 const projectRoot = fileURLToPath(new URL('..', import.meta.url));
-const testRoot = await mkdtemp(join(tmpdir(), 'gearbeacon-v18-test-'));
+const testRoot = await mkdtemp(join(tmpdir(), 'gearbeacon-v19-test-'));
 let child = null;
 let base = '';
 let smtpMessages = 0;
 const smtpBodies = [];
 const notificationRequests = { ntfy: 0, discord: 0, gotify: 0, webhook: 0, webhookSigned: false };
-const webhookHmacSecret = 'v18-test-hmac-signing-secret';
+const webhookHmacSecret = 'v19-test-hmac-signing-secret';
 const notificationServer = http.createServer((req, res) => {
   let body = '';
   req.on('data', (chunk) => { body += chunk; });
@@ -192,7 +192,7 @@ try {
     GEARBEACON_WEBHOOK_HMAC_SECRET: webhookHmacSecret,
   });
   const status = await waitFor('/api/status?region=us');
-  if (status.version !== '1.8.0') throw new Error(`Unexpected app version: ${status.version}`);
+  if (status.version !== '1.9.0') throw new Error(`Unexpected app version: ${status.version}`);
   if (status.storage?.engine !== 'SQLite' || status.storage?.schemaVersion !== 7) throw new Error('SQLite schema v7 was not initialized.');
   if (status.deployment?.mode !== 'local' || status.deployment?.bindHost !== '127.0.0.1' || status.deployment?.authenticationRequired) throw new Error('Safe local access defaults are wrong.');
   if (status.privacy?.telemetry !== false || status.privacy?.publicCloudRequired !== false) throw new Error('Privacy status is wrong.');
@@ -382,8 +382,8 @@ try {
     operationalAlerts:{ monitorFailures:true, notificationFailures:true, backupFailures:true, lowDiskSpace:true },
     emailDetailLevel:'detailed', emailTheme:'dark', emailSubjectPrefix:'[GB Test]', emailDigestMaxItems:3,
     emailEmbedImages:true, emailExplainReason:true, emailPriceCalculations:true,
-  }, secrets:{ secondaryBackupPassphrase:'v18 secondary recovery passphrase' } }) });
-  if (schedulingSave.config.notificationTimeZone !== 'UTC' || schedulingSave.config.notificationCooldownMinutes !== 7 || schedulingSave.config.historyRetentionDays !== 400 || schedulingSave.config.eventRetentionDays !== 730 || schedulingSave.config.secondaryBackupDir !== secondaryData || !schedulingSave.config.secondaryEncryptedExports || !schedulingSave.secretsConfigured.secondaryBackupPassphrase || !schedulingSave.config.operationalAlerts.lowDiskSpace || schedulingSave.config.emailDetailLevel !== 'detailed' || schedulingSave.config.emailDigestMaxItems !== 3 || schedulingSave.config.emailSubjectPrefix !== '[GB Test]') throw new Error('V1.8 delivery, email, recovery, or retention settings did not save.');
+  }, secrets:{ secondaryBackupPassphrase:'v19 secondary recovery passphrase' } }) });
+  if (schedulingSave.config.notificationTimeZone !== 'UTC' || schedulingSave.config.notificationCooldownMinutes !== 7 || schedulingSave.config.historyRetentionDays !== 400 || schedulingSave.config.eventRetentionDays !== 730 || schedulingSave.config.secondaryBackupDir !== secondaryData || !schedulingSave.config.secondaryEncryptedExports || !schedulingSave.secretsConfigured.secondaryBackupPassphrase || !schedulingSave.config.operationalAlerts.lowDiskSpace || schedulingSave.config.emailDetailLevel !== 'detailed' || schedulingSave.config.emailDigestMaxItems !== 3 || schedulingSave.config.emailSubjectPrefix !== '[GB Test]') throw new Error('V1.9 delivery, email, recovery, or retention settings did not save.');
   await fetchJson('/api/config/validate', { method:'POST', body:JSON.stringify({ ...schedulingSave.config, emailSubjectPrefix:'[GearBeacon]\r\nBcc: attacker@example.test' }) }, 400);
   const deliveryPreview = await request('/api/notifications/preview?region=us&slug=u7-pro-xgs&eventType=restock');
   if (deliveryPreview.decision?.allowed !== true || deliveryPreview.delivery?.mode !== 'immediate-restock' || deliveryPreview.delivery?.timeZone !== 'UTC' || !deliveryPreview.copy?.title || !/^\[GB Test\]/.test(deliveryPreview.email?.subject || '') || !/Why you received this/i.test(deliveryPreview.email?.text || '')) throw new Error('Notification delivery or email preview did not honor saved settings.');
@@ -421,7 +421,7 @@ try {
   if (!diagnostics.ok || diagnostics.summary.failed || !diagnostics.checks.some((item) => item.id === 'secret-key' && item.status === 'pass') || !diagnostics.checks.some((item) => item.id === 'secondary-restore' && item.status === 'pass')) throw new Error(`Installation diagnostics failed: ${JSON.stringify(diagnostics)}`);
   const supportBundle = await request('/api/operations/support-bundle');
   const supportText = JSON.stringify(supportBundle);
-  if (supportBundle.format !== 'GearBeaconSupportBundle' || supportText.includes('v18 secondary recovery passphrase') || supportText.includes(webhookHmacSecret) || supportText.includes(secondaryData) || supportText.includes(notificationBase) || supportText.includes('127.0.0.1') || !supportText.includes('[redacted]')) throw new Error('Redacted support bundle is incomplete or exposes local secrets, paths, or addresses.');
+  if (supportBundle.format !== 'GearBeaconSupportBundle' || supportText.includes('v19 secondary recovery passphrase') || supportText.includes(webhookHmacSecret) || supportText.includes(secondaryData) || supportText.includes(notificationBase) || supportText.includes('127.0.0.1') || !supportText.includes('[redacted]')) throw new Error('Redacted support bundle is incomplete or exposes local secrets, paths, or addresses.');
   const operationsAfterBackup = await request('/api/operations');
   if (!operationsAfterBackup.backups.history.some((item) => item.filename === preparedUpdate.backup.filename && item.status === 'validated') || !operationsAfterBackup.backups.secondary?.latest || !operationsAfterBackup.monitoringConfidence || !Array.isArray(operationsAfterBackup.monitoringConfidence.recentChecks)) throw new Error('Validated backup history, secondary recovery, or monitoring confidence was not recorded for Operations.');
 
@@ -469,9 +469,9 @@ try {
   const migratedDb = new DatabaseSync(join(localData, 'gearbeacon.mock.sqlite3'));
   const migratedPushTable = migratedDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='push_tokens'").get();
   migratedDb.close();
-  if (migratedPushTable) throw new Error('Obsolete push storage returned during the V1.5 to V1.8 migration.');
+  if (migratedPushTable) throw new Error('Obsolete push storage returned during the V1.5 to V1.9 migration.');
   const updates = await request('/api/update/check?region=us');
-  if (updates.currentVersion !== '1.8.0' || updates.latestVersion !== '1.8.0' || updates.updateAvailable) throw new Error('Bundled update check failed.');
+  if (updates.currentVersion !== '1.9.0' || updates.latestVersion !== '1.9.0' || updates.updateAvailable) throw new Error('Bundled update check failed.');
   await stopServer();
 
   for (const historical of [{ version:'1.6.0', schema:5 }, { version:'1.7.0', schema:6 }]) {
@@ -484,7 +484,7 @@ try {
     startServer(8899, localData);
     await waitFor('/api/status?region=us');
     const migrated = await request('/api/data/info?region=us');
-    if (migrated.schemaVersion !== 7 || migrated.backup.count < 1) throw new Error(`Automatic V${historical.version} to V1.8 migration failed.`);
+    if (migrated.schemaVersion !== 7 || migrated.backup.count < 1) throw new Error(`Automatic V${historical.version} to V1.9 migration failed.`);
     const migratedLog = new DatabaseSync(join(localData, 'gearbeacon.mock.sqlite3'), { readOnly:true });
     const loggedBackups = Number(migratedLog.prepare('SELECT COUNT(*) AS count FROM backup_log').get()?.count || 0);
     migratedLog.close();
@@ -494,13 +494,13 @@ try {
 
   // Private mode: setup, password/session hashing, authentication, CSRF and origin policy.
   startServer(8898, privateData, {
-    REGIONS: 'us', GEARBEACON_ACCESS_MODE: 'private', GEARBEACON_SETUP_TOKEN: 'v18-one-time-setup-token',
+    REGIONS: 'us', GEARBEACON_ACCESS_MODE: 'private', GEARBEACON_SETUP_TOKEN: 'v19-one-time-setup-token',
   });
   await waitFor('/healthz');
   await fetchJson('/api/status', {}, 428);
   const setup = await fetchJson('/api/auth/setup', {
     method: 'POST',
-    body: JSON.stringify({ setupToken: 'v18-one-time-setup-token', password: 'v18 private owner password' }),
+    body: JSON.stringify({ setupToken: 'v19-one-time-setup-token', password: 'v19 private owner password' }),
   }, 201);
   let cookie = setup.response.headers.get('set-cookie')?.split(';')[0];
   let csrf = setup.body.csrfToken;
@@ -512,7 +512,7 @@ try {
   await fetchJson('/api/watch', {
     method: 'POST', headers: { Cookie: cookie, 'X-CSRF-Token': csrf }, body: JSON.stringify({ slug: 'u7-pro-xgs' }),
   }, 200);
-  const secondLogin = await fetchJson('/api/auth/login', { method: 'POST', body: JSON.stringify({ password: 'v18 private owner password' }) }, 200);
+  const secondLogin = await fetchJson('/api/auth/login', { method: 'POST', body: JSON.stringify({ password: 'v19 private owner password' }) }, 200);
   const secondCookie = secondLogin.response.headers.get('set-cookie')?.split(';')[0];
   const sessions = await fetchJson('/api/auth/sessions', { headers: { Cookie: cookie } }, 200);
   const otherSession = sessions.body.sessions.find((session) => !session.current);
@@ -522,7 +522,7 @@ try {
 
   const rotated = await fetchJson('/api/auth/password', {
     method: 'PUT', headers: { Cookie: cookie, 'X-CSRF-Token': csrf },
-    body: JSON.stringify({ currentPassword: 'v18 private owner password', newPassword: 'v18 rotated private owner password' }),
+    body: JSON.stringify({ currentPassword: 'v19 private owner password', newPassword: 'v19 rotated private owner password' }),
   }, 200);
   const rotatedCookie = rotated.response.headers.get('set-cookie')?.split(';')[0];
   if (!rotatedCookie || !rotated.body.csrfToken) throw new Error('Owner password rotation did not create a replacement session.');
@@ -534,7 +534,7 @@ try {
   const credential = authDb.prepare('SELECT password_hash FROM owner_credentials WHERE id=1').get();
   const storedSession = authDb.prepare('SELECT token_hash,csrf_token FROM sessions').get();
   authDb.close();
-  if (!credential?.password_hash.startsWith('scrypt-v1$') || credential.password_hash.includes('v18 rotated private owner password')) throw new Error('Owner password was not safely hashed.');
+  if (!credential?.password_hash.startsWith('scrypt-v1$') || credential.password_hash.includes('v19 rotated private owner password')) throw new Error('Owner password was not safely hashed.');
   if (!/^[a-f0-9]{64}$/.test(storedSession?.token_hash || '') || storedSession.token_hash.includes(cookie)) throw new Error('Session token was not hashed in SQLite.');
 
   await fetchJson('/api/auth/logout', { method: 'POST', headers: { Cookie: cookie, 'X-CSRF-Token': csrf } }, 200);
@@ -545,22 +545,22 @@ try {
   await waitFor('/healthz');
   const authState = await request('/api/auth/status');
   if (authState.setupRequired) throw new Error('Completed owner setup did not survive restart.');
-  await fetchJson('/api/auth/login', { method: 'POST', body: JSON.stringify({ password: 'v18 private owner password' }) }, 401);
-  const login = await fetchJson('/api/auth/login', { method: 'POST', body: JSON.stringify({ password: 'v18 rotated private owner password' }) }, 200);
+  await fetchJson('/api/auth/login', { method: 'POST', body: JSON.stringify({ password: 'v19 private owner password' }) }, 401);
+  const login = await fetchJson('/api/auth/login', { method: 'POST', body: JSON.stringify({ password: 'v19 rotated private owner password' }) }, 200);
   if (!login.response.headers.get('set-cookie') || !login.body.csrfToken) throw new Error('Owner login failed after restart.');
   await stopServer();
 
   // Reverse-proxy mode trusts forwarded HTTPS/host/address only in explicit proxy mode.
-  startServer(8897, proxyData, { REGIONS:'us', GEARBEACON_ACCESS_MODE:'proxy', GEARBEACON_SETUP_TOKEN:'v18-proxy-setup-token', GEARBEACON_PUBLIC_BASE_URL:'https://gearbeacon.test' });
+  startServer(8897, proxyData, { REGIONS:'us', GEARBEACON_ACCESS_MODE:'proxy', GEARBEACON_SETUP_TOKEN:'v19-proxy-setup-token', GEARBEACON_PUBLIC_BASE_URL:'https://gearbeacon.test' });
   await waitFor('/healthz');
-  const proxySetup = await fetchJson('/api/auth/setup', { method:'POST', headers:{ 'X-Forwarded-Proto':'https', 'X-Forwarded-Host':'gearbeacon.test', 'X-Forwarded-For':'203.0.113.7' }, body:JSON.stringify({ setupToken:'v18-proxy-setup-token', password:'v18 proxy owner password' }) }, 201);
+  const proxySetup = await fetchJson('/api/auth/setup', { method:'POST', headers:{ 'X-Forwarded-Proto':'https', 'X-Forwarded-Host':'gearbeacon.test', 'X-Forwarded-For':'203.0.113.7' }, body:JSON.stringify({ setupToken:'v19-proxy-setup-token', password:'v19 proxy owner password' }) }, 201);
   const proxyCookieHeader = proxySetup.response.headers.get('set-cookie') || '';
   if (!/; Secure/i.test(proxyCookieHeader)) throw new Error('Proxy-mode HTTPS did not create a Secure session cookie.');
   const proxyCookie = proxyCookieHeader.split(';')[0];
   const proxyStatus = await fetchJson('/api/status', { headers:{ Cookie:proxyCookie, Origin:'https://gearbeacon.test', 'X-Forwarded-Proto':'https', 'X-Forwarded-Host':'gearbeacon.test' } }, 200);
   if (proxyStatus.response.headers.get('strict-transport-security') == null || proxyStatus.response.headers.get('access-control-allow-origin') !== 'https://gearbeacon.test') throw new Error('Proxy-mode HTTPS security headers or origin policy failed.');
 
-  console.log('\nSELF-TEST PASSED: V1.8 confirmed transitions + searchable/exportable activity + secondary recovery/restore tests + diagnostics/support bundle + watch intelligence + notifications + private self-hosting security all work.');
+  console.log('\nSELF-TEST PASSED: V1.9 confirmed transitions + searchable/exportable activity + secondary recovery/restore tests + diagnostics/support bundle + watch intelligence + notifications + private self-hosting security all work.');
 } finally {
   await stopServer();
   await new Promise((resolve) => smtpServer.close(resolve));

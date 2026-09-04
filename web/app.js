@@ -1,8 +1,18 @@
 const $ = (id) => document.getElementById(id);
 const THEME_KEY = 'gearbeacon.theme';
 const SETTINGS_TAB_KEY = 'gearbeacon.settingsTab';
+const UI_STATE_KEY = 'gearbeacon.uiState.v1';
 const SETTINGS_TABS = ['general', 'notifications', 'data', 'security', 'privacy'];
+const APP_TABS = ['watchlist', 'browse', 'activity', 'operations', 'settings'];
 const initialDeepLink = new URLSearchParams(location.search);
+
+function readUiState() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(UI_STATE_KEY) || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch { return {}; }
+}
+const savedUiState = readUiState();
 
 function applyTheme(theme) {
   const next = theme === 'light' ? 'light' : 'dark';
@@ -37,8 +47,8 @@ const app = {
   operations: null,
   wizardStep: 1,
   notificationPreferences: { restock:true, soldOut:false, priceChange:false, statusChange:false, newProduct:false },
-  activeTab: 'watchlist',
-  browseCategory: 'All',
+  activeTab: APP_TABS.includes(savedUiState.activeTab) ? savedUiState.activeTab : 'watchlist',
+  browseCategory: typeof savedUiState.browse?.category === 'string' ? savedUiState.browse.category : 'All',
   browseVisibleCount: 48,
   selectedWatch: new Set(),
   loadedImages: new Set(),
@@ -52,8 +62,39 @@ const app = {
   activityDialogLastFocus: null,
   latestEventId: null,
   serverFailures: 0,
+  browserOffline: !navigator.onLine,
+  reconnectPending: false,
+  pendingWatchCategory: typeof savedUiState.watch?.category === 'string' ? savedUiState.watch.category : null,
+  pendingActivityRegion: typeof savedUiState.activity?.scope === 'string' ? savedUiState.activity.scope : null,
   lastOperationsRefresh: 0,
 };
+
+function setControlValue(id, value) {
+  const control = $(id);
+  if (!control || value === undefined || value === null) return;
+  if (control.tagName === 'SELECT' && ![...control.options].some((option) => option.value === value)) return;
+  control.value = value;
+}
+function restoreUiControls() {
+  setControlValue('search', savedUiState.browse?.search);
+  setControlValue('watchSearch', savedUiState.watch?.search);
+  setControlValue('watchStatus', savedUiState.watch?.status);
+  setControlValue('watchSort', savedUiState.watch?.sort);
+  setControlValue('activitySearch', savedUiState.activity?.search);
+  setControlValue('activityType', savedUiState.activity?.type);
+  setControlValue('activityDelivery', savedUiState.activity?.delivery);
+  setControlValue('activityFrom', savedUiState.activity?.from);
+  setControlValue('activityTo', savedUiState.activity?.to);
+}
+function persistUiState() {
+  const state = {
+    activeTab:app.activeTab,
+    browse:{ search:$('search')?.value || '', category:app.browseCategory },
+    watch:{ search:$('watchSearch')?.value || '', status:$('watchStatus')?.value || 'all', category:app.pendingWatchCategory || $('watchCategory')?.value || 'all', sort:$('watchSort')?.value || 'changed' },
+    activity:{ search:$('activitySearch')?.value || '', scope:app.pendingActivityRegion || $('activityRegion')?.value || 'all', type:$('activityType')?.value || 'all', delivery:$('activityDelivery')?.value || 'all', from:$('activityFrom')?.value || '', to:$('activityTo')?.value || '' },
+  };
+  try { localStorage.setItem(UI_STATE_KEY, JSON.stringify(state)); } catch {}
+}
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, (ch) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }[ch]));
@@ -142,11 +183,25 @@ function serverAlertTitle(event) {
   }
   return detail;
 }
-function toast(message) {
+function toast(message, tone = 'neutral') {
   $('toast').textContent = message;
+  $('toast').className = `toast ${tone}`;
   $('toast').classList.remove('hidden');
   clearTimeout(toast.timer);
   toast.timer = setTimeout(() => $('toast').classList.add('hidden'), 2600);
+}
+async function copyText(value, label) {
+  try {
+    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(String(value));
+    else {
+      const input = document.createElement('textarea');
+      input.value = String(value); input.setAttribute('readonly', ''); input.style.position = 'fixed'; input.style.opacity = '0';
+      document.body.appendChild(input); input.select();
+      if (!document.execCommand('copy')) throw new Error('Copy was rejected by the browser.');
+      input.remove();
+    }
+    toast(`${label} copied`, 'success');
+  } catch (err) { toast(`Could not copy ${label.toLowerCase()}: ${err.message}`, 'error'); }
 }
 async function api(path, options = {}) {
   let target = path;
@@ -399,10 +454,24 @@ function filteredWatchlist() {
   return products;
 }
 function renderWatchFilters(watched) {
-  const selected = $('watchCategory').value || 'all';
+  const selected = app.pendingWatchCategory || $('watchCategory').value || 'all';
   const choices = [...new Set(watched.map((p) => p.category).filter(Boolean))].sort();
   $('watchCategory').innerHTML = '<option value="all">All categories</option>' + choices.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join('');
   $('watchCategory').value = choices.includes(selected) ? selected : 'all';
+  if (choices.includes(selected) || watched.length) app.pendingWatchCategory = null;
+}
+function watchFiltersActive() { return Boolean($('watchSearch').value.trim() || $('watchStatus').value !== 'all' || $('watchCategory').value !== 'all' || $('watchSort').value !== 'changed'); }
+function browseFiltersActive() { return Boolean($('search').value.trim() || app.browseCategory !== 'All'); }
+function activityFiltersActive() { return Boolean($('activitySearch').value.trim() || $('activityRegion').value !== 'all' || $('activityType').value !== 'all' || $('activityDelivery').value !== 'all' || $('activityFrom').value || $('activityTo').value); }
+function resetWatchFilters() {
+  $('watchSearch').value = ''; $('watchStatus').value = 'all'; $('watchCategory').value = 'all'; $('watchSort').value = 'changed'; app.pendingWatchCategory = null;
+  persistUiState(); renderProducts(true);
+}
+function resetBrowseFilters() {
+  $('search').value = ''; app.browseCategory = 'All'; app.browseVisibleCount = 48; persistUiState(); renderProducts(true);
+}
+function resetActivityFilters() {
+  $('activityFilters').reset(); $('activityRegion').value = 'all'; app.pendingActivityRegion = null; persistUiState(); refreshActivity(1);
 }
 function renderBulkActions() {
   const count = app.selectedWatch.size;
@@ -425,6 +494,8 @@ function renderProducts(force = false) {
   watchEmpty.querySelector('h3').textContent = allWatched.length ? 'No watched products match these filters' : 'No products watched yet';
   watchEmpty.querySelector('p').textContent = allWatched.length ? 'Clear or change a filter to see the rest of your watchlist.' : 'Open Browse and add the gear you are waiting for.';
   watchEmpty.querySelector('[data-goto]').classList.toggle('hidden', allWatched.length > 0);
+  $('resetWatchEmpty').classList.toggle('hidden', !allWatched.length || !watchFiltersActive());
+  $('resetWatchFilters').classList.toggle('hidden', !watchFiltersActive());
   watchEmpty.classList.toggle('hidden', watched.length > 0);
   $('watchGrid').classList.toggle('hidden', watched.length === 0);
   renderBulkActions();
@@ -444,6 +515,7 @@ function renderProducts(force = false) {
     wireProductImages($('browseGrid'));
   }
   $('browseEmpty').classList.toggle('hidden', filtered.length > 0);
+  $('resetBrowseFilters').classList.toggle('hidden', !browseFiltersActive());
   $('browseTitle').textContent = app.browseCategory === 'All' ? 'All products' : app.browseCategory;
   $('browseCount').textContent = filtered.length > visible.length ? `Showing ${visible.length} of ${filtered.length} products` : `${filtered.length} product${filtered.length === 1 ? '' : 's'}`;
   $('browseLoadMore').classList.toggle('hidden', visible.length >= filtered.length);
@@ -604,7 +676,7 @@ function renderProductDialog(details) {
     <div class="settings-result hidden" data-rule-result></div>
   </form>` : `<div class="product-watch-prompt"><p>Add this product to your watchlist to configure its alert rules.</p><button class="primary" data-watch="${escapeHtml(p.slug)}">Watch this product</button></div>`;
   const changes = details.history.slice(0, 12).map((item) => `<div class="product-change"><span class="connection-dot ${item.inStock ? 'enabled' : ''}"></span><div><strong>${escapeHtml(item.changeType.replaceAll('-', ' '))}</strong><small>${escapeHtml(item.status || 'Unknown')}${item.price ? ` · ${escapeHtml(item.price)}` : ''}</small></div><time>${escapeHtml(relativeTime(item.observedAt))}</time></div>`).join('');
-  $('productDialogBody').innerHTML = `<div class="product-hero"><div class="product-hero-image media-shell">${imageMarkup(p, 'product-image')}</div><div><div class="product-status-row"><span class="badge ${p.inStock ? 'in' : p.comingSoon ? 'soon' : 'out'}">${p.unlisted ? 'Unlisted' : p.inStock ? 'In stock' : p.comingSoon ? 'Coming soon' : 'Sold out'}</span><strong>${escapeHtml(p.price || 'Price unavailable')}</strong></div><p>${escapeHtml(p.slug)}</p><dl class="settings-details"><div><dt>Store region</dt><dd>${escapeHtml(String(p.region || app.currentRegion || '').toUpperCase())}</dd></div><div><dt>First observed</dt><dd>${escapeHtml(relativeTime(details.firstObservedAt))}</dd></div><div><dt>Last checked</dt><dd>${escapeHtml(relativeTime(p.lastSeenAt))}</dd></div><div><dt>Last changed</dt><dd>${escapeHtml(relativeTime(details.lastChangedAt))}</dd></div><div><dt>History retention</dt><dd>${details.historyRetentionDays} days</dd></div></dl><a class="button-link" href="${escapeHtml(p.url)}" target="_blank" rel="noopener">Open UniFi Store ↗</a></div></div>
+  $('productDialogBody').innerHTML = `<div class="product-hero"><div class="product-hero-image media-shell">${imageMarkup(p, 'product-image')}</div><div><div class="product-status-row"><span class="badge ${p.inStock ? 'in' : p.comingSoon ? 'soon' : 'out'}">${p.unlisted ? 'Unlisted' : p.inStock ? 'In stock' : p.comingSoon ? 'Coming soon' : 'Sold out'}</span><strong>${escapeHtml(p.price || 'Price unavailable')}</strong></div><div class="product-sku-row"><p>${escapeHtml(p.slug)}</p><button class="copy-button" type="button" data-copy-text="${escapeHtml(p.slug)}" data-copy-label="SKU">Copy SKU</button></div><dl class="settings-details"><div><dt>Store region</dt><dd>${escapeHtml(String(p.region || app.currentRegion || '').toUpperCase())}</dd></div><div><dt>First observed</dt><dd>${escapeHtml(relativeTime(details.firstObservedAt))}</dd></div><div><dt>Last checked</dt><dd>${escapeHtml(relativeTime(p.lastSeenAt))}</dd></div><div><dt>Last changed</dt><dd>${escapeHtml(relativeTime(details.lastChangedAt))}</dd></div><div><dt>History retention</dt><dd>${details.historyRetentionDays} days</dd></div></dl><div class="product-link-actions"><a class="button-link" href="${escapeHtml(p.url)}" target="_blank" rel="noopener">Open UniFi Store ↗</a><button class="copy-button" type="button" data-copy-text="${escapeHtml(p.url)}" data-copy-label="Store link">Copy link</button></div></div></div>
     ${ruleForm}<section class="product-history"><h3>Price history</h3>${historyChart(details.history)}<h3>Recent changes</h3><div class="product-change-list">${changes || '<div class="history-empty">No changes recorded yet.</div>'}</div></section>`;
   wireProductImages($('productDialogBody'));
 }
@@ -659,6 +731,10 @@ function renderEvents() {
     </button>`;
   }).join('');
   $('activityEmpty').classList.toggle('hidden', events.length > 0 || !app.activity.loaded);
+  const filteredEmpty = activityFiltersActive();
+  $('activityEmpty').querySelector('h3').textContent = filteredEmpty ? 'No activity matches these filters' : 'No stock changes detected yet';
+  $('activityEmpty').querySelector('p').textContent = filteredEmpty ? 'Reset or change a filter to see retained stock activity.' : 'The first check establishes a baseline. Changes appear here after that.';
+  $('resetActivityEmpty').classList.toggle('hidden', !filteredEmpty);
   $('activityResultCount').textContent = app.activity.loaded ? `${app.activity.count} matching event${app.activity.count === 1 ? '' : 's'}` : 'Loading activity…';
   const retention = app.config?.config?.eventRetentionDays;
   $('activityRetention').textContent = retention === 0 ? 'Activity retained until manually changed' : retention ? `${retention}-day activity retention` : 'Retained activity';
@@ -702,7 +778,7 @@ async function exportActivity(format) {
     const res = await fetch(`/api/activity/export?${params}`, { credentials:'same-origin', cache:'no-store' });
     await saveDownloadResponse(res, `GearBeacon-Activity-${new Date().toISOString().slice(0,10)}.${format}`);
     toast(`Activity exported as ${format.toUpperCase()}`);
-  } catch (err) { toast(err.message); }
+  } catch (err) { toast(err.message, 'error'); }
 }
 
 function renderActivityDialog(event) {
@@ -747,9 +823,10 @@ function renderStatus() {
   picker.innerHTML = s.regions.map((region) => `<option value="${escapeHtml(region.key)}" ${region.key === app.currentRegion ? 'selected' : ''}>${escapeHtml(region.label)}</option>`).join('');
   $('regionPickerWrap').classList.toggle('hidden', s.regions.length < 2);
   const activityRegion = $('activityRegion');
-  const activitySelection = activityRegion.value || 'all';
+  const activitySelection = app.pendingActivityRegion || activityRegion.value || 'all';
   activityRegion.innerHTML = `<option value="all">All enabled stores</option>${s.regions.map((region) => `<option value="${escapeHtml(region.key)}">${escapeHtml(region.label)}</option>`).join('')}`;
   activityRegion.value = [...activityRegion.options].some((option) => option.value === activitySelection) ? activitySelection : 'all';
+  app.pendingActivityRegion = null;
   const dot = $('statusDot');
   dot.className = 'dot';
   if (s.lastError) {
@@ -778,6 +855,15 @@ function renderStatus() {
 
 function renderAttentionBanner() {
   const banner = $('attentionBanner');
+  if (app.browserOffline) {
+    banner.className = 'attention-banner action';
+    $('attentionTitle').textContent = 'This browser is offline';
+    $('attentionDetail').textContent = 'GearBeacon is preserving its last view and will reconnect when the network returns.';
+    $('attentionAction').classList.add('hidden');
+    banner.classList.remove('hidden');
+    return;
+  }
+  $('attentionAction').classList.remove('hidden');
   if (app.serverFailures) {
     banner.className = 'attention-banner action';
     $('attentionTitle').textContent = app.serverFailures > 1 ? 'GearBeacon is still reconnecting' : 'GearBeacon connection interrupted';
@@ -1197,7 +1283,7 @@ async function testChannel(channel, button) {
   try {
     await api('/api/notifications/test', { method: 'POST', body: JSON.stringify({ channel }) });
     toast(`${channel} test sent`);
-  } catch (err) { toast(`${channel} test failed: ${err.message}`); }
+  } catch (err) { toast(`${channel} test failed: ${err.message}`, 'error'); }
   finally { button.disabled = false; }
 }
 
@@ -1364,7 +1450,7 @@ async function exportData(encrypted = true) {
       await saveDownloadResponse(res, `GearBeacon-Backup-${new Date().toISOString().slice(0,10)}.gearbeacon.json`);
       toast('Plain GearBeacon data exported');
     }
-  } catch (err) { toast(err.message); }
+  } catch (err) { toast(err.message, 'error'); }
   finally { button.disabled = false; }
 }
 
@@ -1385,7 +1471,7 @@ async function importDataFile(file) {
     await refresh();
     await refreshDataInfo();
     toast(`Restore complete · ${result.watchCount} watched product${result.watchCount === 1 ? '' : 's'}`);
-  } catch (err) { toast(`Import failed: ${err.message}`); }
+  } catch (err) { toast(`Import failed: ${err.message}`, 'error'); }
   finally { button.disabled = false; $('importFile').value = ''; }
 }
 
@@ -1466,7 +1552,7 @@ async function revokeSession(id) {
     }
     await refreshSessions();
     toast('Session revoked');
-  } catch (err) { toast(err.message); }
+  } catch (err) { toast(err.message, 'error'); }
 }
 
 function maybeBrowserNotify(events) {
@@ -1496,14 +1582,18 @@ function maybeBrowserNotify(events) {
 
 async function refresh() {
   try {
+    const wasDisconnected = app.serverFailures > 0 || app.browserOffline || app.reconnectPending;
     const [status, products, events] = await Promise.all([api('/api/status'), api('/api/products'), api('/api/events?limit=100')]);
     app.serverFailures = 0;
+    app.browserOffline = false;
+    app.reconnectPending = false;
     app.status = status;
     app.products = products.products || [];
     maybeBrowserNotify(events.events || []);
     app.events = events.events || [];
     renderStatus(); renderProducts(); renderEvents(); renderSettings(); renderEmailPreviewProducts();
     renderAttentionBanner();
+    if (wasDisconnected) toast('Connection restored', 'success');
     if (app.activeTab === 'activity') await refreshActivity(app.activity.page || 1);
     if (Date.now() - app.lastOperationsRefresh > 60000 && app.activeTab !== 'operations') refreshOperations();
   } catch (err) {
@@ -1515,7 +1605,7 @@ async function refresh() {
     $('statusDot').className = 'dot bad';
     app.serverFailures += 1;
     $('statusTitle').textContent = 'Reconnecting to GearBeacon…';
-    $('statusSub').textContent = `${err.message} · automatic retry ${app.serverFailures}`;
+    $('statusSub').textContent = app.browserOffline ? 'Waiting for this browser to reconnect' : `${err.message} · automatic retry ${app.serverFailures}`;
     renderAttentionBanner();
   }
 }
@@ -1534,7 +1624,7 @@ async function toggleWatch(slug) {
     renderProducts(true);
     toast(product.watched ? `Watching ${product.name}` : `Stopped watching ${product.name}`);
     if (!$('productDialog').classList.contains('hidden')) openProductDialog(slug, true);
-  } catch (err) { toast(err.message); }
+  } catch (err) { toast(err.message, 'error'); }
 }
 
 async function bulkWatchAction(action) {
@@ -1548,11 +1638,13 @@ async function bulkWatchAction(action) {
     if (action === 'remove') for (const product of app.products.filter((item) => slugs.includes(item.slug))) { product.watched = false; product.watchRule = null; }
     else for (const changed of result.products || []) { const product = app.products.find((item) => item.slug === changed.slug); if (product) Object.assign(product, changed); }
     app.selectedWatch.clear(); renderProducts(true); toast(`${result.affected} product${result.affected === 1 ? '' : 's'} ${action === 'pause' ? 'paused' : action === 'resume' ? 'resumed' : 'removed'}`);
-  } catch (err) { toast(err.message); }
+  } catch (err) { toast(err.message, 'error'); }
   finally { buttons.forEach((button) => { button.disabled = false; }); }
 }
 
 document.addEventListener('click', (event) => {
+  const copy = event.target.closest('[data-copy-text]');
+  if (copy) { event.preventDefault(); copyText(copy.dataset.copyText, copy.dataset.copyLabel || 'Text'); return; }
   const imageRetry = event.target.closest('[data-image-retry]');
   if (imageRetry) {
     event.preventDefault(); event.stopPropagation();
@@ -1568,7 +1660,7 @@ document.addEventListener('click', (event) => {
   const activityProduct = event.target.closest('[data-activity-product]');
   if (activityProduct) { event.preventDefault(); openActivityProduct(activityProduct.dataset.activityProduct, activityProduct.dataset.activityRegion); return; }
   const category = event.target.closest('[data-category]');
-  if (category) { app.browseCategory = category.dataset.category; app.browseVisibleCount = 48; renderProducts(true); return; }
+  if (category) { app.browseCategory = category.dataset.category; app.browseVisibleCount = 48; persistUiState(); renderProducts(true); return; }
   const details = event.target.closest('[data-product-detail]');
   if (details) { event.preventDefault(); openProductDialog(details.dataset.productDetail); return; }
   const go = event.target.closest('[data-goto]');
@@ -1580,7 +1672,7 @@ document.addEventListener('click', (event) => {
   const test = event.target.closest('[data-test-channel]');
   if (test) testChannel(test.dataset.testChannel, test);
   const retry = event.target.closest('[data-retry-failed]');
-  if (retry) api('/api/notifications/retry-failed', { method:'POST' }).then((result) => { toast(`${result.queued} failed deliveries queued`); refreshOperations(); }).catch((err) => toast(err.message));
+  if (retry) api('/api/notifications/retry-failed', { method:'POST' }).then((result) => { toast(`${result.queued} failed deliveries queued`); refreshOperations(); }).catch((err) => toast(err.message, 'error'));
 });
 document.addEventListener('change', (event) => {
   const selection = event.target.closest('[data-watch-select]');
@@ -1595,13 +1687,15 @@ document.addEventListener('submit', (event) => {
 });
 
 function activateTab(tab) {
+  if (!APP_TABS.includes(tab)) tab = 'watchlist';
   app.activeTab = tab;
   if (tab === 'settings') { refreshDataInfo(); refreshNotificationPreferences(); refreshSessions(); refreshConfiguration(); }
   if (tab === 'operations') refreshOperations();
   if (tab === 'activity') refreshActivity(app.activity.page || 1);
-  if (['watchlist','browse','activity','operations','settings'].includes(tab)) history.replaceState(null, '', `#${tab}`);
+  history.replaceState(null, '', `#${tab}`);
   document.querySelectorAll('.tab').forEach((x) => x.classList.toggle('active', x.dataset.tab === tab));
   document.querySelectorAll('.page').forEach((x) => x.classList.toggle('active', x.id === tab));
+  persistUiState();
 }
 function activateSettingsTab(tab, focus = false) {
   const selected = SETTINGS_TABS.includes(tab) ? tab : 'general';
@@ -1634,8 +1728,12 @@ document.querySelectorAll('[data-settings-tab]').forEach((tab) => {
 });
 $('themeBtn').addEventListener('click', () => applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
 let browseSearchTimer = null;
-$('search').addEventListener('input', () => { clearTimeout(browseSearchTimer); browseSearchTimer = setTimeout(() => { app.browseVisibleCount = 48; renderProducts(true); }, 180); });
-for (const id of ['watchSearch','watchStatus','watchCategory','watchSort']) $(id).addEventListener(id === 'watchSearch' ? 'input' : 'change', () => renderProducts(true));
+$('search').addEventListener('input', () => { clearTimeout(browseSearchTimer); browseSearchTimer = setTimeout(() => { app.browseVisibleCount = 48; persistUiState(); renderProducts(true); }, 180); });
+for (const id of ['watchSearch','watchStatus','watchCategory','watchSort']) $(id).addEventListener(id === 'watchSearch' ? 'input' : 'change', () => { persistUiState(); renderProducts(true); });
+$('resetWatchFilters').addEventListener('click', resetWatchFilters);
+$('resetWatchEmpty').addEventListener('click', resetWatchFilters);
+$('resetBrowseFilters').addEventListener('click', resetBrowseFilters);
+$('resetBrowseEmpty').addEventListener('click', resetBrowseFilters);
 $('browseLoadMore').addEventListener('click', () => { app.browseVisibleCount += 48; renderProducts(true); });
 $('bulkPause').addEventListener('click', () => bulkWatchAction('pause'));
 $('bulkResume').addEventListener('click', () => bulkWatchAction('resume'));
@@ -1683,7 +1781,7 @@ $('checkBtn').addEventListener('click', async () => {
   $('checkBtn').disabled = true;
   $('checkBtn').textContent = 'Checking…';
   try { await api('/api/check', { method:'POST' }); await refresh(); toast('Store check complete'); }
-  catch (err) { toast(err.message); }
+  catch (err) { toast(err.message, 'error'); }
   finally { $('checkBtn').disabled = false; $('checkBtn').textContent = 'Check now'; }
 });
 $('backupBtn').addEventListener('click', async () => {
@@ -1693,7 +1791,7 @@ $('backupBtn').addEventListener('click', async () => {
     await api('/api/data/backup', { method: 'POST' });
     await refreshDataInfo();
     toast('Safety backup created');
-  } catch (err) { toast(err.message); }
+  } catch (err) { toast(err.message, 'error'); }
   finally { button.disabled = false; }
 });
 $('testPrimaryBackup').addEventListener('click', () => testLatestBackup('primary'));
@@ -1719,8 +1817,9 @@ $('saveChannels').addEventListener('click', saveChannelConfiguration);
 $('refreshOperations').addEventListener('click', refreshOperations);
 $('runDiagnostics').addEventListener('click', runInstallationDiagnostics);
 $('attentionAction').addEventListener('click', () => activateTab('operations'));
-$('activityFilters').addEventListener('submit', (event) => { event.preventDefault(); refreshActivity(1); });
-$('clearActivityFilters').addEventListener('click', () => { $('activityFilters').reset(); $('activityRegion').value = 'all'; refreshActivity(1); });
+$('activityFilters').addEventListener('submit', (event) => { event.preventDefault(); persistUiState(); refreshActivity(1); });
+$('clearActivityFilters').addEventListener('click', resetActivityFilters);
+$('resetActivityEmpty').addEventListener('click', resetActivityFilters);
 $('activityPrevious').addEventListener('click', () => refreshActivity(Math.max(1, app.activity.page - 1)));
 $('activityNext').addEventListener('click', () => refreshActivity(Math.min(app.activity.pages, app.activity.page + 1)));
 $('exportActivityCsv').addEventListener('click', () => exportActivity('csv'));
@@ -1733,14 +1832,14 @@ $('downloadLogs').addEventListener('click', async () => {
     if ($('logSearch').value.trim()) params.set('search', $('logSearch').value.trim());
     const res = await fetch(`/api/logs?${params}`, { credentials:'same-origin' });
     await saveDownloadResponse(res, `GearBeacon-Logs-${new Date().toISOString().slice(0,10)}.json`);
-  } catch (err) { toast(err.message); }
+  } catch (err) { toast(err.message, 'error'); }
 });
 $('downloadSupportBundle').addEventListener('click', async () => {
   try {
     const res = await fetch('/api/operations/support-bundle', { credentials:'same-origin', cache:'no-store' });
     await saveDownloadResponse(res, `GearBeacon-Support-${new Date().toISOString().slice(0,10)}.json`);
     toast('Redacted support bundle downloaded');
-  } catch (err) { toast(err.message); }
+  } catch (err) { toast(err.message, 'error'); }
 });
 $('wizardNext').addEventListener('click', wizardNext);
 $('wizardBack').addEventListener('click', () => { app.wizardStep -= 1; renderWizardStep(); });
@@ -1775,9 +1874,17 @@ $('notifyBtn').addEventListener('click', async () => {
 });
 if ('Notification' in window && Notification.permission === 'granted') $('notifyBtn').textContent = 'Browser alerts enabled ✓';
 
+restoreUiControls();
 const initialTab = location.hash.slice(1);
-if (['watchlist','browse','activity','operations','settings'].includes(initialTab)) activateTab(initialTab);
+activateTab(APP_TABS.includes(initialTab) ? initialTab : app.activeTab);
 activateSettingsTab(localStorage.getItem(SETTINGS_TAB_KEY) || 'general');
+
+window.addEventListener('offline', () => {
+  app.browserOffline = true;
+  $('statusDot').className = 'dot bad'; $('statusTitle').textContent = 'Browser offline'; $('statusSub').textContent = 'Waiting for the network to return';
+  renderAttentionBanner();
+});
+window.addEventListener('online', () => { app.reconnectPending = app.browserOffline; app.browserOffline = false; renderAttentionBanner(); refresh(); });
 
 initialize();
 setInterval(() => {

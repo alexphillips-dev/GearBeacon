@@ -254,13 +254,14 @@ npx --yes -p typescript@5.8.3 tsc -p backend/tsconfig.json
 node --check web/app.js
 node scripts/check-web-contract.mjs
 node --no-warnings scripts/self-test.mjs
+node --no-warnings scripts/fault-test.mjs
 node --no-warnings scripts/browser-smoke.mjs
 docker compose build
 ```
 
-CI exercises fresh installs and backup-protected upgrades from V1.5–V1.7 on Windows, macOS, and Linux; confirmation and unlisting behavior; searchable/exportable activity; primary and encrypted-secondary restore tests; diagnostics and support-bundle redaction; real Chrome workflows at desktop and compact widths; product images, rules, scheduling and bulk actions; integration-secret encryption; every notification mock; webhook signing; SMTP STARTTLS; authentication, CSRF, origin, secure-cookie, and forwarded-header behavior; launcher syntax; real Docker Compose startup; amd64/arm64 containers; and native standalone packages. CodeQL and Trivy scan source and container images.
+CI exercises fresh installs and backup-protected upgrades from V1.5–V1.7 on Windows, macOS, and Linux; confirmation and unlisting behavior; searchable/exportable activity; primary and encrypted-secondary restore tests; diagnostics and support-bundle redaction; deterministic rate-limit, partial-catalog, restart, storage, key, 500-product, and 10k-activity fault scenarios; real Chrome workflows for persistent filters, reset states, offline recovery, copy actions, desktop and compact widths; product images, rules, scheduling and bulk actions; integration-secret encryption; every notification mock; webhook signing; SMTP STARTTLS; authentication, CSRF, origin, secure-cookie, and forwarded-header behavior; launcher syntax; real Docker Compose startup; amd64/arm64 containers; and native standalone packages. CodeQL and Trivy scan source and container images.
 
-Tagged releases produce checksummed standalone packages for Windows x64, macOS x64/ARM64, and Linux x64/ARM64, plus amd64/arm64 GHCR images. Prerelease tags such as `v1.8.0-rc.1` create GitHub prereleases without moving the stable `latest` image tag. Standalone builds use Node's single-executable application tooling.
+Tagged releases produce checksummed standalone packages for Windows x64, macOS x64/ARM64, and Linux x64/ARM64, plus amd64/arm64 GHCR images. Prerelease tags such as `v1.9.0-rc.1` create GitHub prereleases without moving the stable `latest` image tag. Standalone builds use Node's single-executable application tooling.
 
 ## Project layout
 
