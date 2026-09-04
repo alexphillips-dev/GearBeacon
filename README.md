@@ -13,8 +13,12 @@ There is no GearBeacon cloud account, hosted database, public registration, subs
 - Monitors the United States, Canada, Europe, and United Kingdom UniFi Stores from one private installation.
 - Keeps separate watchlists, product state, activity, and health for every enabled region.
 - Detects restocks, sellouts, price changes, status changes, and newly listed products.
+- Shows a focused product view with current availability, store details, first/last-seen times, price history, and recent changes.
+- Supports per-product alert overrides, price-drop and target-price rules, immediate restocks, and temporary or indefinite pauses.
+- Searches, filters, sorts, selects, pauses, resumes, and removes watched products in bulk.
 - Delivers browser, ntfy, Discord, Gotify, SMTP email, or generic webhook alerts.
-- Queues delivery durably, retries failures with exponential backoff, and can group nearby events.
+- Queues delivery durably, retries failures with exponential backoff, and supports grouping, cooldowns, quiet hours, and daily digests.
+- Can alert the owner when monitoring, delivery, backups, or available disk space need attention.
 - Signs generic webhooks with HMAC-SHA256 and supports optional bearer authentication.
 - Configures stores, access, backups, and notification integrations in the browser.
 - Encrypts saved notification credentials using a generated installation key stored outside SQLite with restricted permissions.
@@ -118,7 +122,9 @@ Backups use `PRAGMA integrity_check`, a consistent SQLite `VACUUM INTO` snapshot
 
 ## Notifications
 
-Channel configuration and individual test buttons are in Settings. A channel can be configured but independently disabled. Restock alerts for watched products are enabled by default; sellout, price, status, and new-product alerts are opt-in.
+Channel configuration, delivery timing, previews, and individual test buttons are in Settings. A channel can be configured but independently disabled. Restock alerts for watched products are enabled by default; sellout, price, status, and new-product alerts are opt-in.
+
+Each watched product can inherit those global event choices or override them. Product rules can limit price notifications to drops, wait for a target price, pause alerts, or force restocks to deliver immediately. Immediate restocks bypass quiet hours and digest scheduling. Other queued events can be held until quiet hours end, collected for the next daily digest, and suppressed during a configurable per-product event cooldown.
 
 Normal events are written to a persistent SQLite queue before delivery. Failed attempts use exponential backoff up to the configured limit. Operations shows pending/delivered/failed counts, failure reasons, and an owner-controlled retry action. The optional grouping window combines nearby events for the same region and channel.
 
@@ -135,7 +141,7 @@ Verify the HMAC against the raw request body and reject stale timestamps at the 
 
 ## Operations and updates
 
-The Operations page includes every region's last/next check, product and watch counts, catalog errors, notification queue outcomes, backup history and integrity, database/free-space sizes, security warnings, filtered downloadable logs, runtime architecture, commit, and container image information.
+The Operations page starts with an overall **Healthy**, **Degraded**, or **Action Required** state and links actionable warnings to the relevant Settings tab. It also includes every region's last/next check, product and watch counts, catalog errors, notification queue outcomes and next delivery, backup history and integrity, database/free-space sizes, security warnings, filtered downloadable logs, runtime architecture, commit, and container image information.
 
 **Check for updates** reads GitHub Releases (or a configured manifest) and shows notes and download links. **Prepare safe update** flushes current state, creates and validates a pre-update backup, and displays the platform command. GearBeacon never performs an unattended update.
 
@@ -162,8 +168,18 @@ Browser-saved settings are intended for most owners. Environment values seed new
 | `GEARBEACON_DATA_DIR` | OS data folder | Persistent data override |
 | `GEARBEACON_BACKUP_INTERVAL_HOURS` | `24` | `0` disables scheduled backups |
 | `GEARBEACON_BACKUP_RETENTION` | `10` | Database backups to retain |
+| `GEARBEACON_HISTORY_RETENTION_DAYS` | `365` | Change-only product history retention |
 | `GEARBEACON_NOTIFICATION_MAX_ATTEMPTS` | `5` | Delivery attempt limit |
 | `GEARBEACON_NOTIFICATION_GROUP_SECONDS` | `0` | Optional event grouping window |
+| `GEARBEACON_NOTIFICATION_COOLDOWN_MINUTES` | `30` | Suppress duplicate product/event alerts during this window |
+| `GEARBEACON_TIME_ZONE` | system timezone | IANA timezone for schedules |
+| `GEARBEACON_QUIET_HOURS_ENABLED` | `0` | Hold normal alerts during quiet hours |
+| `GEARBEACON_QUIET_HOURS_START` / `GEARBEACON_QUIET_HOURS_END` | `22:00` / `07:00` | Local quiet-hours window |
+| `GEARBEACON_DIGEST_ENABLED` / `GEARBEACON_DIGEST_TIME` | `0` / `09:00` | Enable and schedule a daily digest |
+| `GEARBEACON_ALERT_MONITOR_FAILURES` | `1` | Alert after repeated store-check failures |
+| `GEARBEACON_ALERT_NOTIFICATION_FAILURES` | `1` | Alert when a channel exhausts delivery attempts |
+| `GEARBEACON_ALERT_BACKUP_FAILURES` | `1` | Alert when a scheduled backup fails |
+| `GEARBEACON_ALERT_LOW_DISK` | `1` | Alert when less than 1 GB remains |
 | `NTFY_BASE_URL` / `NTFY_TOPIC` / `NTFY_TOKEN` | blank | ntfy integration |
 | `DISCORD_WEBHOOK_URL` | blank | Discord webhook |
 | `GOTIFY_BASE_URL` / `GOTIFY_TOKEN` | blank | Gotify integration |
@@ -192,8 +208,8 @@ Only liveness, readiness, and authentication bootstrap routes work without an ow
 - `/healthz`, `/readyz`, `/api/health` — process and monitor health
 - `/api/auth/*`, `/api/onboarding/complete` — owner access and setup
 - `/api/config`, `/api/config/validate` — sanitized configuration and validation
-- `/api/products`, `/api/watchlist`, `/api/watch/*`, `/api/events`, `/api/check` — regional monitor data
-- `/api/notifications/*` — preferences, individual tests, queue retry, and delivery history
+- `/api/products`, `/api/products/:slug`, `/api/watchlist`, `/api/watch/*`, `/api/events`, `/api/check` — regional monitor data, details, history, and per-product rules
+- `/api/notifications/*` — preferences, scheduling preview, individual tests, queue retry, and delivery history
 - `/api/operations`, `/api/logs` — private operational view and filtered log export
 - `/api/data/*` — integrity, backup, export, preview, and import
 - `/api/update/check`, `/api/update/prepare` — manual release information and validated preparation
@@ -206,10 +222,11 @@ npx --yes -p typescript@5.8.3 tsc -p backend/tsconfig.json
 node --check web/app.js
 node scripts/check-web-contract.mjs
 node --no-warnings scripts/self-test.mjs
+node --no-warnings scripts/browser-smoke.mjs
 docker compose build
 ```
 
-CI exercises fresh installs and database upgrades on Windows, macOS, and Linux; browser configuration; integration-secret encryption; every notification mock; webhook signing; SMTP STARTTLS; authentication, CSRF, origin, secure-cookie, and forwarded-header behavior; launcher syntax; real Docker Compose startup; amd64/arm64 containers; and native standalone packages. CodeQL and Trivy scan source and container images.
+CI exercises fresh installs and database upgrades on Windows, macOS, and Linux; real Chrome workflows at desktop and compact widths; browser configuration; product images, history, rules, scheduling and bulk actions; encrypted backup preview/restore; integration-secret encryption; every notification mock; webhook signing; SMTP STARTTLS; authentication, CSRF, origin, secure-cookie, and forwarded-header behavior; launcher syntax; real Docker Compose startup; amd64/arm64 containers; and native standalone packages. CodeQL and Trivy scan source and container images.
 
 Tagged releases produce checksummed standalone packages for Windows x64, macOS x64/ARM64, and Linux x64/ARM64, plus amd64/arm64 GHCR images. Standalone builds use Node's single-executable application tooling.
 

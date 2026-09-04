@@ -30,8 +30,9 @@ jobs:
           npx --yes -p typescript@5.8.3 tsc -p backend/tsconfig.json
           node --check web/app.js
           node --check scripts/self-test.mjs
+          node --check scripts/browser-smoke.mjs
           node scripts/check-web-contract.mjs
-      - name: Fresh install, V1.5 upgrade, integration and notification mock tests
+      - name: Fresh install, V1.5 upgrade, product rules, scheduling and integration tests
         run: node --no-warnings scripts/self-test.mjs
       - name: Validate shell launchers and installers
         if: runner.os != 'Windows'
@@ -46,6 +47,19 @@ jobs:
             [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$errors) | Out-Null
             if ($errors.Count) { throw "$($file.Name): $($errors -join '; ')" }
           }
+
+  browser-smoke:
+    name: Real browser workflows
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.16.0'
+      - run: npx --yes -p typescript@5.8.3 tsc -p backend/tsconfig.json
+      - name: Test UI in headless Chrome
+        run: node --no-warnings scripts/browser-smoke.mjs
 
   starttls:
     runs-on: ubuntu-latest
@@ -147,4 +161,4 @@ jobs:
         shell: bash
         env:
           EXPECTED_BUILD_COMMIT: ${{ github.sha }}
-        run: node scripts/standalone-smoke.mjs dist/standalone/GearBeacon-v1.6.0-*/
+        run: node scripts/standalone-smoke.mjs dist/standalone/GearBeacon-v1.7.0-*/

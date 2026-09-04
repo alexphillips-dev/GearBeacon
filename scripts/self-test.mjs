@@ -10,12 +10,12 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const projectRoot = fileURLToPath(new URL('..', import.meta.url));
-const testRoot = await mkdtemp(join(tmpdir(), 'gearbeacon-v16-test-'));
+const testRoot = await mkdtemp(join(tmpdir(), 'gearbeacon-v17-test-'));
 let child = null;
 let base = '';
 let smtpMessages = 0;
 const notificationRequests = { ntfy: 0, discord: 0, gotify: 0, webhook: 0, webhookSigned: false };
-const webhookHmacSecret = 'v16-test-hmac-signing-secret';
+const webhookHmacSecret = 'v17-test-hmac-signing-secret';
 const notificationServer = http.createServer((req, res) => {
   let body = '';
   req.on('data', (chunk) => { body += chunk; });
@@ -162,8 +162,8 @@ try {
     GEARBEACON_WEBHOOK_HMAC_SECRET: webhookHmacSecret,
   });
   const status = await waitFor('/api/status?region=us');
-  if (status.version !== '1.6.0') throw new Error(`Unexpected app version: ${status.version}`);
-  if (status.storage?.engine !== 'SQLite' || status.storage?.schemaVersion !== 5) throw new Error('SQLite schema v5 was not initialized.');
+  if (status.version !== '1.7.0') throw new Error(`Unexpected app version: ${status.version}`);
+  if (status.storage?.engine !== 'SQLite' || status.storage?.schemaVersion !== 6) throw new Error('SQLite schema v6 was not initialized.');
   if (status.deployment?.mode !== 'local' || status.deployment?.bindHost !== '127.0.0.1' || status.deployment?.authenticationRequired) throw new Error('Safe local access defaults are wrong.');
   if (status.privacy?.telemetry !== false || status.privacy?.publicCloudRequired !== false) throw new Error('Privacy status is wrong.');
   if (status.regions?.length !== 2) throw new Error('Multi-region configuration was not loaded.');
@@ -171,11 +171,13 @@ try {
   const dashboardHtml = await dashboard.text();
   if (dashboard.status !== 200 || !dashboard.headers.get('content-security-policy') || dashboard.headers.get('x-frame-options') !== 'DENY') throw new Error('Dashboard security headers are missing.');
   if (!dashboardHtml.includes('GearBeacon owner access') || /<script>(?!\s*<\/script>)/i.test(dashboardHtml)) throw new Error('Dashboard authentication gate or CSP-safe markup is missing.');
+  const unexpectedFailure = await fetchJson('/api/products/%', {}, 500);
+  if (!/check Operations logs/i.test(unexpectedFailure.body.error || '') || /URIError|decodeURIComponent|backend[\\/]src|\bat\b/i.test(unexpectedFailure.body.error || '')) throw new Error('Unexpected HTTP errors expose internal exception details.');
 
   const schemaDb = new DatabaseSync(join(localData, 'gearbeacon.mock.sqlite3'));
   const pushTable = schemaDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='push_tokens'").get();
   schemaDb.close();
-  if (pushTable) throw new Error('The obsolete push-token table still exists in schema v5.');
+  if (pushTable) throw new Error('The obsolete push-token table still exists in schema v6.');
 
   const initialConfig = await request('/api/config');
   if ((await request('/api/auth/status')).onboardingComplete) throw new Error('Fresh installation incorrectly skipped guided onboarding.');
@@ -201,6 +203,15 @@ try {
   if (products.count < 5 || !products.products.some((product) => product.slug === 'u7-pro-xgs')) throw new Error('Mock catalog did not load.');
   await request('/api/watch?region=us', { method: 'POST', body: JSON.stringify({ slug: 'u7-pro-xgs' }) });
   await request('/api/watch?region=us', { method: 'POST', body: JSON.stringify({ slug: 'uvc-ai-turret' }) });
+  const initialDetails = await request('/api/products/u7-pro-xgs?region=us');
+  if (initialDetails.product?.slug !== 'u7-pro-xgs' || !initialDetails.product.watched || !initialDetails.firstObservedAt || initialDetails.history?.length < 1) throw new Error('Product details or baseline history is incomplete.');
+  const watchedAtBeforeRestart = initialDetails.product.watchedAt;
+  const initialRules = await request('/api/watch/u7-pro-xgs/rules?region=us');
+  if (!initialRules.rule?.enabled || initialRules.rule.restock !== null || !initialRules.globalPreferences) throw new Error('Default per-product rules are incomplete.');
+  const paused = await request('/api/watch/bulk?region=us', { method:'POST', body:JSON.stringify({ action:'pause', slugs:['u7-pro-xgs', 'uvc-ai-turret'], minutes:60 }) });
+  if (paused.affected !== 2 || !paused.pausedUntil || !paused.products.every((product) => product.watchRule?.pausedUntil)) throw new Error('Bulk watchlist pause failed.');
+  const resumed = await request('/api/watch/bulk?region=us', { method:'POST', body:JSON.stringify({ action:'resume', slugs:['u7-pro-xgs', 'uvc-ai-turret'] }) });
+  if (resumed.affected !== 2 || resumed.products.some((product) => product.watchRule?.pausedUntil)) throw new Error('Bulk watchlist resume failed.');
   const caBefore = await request('/api/watchlist?region=ca');
   if (caBefore.count !== 0) throw new Error('Regional watchlists are not isolated.');
   await request('/api/watch?region=ca', { method: 'POST', body: JSON.stringify({ slug: 'unas-pro' }) });
@@ -232,6 +243,33 @@ try {
   if (!retried) throw new Error('Failed webhook delivery did not enter exponential retry state.');
   const groupedDelivery = await request('/api/notifications/log?limit=100');
   if (!groupedDelivery.notifications.some((row) => row.status === 'sent' && /grouped 2/.test(row.detail || ''))) throw new Error('Notification grouping did not combine nearby events.');
+  const savedRules = await request('/api/watch/u7-pro-xgs/rules?region=us', {
+    method:'PUT', body:JSON.stringify({ rule:{ restock:true, soldOut:false, priceChange:true, statusChange:false, priceDropOnly:true, targetPrice:250, immediateRestock:true } }),
+  });
+  if (!savedRules.rule.immediateRestock || savedRules.rule.targetPrice !== 250 || savedRules.rule.soldOut !== false || !savedRules.rule.priceDropOnly) throw new Error('Per-product alert rules did not save.');
+  const changedDetails = await request('/api/products/u7-pro-xgs?region=us');
+  if (changedDetails.history.length < 2 || !changedDetails.lastChangedAt || changedDetails.product.watchRule?.targetPrice !== 250) throw new Error('Change-only product history or saved rules are missing from product details.');
+  const schedulingConfig = await request('/api/config');
+  const schedulingSave = await request('/api/config', { method:'PUT', body:JSON.stringify({ config:{
+    ...schedulingConfig.config,
+    notificationTimeZone:'UTC', quietHoursEnabled:false, quietHoursStart:'22:00', quietHoursEnd:'07:00',
+    digestEnabled:false, digestTime:'09:00', notificationCooldownMinutes:7, historyRetentionDays:400,
+    operationalAlerts:{ monitorFailures:true, notificationFailures:true, backupFailures:true, lowDiskSpace:true },
+  } }) });
+  if (schedulingSave.config.notificationTimeZone !== 'UTC' || schedulingSave.config.notificationCooldownMinutes !== 7 || schedulingSave.config.historyRetentionDays !== 400 || !schedulingSave.config.operationalAlerts.lowDiskSpace) throw new Error('V1.7 delivery or retention settings did not save.');
+  const deliveryPreview = await request('/api/notifications/preview?region=us&slug=u7-pro-xgs&eventType=restock');
+  if (deliveryPreview.decision?.allowed !== true || deliveryPreview.delivery?.mode !== 'immediate-restock' || deliveryPreview.delivery?.timeZone !== 'UTC' || !deliveryPreview.copy?.title) throw new Error('Notification delivery preview did not honor the product rule.');
+  const utcNow = new Date();
+  const quietStart = `${String(utcNow.getUTCHours()).padStart(2, '0')}:${String(utcNow.getUTCMinutes()).padStart(2, '0')}`;
+  const quietEndDate = new Date(utcNow.getTime() + 5 * 60000);
+  const quietEnd = `${String(quietEndDate.getUTCHours()).padStart(2, '0')}:${String(quietEndDate.getUTCMinutes()).padStart(2, '0')}`;
+  const quietSave = await request('/api/config', { method:'PUT', body:JSON.stringify({ config:{ ...schedulingSave.config, quietHoursEnabled:true, quietHoursStart:quietStart, quietHoursEnd:quietEnd } }) });
+  const quietPreview = await request('/api/notifications/preview?region=us&slug=uvc-ai-turret&eventType=restock');
+  if (quietPreview.delivery?.mode !== 'after-quiet-hours' || new Date(quietPreview.delivery.deliverAt).getTime() <= Date.now()) throw new Error('Quiet-hours delivery scheduling failed.');
+  const digestSave = await request('/api/config', { method:'PUT', body:JSON.stringify({ config:{ ...quietSave.config, quietHoursEnabled:false, digestEnabled:true, digestTime:'09:00' } }) });
+  const digestPreview = await request('/api/notifications/preview?region=us&slug=uvc-ai-turret&eventType=restock');
+  if (digestPreview.delivery?.mode !== 'digest' || new Date(digestPreview.delivery.deliverAt).getTime() <= Date.now()) throw new Error('Daily digest scheduling failed.');
+  await request('/api/config', { method:'PUT', body:JSON.stringify({ config:{ ...digestSave.config, digestEnabled:false } }) });
   const logs = await request('/api/logs?level=info&search=Store');
   if (!Array.isArray(logs.logs)) throw new Error('Operations log filtering failed.');
   const preparedUpdate = await request('/api/update/prepare', { method:'POST' });
@@ -246,12 +284,14 @@ try {
   const preview = await request('/api/data/preview?region=us', {
     method: 'POST', body: JSON.stringify({ backup: encryptedExport, passphrase: 'v15 test export passphrase' }),
   });
-  if (preview.willImport.length !== 2) throw new Error('Encrypted backup preview did not include configured regions.');
+  if (preview.willImport.length !== 2 || !preview.regions.some((region) => region.region === 'us' && region.historyCount >= 2)) throw new Error('Encrypted backup preview did not include configured regions and product history.');
   await request('/api/watch/u7-pro-xgs?region=us', { method: 'DELETE' });
   const imported = await request('/api/data/import?region=us', {
     method: 'POST', body: JSON.stringify({ backup: encryptedExport, passphrase: 'v15 test export passphrase' }),
   });
   if (imported.watchCount !== 3 || imported.importedRegions.length !== 2) throw new Error('Encrypted multi-region restore failed.');
+  const configAfterImport = await request('/api/config');
+  if (!configAfterImport.secretsConfigured.webhookHmacSecret || !configAfterImport.secretsConfigured.discordWebhookUrl || !configAfterImport.secretsConfigured.gotifyToken) throw new Error('Import erased installation-local notification credentials.');
 
   const backup = await request('/api/data/backup?region=us', { method: 'POST' });
   if (!backup.backup?.validated) throw new Error('Validated SQLite backup failed.');
@@ -264,36 +304,40 @@ try {
   const usPersisted = await request('/api/watchlist?region=us');
   const caPersisted = await request('/api/watchlist?region=ca');
   if (!usPersisted.products.some((product) => product.slug === 'u7-pro-xgs') || !caPersisted.products.some((product) => product.slug === 'unas-pro')) throw new Error('Multi-region watchlists did not survive restart.');
+  const persistedProduct = usPersisted.products.find((product) => product.slug === 'u7-pro-xgs');
+  if (persistedProduct.watchedAt !== watchedAtBeforeRestart || persistedProduct.watchRule?.targetPrice !== 250 || !persistedProduct.watchRule?.immediateRestock) throw new Error(`Watch creation time or product alert rules did not survive restart: ${JSON.stringify({ watchedAtBeforeRestart, persistedProduct })}`);
   const persistedPreferences = await request('/api/notifications/preferences?region=us');
   if (!persistedPreferences.preferences.soldOut || !persistedPreferences.preferences.newProduct) throw new Error('Notification preferences did not survive restart.');
+  const persistedConfig = await request('/api/config');
+  if (persistedConfig.config.notificationTimeZone !== 'UTC' || persistedConfig.config.historyRetentionDays !== 400) throw new Error('Delivery or product-history configuration did not survive restart.');
   const beforeUpgrade = (await request('/api/data/info?region=us')).backup.count;
   await stopServer();
 
   const upgradeDb = new DatabaseSync(join(localData, 'gearbeacon.mock.sqlite3'));
-  upgradeDb.exec(`DELETE FROM schema_migrations WHERE version=5; DROP TABLE IF EXISTS notification_queue; DROP TABLE IF EXISTS app_log; DROP TABLE IF EXISTS backup_log;`);
+  upgradeDb.exec(`DELETE FROM schema_migrations WHERE version IN (5,6); DROP TABLE IF EXISTS notification_queue; DROP TABLE IF EXISTS app_log; DROP TABLE IF EXISTS backup_log; DROP TABLE IF EXISTS product_observations; DROP TABLE IF EXISTS watch_rules; DROP TABLE IF EXISTS notification_cooldowns;`);
   upgradeDb.prepare("INSERT INTO meta(key,value) VALUES('last_app_version','1.5.0') ON CONFLICT(key) DO UPDATE SET value='1.5.0'").run();
   upgradeDb.close();
   startServer(8899, localData);
   await waitFor('/api/status?region=us');
   const afterUpgrade = await request('/api/data/info?region=us');
-  if (afterUpgrade.backup.count <= beforeUpgrade || afterUpgrade.schemaVersion !== 5) throw new Error('Automatic V1.5 pre-update backup or schema migration failed.');
+  if (afterUpgrade.backup.count <= beforeUpgrade || afterUpgrade.schemaVersion !== 6) throw new Error('Automatic V1.5 pre-update backup or schema migration failed.');
   const migratedDb = new DatabaseSync(join(localData, 'gearbeacon.mock.sqlite3'));
   const migratedPushTable = migratedDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='push_tokens'").get();
   migratedDb.close();
-  if (migratedPushTable) throw new Error('Obsolete push storage returned during the V1.5 to V1.6 migration.');
+  if (migratedPushTable) throw new Error('Obsolete push storage returned during the V1.5 to V1.7 migration.');
   const updates = await request('/api/update/check?region=us');
-  if (updates.currentVersion !== '1.6.0' || updates.latestVersion !== '1.6.0' || updates.updateAvailable) throw new Error('Bundled update check failed.');
+  if (updates.currentVersion !== '1.7.0' || updates.latestVersion !== '1.7.0' || updates.updateAvailable) throw new Error('Bundled update check failed.');
   await stopServer();
 
   // Private mode: setup, password/session hashing, authentication, CSRF and origin policy.
   startServer(8898, privateData, {
-    REGIONS: 'us', GEARBEACON_ACCESS_MODE: 'private', GEARBEACON_SETUP_TOKEN: 'v16-one-time-setup-token',
+    REGIONS: 'us', GEARBEACON_ACCESS_MODE: 'private', GEARBEACON_SETUP_TOKEN: 'v17-one-time-setup-token',
   });
   await waitFor('/healthz');
   await fetchJson('/api/status', {}, 428);
   const setup = await fetchJson('/api/auth/setup', {
     method: 'POST',
-    body: JSON.stringify({ setupToken: 'v16-one-time-setup-token', password: 'v16 private owner password' }),
+    body: JSON.stringify({ setupToken: 'v17-one-time-setup-token', password: 'v17 private owner password' }),
   }, 201);
   let cookie = setup.response.headers.get('set-cookie')?.split(';')[0];
   let csrf = setup.body.csrfToken;
@@ -305,7 +349,7 @@ try {
   await fetchJson('/api/watch', {
     method: 'POST', headers: { Cookie: cookie, 'X-CSRF-Token': csrf }, body: JSON.stringify({ slug: 'u7-pro-xgs' }),
   }, 200);
-  const secondLogin = await fetchJson('/api/auth/login', { method: 'POST', body: JSON.stringify({ password: 'v16 private owner password' }) }, 200);
+  const secondLogin = await fetchJson('/api/auth/login', { method: 'POST', body: JSON.stringify({ password: 'v17 private owner password' }) }, 200);
   const secondCookie = secondLogin.response.headers.get('set-cookie')?.split(';')[0];
   const sessions = await fetchJson('/api/auth/sessions', { headers: { Cookie: cookie } }, 200);
   const otherSession = sessions.body.sessions.find((session) => !session.current);
@@ -315,7 +359,7 @@ try {
 
   const rotated = await fetchJson('/api/auth/password', {
     method: 'PUT', headers: { Cookie: cookie, 'X-CSRF-Token': csrf },
-    body: JSON.stringify({ currentPassword: 'v16 private owner password', newPassword: 'v16 rotated private owner password' }),
+    body: JSON.stringify({ currentPassword: 'v17 private owner password', newPassword: 'v17 rotated private owner password' }),
   }, 200);
   const rotatedCookie = rotated.response.headers.get('set-cookie')?.split(';')[0];
   if (!rotatedCookie || !rotated.body.csrfToken) throw new Error('Owner password rotation did not create a replacement session.');
@@ -327,7 +371,7 @@ try {
   const credential = authDb.prepare('SELECT password_hash FROM owner_credentials WHERE id=1').get();
   const storedSession = authDb.prepare('SELECT token_hash,csrf_token FROM sessions').get();
   authDb.close();
-  if (!credential?.password_hash.startsWith('scrypt-v1$') || credential.password_hash.includes('v16 rotated private owner password')) throw new Error('Owner password was not safely hashed.');
+  if (!credential?.password_hash.startsWith('scrypt-v1$') || credential.password_hash.includes('v17 rotated private owner password')) throw new Error('Owner password was not safely hashed.');
   if (!/^[a-f0-9]{64}$/.test(storedSession?.token_hash || '') || storedSession.token_hash.includes(cookie)) throw new Error('Session token was not hashed in SQLite.');
 
   await fetchJson('/api/auth/logout', { method: 'POST', headers: { Cookie: cookie, 'X-CSRF-Token': csrf } }, 200);
@@ -338,22 +382,22 @@ try {
   await waitFor('/healthz');
   const authState = await request('/api/auth/status');
   if (authState.setupRequired) throw new Error('Completed owner setup did not survive restart.');
-  await fetchJson('/api/auth/login', { method: 'POST', body: JSON.stringify({ password: 'v16 private owner password' }) }, 401);
-  const login = await fetchJson('/api/auth/login', { method: 'POST', body: JSON.stringify({ password: 'v16 rotated private owner password' }) }, 200);
+  await fetchJson('/api/auth/login', { method: 'POST', body: JSON.stringify({ password: 'v17 private owner password' }) }, 401);
+  const login = await fetchJson('/api/auth/login', { method: 'POST', body: JSON.stringify({ password: 'v17 rotated private owner password' }) }, 200);
   if (!login.response.headers.get('set-cookie') || !login.body.csrfToken) throw new Error('Owner login failed after restart.');
   await stopServer();
 
   // Reverse-proxy mode trusts forwarded HTTPS/host/address only in explicit proxy mode.
-  startServer(8897, proxyData, { REGIONS:'us', GEARBEACON_ACCESS_MODE:'proxy', GEARBEACON_SETUP_TOKEN:'v16-proxy-setup-token', GEARBEACON_PUBLIC_BASE_URL:'https://gearbeacon.test' });
+  startServer(8897, proxyData, { REGIONS:'us', GEARBEACON_ACCESS_MODE:'proxy', GEARBEACON_SETUP_TOKEN:'v17-proxy-setup-token', GEARBEACON_PUBLIC_BASE_URL:'https://gearbeacon.test' });
   await waitFor('/healthz');
-  const proxySetup = await fetchJson('/api/auth/setup', { method:'POST', headers:{ 'X-Forwarded-Proto':'https', 'X-Forwarded-Host':'gearbeacon.test', 'X-Forwarded-For':'203.0.113.7' }, body:JSON.stringify({ setupToken:'v16-proxy-setup-token', password:'v16 proxy owner password' }) }, 201);
+  const proxySetup = await fetchJson('/api/auth/setup', { method:'POST', headers:{ 'X-Forwarded-Proto':'https', 'X-Forwarded-Host':'gearbeacon.test', 'X-Forwarded-For':'203.0.113.7' }, body:JSON.stringify({ setupToken:'v17-proxy-setup-token', password:'v17 proxy owner password' }) }, 201);
   const proxyCookieHeader = proxySetup.response.headers.get('set-cookie') || '';
   if (!/; Secure/i.test(proxyCookieHeader)) throw new Error('Proxy-mode HTTPS did not create a Secure session cookie.');
   const proxyCookie = proxyCookieHeader.split(';')[0];
   const proxyStatus = await fetchJson('/api/status', { headers:{ Cookie:proxyCookie, Origin:'https://gearbeacon.test', 'X-Forwarded-Proto':'https', 'X-Forwarded-Host':'gearbeacon.test' } }, 200);
   if (proxyStatus.response.headers.get('strict-transport-security') == null || proxyStatus.response.headers.get('access-control-allow-origin') !== 'https://gearbeacon.test') throw new Error('Proxy-mode HTTPS security headers or origin policy failed.');
 
-  console.log('\nSELF-TEST PASSED: V1.6 guided configuration + encrypted credentials + notification mocks/HMAC/retry queue + operations + safe binds/auth/CSRF + V1.5 migration + backups/restore + updates all work.');
+  console.log('\nSELF-TEST PASSED: V1.7 product history/rules + scheduling + guided configuration + encrypted credentials + notification mocks/HMAC/retry queue + operations + safe binds/auth/CSRF + V1.5 migration + backups/restore + updates all work.');
 } finally {
   await stopServer();
   await new Promise((resolve) => smtpServer.close(resolve));

@@ -36,6 +36,14 @@ const app = {
   notificationPreferences: { restock:true, soldOut:false, priceChange:false, statusChange:false, newProduct:false },
   activeTab: 'watchlist',
   browseCategory: 'All',
+  browseVisibleCount: 48,
+  selectedWatch: new Set(),
+  loadedImages: new Set(),
+  brokenImages: new Set(),
+  watchRenderKey: '',
+  browseRenderKey: '',
+  lastFocusedProduct: null,
+  currentProductDetails: null,
   latestEventId: null,
 };
 
@@ -109,6 +117,7 @@ async function enterApp() {
   $('authGate').classList.add('hidden');
   $('appShell').classList.remove('hidden');
   $('logoutBtn').classList.toggle('hidden', !app.auth?.authenticationRequired);
+  showCatalogSkeletons();
   await refresh();
   await Promise.all([refreshDataInfo(), refreshNotificationPreferences(), refreshSessions(), refreshConfiguration()]);
   if (!app.auth?.onboardingComplete) showWizard();
@@ -167,20 +176,59 @@ function productDetail(p) {
   if (p.soldOutAt) return `Sold out ${relativeTime(p.soldOutAt)}`;
   return 'Waiting for restock';
 }
+function priceNumber(value) {
+  const parsed = Number.parseFloat(String(value || '').replace(/[^0-9,.-]/g, '').replace(/,/g, ''));
+  return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
+}
+function watchPaused(p) {
+  const until = p.watchRule?.pausedUntil;
+  return p.watchRule?.enabled === false || until === 'indefinite' || Boolean(until && new Date(until).getTime() > Date.now());
+}
+function ruleSummary(p) {
+  if (watchPaused(p)) return '<span class="rule-chip paused">Alerts paused</span>';
+  const rule = p.watchRule || {};
+  const chips = [];
+  if (rule.targetPrice !== null && rule.targetPrice !== undefined) chips.push(`Target $${Number(rule.targetPrice).toFixed(2)}`);
+  else if (rule.priceDropOnly) chips.push('Price drops');
+  if (rule.immediateRestock) chips.push('Immediate restock');
+  return (chips.length ? chips : ['Global alert rules']).map((text) => `<span class="rule-chip">${escapeHtml(text)}</span>`).join('');
+}
 function imageMarkup(p, className = 'product-image') {
-  const fallback = `<div class="image-placeholder" aria-hidden="true"></div>`;
+  const failed = app.brokenImages.has(p.imageUrl);
+  const retry = failed && p.imageUrl ? ` data-image-retry="${escapeHtml(p.imageUrl)}" title="Retry product image"` : '';
+  const fallback = `<div class="image-placeholder${failed ? ' image-error' : ''}" aria-hidden="true"${retry}><span>${failed ? 'Image unavailable · retry' : ''}</span></div>`;
   if (!p.imageUrl) return fallback;
-  return `${fallback}<img class="${className}" src="${escapeHtml(p.imageUrl)}" alt="${escapeHtml(p.name)}" loading="lazy" data-product-image />`;
+  return `${fallback}<img class="${className}" src="${escapeHtml(p.imageUrl)}" alt="${escapeHtml(p.name)}" loading="lazy" data-product-image="${escapeHtml(p.imageUrl)}" />`;
+}
+function showCatalogSkeletons() {
+  const watchSkeleton = '<article class="card skeleton-card" aria-hidden="true"><div class="skeleton skeleton-image"></div><div class="skeleton skeleton-line wide"></div><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line short"></div></article>';
+  const browseSkeleton = '<article class="store-card skeleton-card" aria-hidden="true"><div class="skeleton skeleton-store-image"></div><div class="store-card-body"><div class="skeleton skeleton-line wide"></div><div class="skeleton skeleton-line short"></div><div class="skeleton skeleton-line"></div></div></article>';
+  $('watchGrid').innerHTML = watchSkeleton.repeat(3);
+  $('browseGrid').innerHTML = browseSkeleton.repeat(8);
+  $('browseCount').textContent = 'Loading products…';
 }
 function wireProductImages(root = document) {
   root.querySelectorAll('img[data-product-image]').forEach((image) => {
     if (image.dataset.imageWired === 'true') return;
     image.dataset.imageWired = 'true';
-    const showImage = () => image.parentElement?.classList.add('image-loaded');
-    const removeBrokenImage = () => image.remove();
+    const url = image.dataset.productImage;
+    const showImage = () => { app.loadedImages.add(url); app.brokenImages.delete(url); image.parentElement?.classList.add('image-loaded'); };
+    const removeBrokenImage = () => {
+      app.brokenImages.add(url); app.loadedImages.delete(url);
+      const placeholder = image.parentElement?.querySelector('.image-placeholder');
+      if (placeholder) {
+        placeholder.classList.add('image-error');
+        placeholder.dataset.imageRetry = url;
+        placeholder.title = 'Retry product image';
+        placeholder.querySelector('span').textContent = 'Image unavailable · retry';
+      }
+      image.remove();
+    };
     image.addEventListener('load', showImage, { once: true });
     image.addEventListener('error', removeBrokenImage, { once: true });
-    if (image.complete) {
+    if (app.loadedImages.has(url)) showImage();
+    else if (app.brokenImages.has(url)) removeBrokenImage();
+    else if (image.complete) {
       if (image.naturalWidth > 0) showImage();
       else removeBrokenImage();
     }
@@ -189,27 +237,30 @@ function wireProductImages(root = document) {
 function watchCard(p) {
   const badgeClass = p.inStock ? 'in' : p.comingSoon ? 'soon' : 'out';
   const badgeText = p.inStock ? 'In stock' : p.comingSoon ? 'Coming soon' : 'Sold out';
-  return `<article class="card watch-card">
-    <a class="watch-image media-shell" href="${escapeHtml(p.url)}" target="_blank" rel="noopener">${imageMarkup(p)}</a>
+  const changedRecently = p.lastChangedAt && Date.now() - new Date(p.lastChangedAt).getTime() < 7 * 24 * 60 * 60 * 1000;
+  return `<article class="card watch-card${watchPaused(p) ? ' paused' : ''}" data-product-card="${escapeHtml(p.slug)}">
+    <label class="watch-select"><input type="checkbox" data-watch-select="${escapeHtml(p.slug)}" ${app.selectedWatch.has(p.slug) ? 'checked' : ''}/><span>Select ${escapeHtml(p.name)}</span></label>
+    <button class="watch-image media-shell product-detail-trigger" type="button" data-product-detail="${escapeHtml(p.slug)}">${imageMarkup(p)}</button>
     <div class="card-top"><span class="badge ${badgeClass}">${badgeText}</span><span class="meta">${escapeHtml(p.category)}</span></div>
-    <h3>${escapeHtml(p.name)}</h3>
+    <button class="product-name-button" type="button" data-product-detail="${escapeHtml(p.slug)}"><h3>${escapeHtml(p.name)}</h3></button>
     <div class="meta">${escapeHtml(p.slug)}</div>
     <div class="price">${escapeHtml(p.price || 'Price unavailable')}</div>
-    <div class="detail">${escapeHtml(productDetail(p))}</div>
+    <div class="detail">${escapeHtml(productDetail(p))}${changedRecently ? ' · changed recently' : ''}</div>
+    <div class="rule-chips">${ruleSummary(p)}</div>
     <div class="card-actions">
-      <button class="${p.watched ? 'watching' : ''}" data-watch="${escapeHtml(p.slug)}">${p.watched ? 'Watching ✓' : 'Watch'}</button>
-      <a href="${escapeHtml(p.url)}" target="_blank" rel="noopener">Open store ↗</a>
+      <button data-product-detail="${escapeHtml(p.slug)}">Alert rules</button>
+      <button class="watching" data-watch="${escapeHtml(p.slug)}">Remove</button>
     </div>
   </article>`;
 }
 function storeCard(p) {
   const statusClass = p.inStock ? 'in' : p.comingSoon ? 'soon' : 'out';
   const status = p.inStock ? 'In stock' : p.comingSoon ? 'Coming soon' : 'Sold out';
-  return `<article class="store-card">
-    <a class="store-image media-shell" href="${escapeHtml(p.url)}" target="_blank" rel="noopener">${imageMarkup(p)}</a>
+  return `<article class="store-card" data-product-card="${escapeHtml(p.slug)}">
+    <button class="store-image media-shell product-detail-trigger" type="button" data-product-detail="${escapeHtml(p.slug)}">${imageMarkup(p)}</button>
     <div class="store-card-body">
       <div class="store-card-heading">
-        <a href="${escapeHtml(p.url)}" target="_blank" rel="noopener" class="store-product-link"><h3>${escapeHtml(p.name)}</h3></a>
+        <button type="button" data-product-detail="${escapeHtml(p.slug)}" class="store-product-link"><h3>${escapeHtml(p.name)}</h3></button>
         <button class="watch-icon ${p.watched ? 'watching' : ''}" data-watch="${escapeHtml(p.slug)}" title="${p.watched ? 'Remove from watchlist' : 'Watch this product'}" aria-label="${p.watched ? 'Remove from watchlist' : 'Watch this product'}">${p.watched ? '✓' : '+'}</button>
       </div>
       <div class="store-sku">${escapeHtml(p.slug)}</div>
@@ -238,13 +289,59 @@ function renderCategoryTabs() {
     return `<button class="store-category-tab ${app.browseCategory === category ? 'active' : ''}" data-category="${escapeHtml(category)}" role="tab" aria-selected="${app.browseCategory === category}">${escapeHtml(category)} <span>${count}</span></button>`;
   }).join('');
 }
-function renderProducts() {
-  const watched = app.products.filter((p) => p.watched);
-  $('watchCount').textContent = watched.length;
-  if ($('settingsWatchCount')) $('settingsWatchCount').textContent = `${watched.length} product${watched.length === 1 ? '' : 's'}`;
-  $('watchGrid').innerHTML = watched.map(watchCard).join('');
-  $('watchEmpty').classList.toggle('hidden', watched.length > 0);
+function filteredWatchlist() {
+  const query = $('watchSearch').value.trim().toLowerCase();
+  const status = $('watchStatus').value;
+  const category = $('watchCategory').value;
+  const sort = $('watchSort').value;
+  const products = app.products.filter((p) => p.watched).filter((p) => {
+    if (query && !`${p.name} ${p.slug} ${p.category}`.toLowerCase().includes(query)) return false;
+    if (category !== 'all' && p.category !== category) return false;
+    if (status === 'in' && !p.inStock) return false;
+    if (status === 'out' && p.inStock) return false;
+    if (status === 'paused' && !watchPaused(p)) return false;
+    return true;
+  });
+  products.sort((a, b) => {
+    if (sort === 'name') return a.name.localeCompare(b.name);
+    if (sort === 'price-low') return priceNumber(a.price) - priceNumber(b.price);
+    if (sort === 'price-high') return priceNumber(b.price) - priceNumber(a.price);
+    if (sort === 'availability') return Number(b.inStock) - Number(a.inStock) || a.name.localeCompare(b.name);
+    if (sort === 'added') return String(b.watchedAt || '').localeCompare(String(a.watchedAt || ''));
+    return String(b.lastChangedAt || '').localeCompare(String(a.lastChangedAt || ''));
+  });
+  return products;
+}
+function renderWatchFilters(watched) {
+  const selected = $('watchCategory').value || 'all';
+  const choices = [...new Set(watched.map((p) => p.category).filter(Boolean))].sort();
+  $('watchCategory').innerHTML = '<option value="all">All categories</option>' + choices.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join('');
+  $('watchCategory').value = choices.includes(selected) ? selected : 'all';
+}
+function renderBulkActions() {
+  const count = app.selectedWatch.size;
+  $('bulkCount').textContent = `${count} selected`;
+  $('bulkActions').classList.toggle('hidden', count === 0);
+}
+function renderProducts(force = false) {
+  const allWatched = app.products.filter((p) => p.watched);
+  renderWatchFilters(allWatched);
+  const watched = filteredWatchlist();
+  $('watchCount').textContent = allWatched.length;
+  if ($('settingsWatchCount')) $('settingsWatchCount').textContent = `${allWatched.length} product${allWatched.length === 1 ? '' : 's'}`;
+  const watchKey = JSON.stringify([watched.map((p) => [p.slug,p.status,p.price,p.lastChangedAt,p.watchRule]), [...app.selectedWatch]]);
+  if (force || watchKey !== app.watchRenderKey) {
+    $('watchGrid').innerHTML = watched.map(watchCard).join('');
+    app.watchRenderKey = watchKey;
+    wireProductImages($('watchGrid'));
+  }
+  const watchEmpty = $('watchEmpty');
+  watchEmpty.querySelector('h3').textContent = allWatched.length ? 'No watched products match these filters' : 'No products watched yet';
+  watchEmpty.querySelector('p').textContent = allWatched.length ? 'Clear or change a filter to see the rest of your watchlist.' : 'Open Browse and add the gear you are waiting for.';
+  watchEmpty.querySelector('[data-goto]').classList.toggle('hidden', allWatched.length > 0);
+  watchEmpty.classList.toggle('hidden', watched.length > 0);
   $('watchGrid').classList.toggle('hidden', watched.length === 0);
+  renderBulkActions();
 
   renderCategoryTabs();
   const q = $('search').value.trim().toLowerCase();
@@ -253,19 +350,97 @@ function renderProducts() {
     const searchMatch = !q || `${p.name} ${p.slug} ${p.category}`.toLowerCase().includes(q);
     return categoryMatch && searchMatch;
   });
-  $('browseGrid').innerHTML = filtered.map(storeCard).join('');
+  const visible = filtered.slice(0, app.browseVisibleCount);
+  const browseKey = JSON.stringify([visible.map((p) => [p.slug,p.status,p.price,p.watched,p.imageUrl]), app.browseCategory,q,app.browseVisibleCount]);
+  if (force || browseKey !== app.browseRenderKey) {
+    $('browseGrid').innerHTML = visible.map(storeCard).join('');
+    app.browseRenderKey = browseKey;
+    wireProductImages($('browseGrid'));
+  }
   $('browseEmpty').classList.toggle('hidden', filtered.length > 0);
   $('browseTitle').textContent = app.browseCategory === 'All' ? 'All products' : app.browseCategory;
-  $('browseCount').textContent = `${filtered.length} product${filtered.length === 1 ? '' : 's'}`;
-  wireProductImages($('watchGrid'));
-  wireProductImages($('browseGrid'));
+  $('browseCount').textContent = filtered.length > visible.length ? `Showing ${visible.length} of ${filtered.length} products` : `${filtered.length} product${filtered.length === 1 ? '' : 's'}`;
+  $('browseLoadMore').classList.toggle('hidden', visible.length >= filtered.length);
+}
+
+function historyChart(history) {
+  const values = [...history].reverse().filter((item) => Number.isFinite(Number(item.priceValue)));
+  if (values.length < 2) return '<div class="history-empty">Price history will appear after GearBeacon detects a change.</div>';
+  const width = 620; const height = 170; const pad = 18;
+  const prices = values.map((item) => Number(item.priceValue));
+  const min = Math.min(...prices); const max = Math.max(...prices); const range = Math.max(1, max - min);
+  const points = values.map((item, index) => {
+    const x = pad + index * (width - pad * 2) / Math.max(1, values.length - 1);
+    const y = height - pad - ((Number(item.priceValue) - min) / range) * (height - pad * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  return `<div class="history-chart"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Price history from ${escapeHtml(values[0].price)} to ${escapeHtml(values.at(-1).price)}"><polyline points="${points}" fill="none" stroke="currentColor" stroke-width="3" vector-effect="non-scaling-stroke"/></svg><div><span>${escapeHtml(values[0].price)} · ${escapeHtml(new Date(values[0].observedAt).toLocaleDateString())}</span><span>${escapeHtml(values.at(-1).price)} · now</span></div></div>`;
+}
+
+function ruleSelect(name, label, value) {
+  const selected = value === null || value === undefined ? 'inherit' : String(Boolean(value));
+  return `<label class="field"><span>${label}</span><select name="${name}"><option value="inherit" ${selected === 'inherit' ? 'selected' : ''}>Use global setting</option><option value="true" ${selected === 'true' ? 'selected' : ''}>Enabled</option><option value="false" ${selected === 'false' ? 'selected' : ''}>Disabled</option></select></label>`;
+}
+
+function renderProductDialog(details) {
+  app.currentProductDetails = details;
+  const p = details.product;
+  const rule = p.watchRule || {};
+  $('productDialogCategory').textContent = `${p.category} · ${String(p.region || app.currentRegion || '').toUpperCase()}`;
+  $('productDialogTitle').textContent = p.name;
+  const currentPause = rule.pausedUntil && rule.pausedUntil !== 'indefinite' ? `<option value="existing:${escapeHtml(rule.pausedUntil)}" selected>Paused until ${escapeHtml(new Date(rule.pausedUntil).toLocaleString())}</option>` : '';
+  const ruleForm = p.watched ? `<form id="productRuleForm" class="product-rule-form" data-rule-slug="${escapeHtml(p.slug)}">
+    <h3>Product-specific alert rules</h3><p>Use global settings unless this product needs different behavior.</p>
+    <div class="form-row">${ruleSelect('restock','Restock alerts',rule.restock)}${ruleSelect('soldOut','Sold-out alerts',rule.soldOut)}${ruleSelect('priceChange','Price-change alerts',rule.priceChange)}${ruleSelect('statusChange','Other status alerts',rule.statusChange)}</div>
+    <div class="form-row"><label class="field"><span>Target price</span><input name="targetPrice" type="number" min="0" step="0.01" value="${rule.targetPrice ?? ''}" placeholder="No target" /></label><label class="field"><span>Pause alerts</span><select name="pause"><option value="active" ${!rule.pausedUntil ? 'selected' : ''}>Active</option>${currentPause}<option value="60">For 1 hour</option><option value="1440">For 1 day</option><option value="10080">For 1 week</option><option value="indefinite" ${rule.pausedUntil === 'indefinite' ? 'selected' : ''}>Until resumed</option></select></label></div>
+    <div class="inline-checks"><label><input name="priceDropOnly" type="checkbox" ${rule.priceDropOnly ? 'checked' : ''}/> Only alert when price drops</label><label><input name="immediateRestock" type="checkbox" ${rule.immediateRestock ? 'checked' : ''}/> Deliver restocks immediately</label></div>
+    <div class="settings-actions wrap"><button class="primary" type="submit">Save alert rules</button><button type="button" data-watch="${escapeHtml(p.slug)}">Remove from watchlist</button></div>
+    <div class="settings-result hidden" data-rule-result></div>
+  </form>` : `<div class="product-watch-prompt"><p>Add this product to your watchlist to configure its alert rules.</p><button class="primary" data-watch="${escapeHtml(p.slug)}">Watch this product</button></div>`;
+  const changes = details.history.slice(0, 12).map((item) => `<div class="product-change"><span class="connection-dot ${item.inStock ? 'enabled' : ''}"></span><div><strong>${escapeHtml(item.changeType.replaceAll('-', ' '))}</strong><small>${escapeHtml(item.status || 'Unknown')}${item.price ? ` · ${escapeHtml(item.price)}` : ''}</small></div><time>${escapeHtml(relativeTime(item.observedAt))}</time></div>`).join('');
+  $('productDialogBody').innerHTML = `<div class="product-hero"><div class="product-hero-image media-shell">${imageMarkup(p, 'product-image')}</div><div><div class="product-status-row"><span class="badge ${p.inStock ? 'in' : p.comingSoon ? 'soon' : 'out'}">${p.inStock ? 'In stock' : p.comingSoon ? 'Coming soon' : 'Sold out'}</span><strong>${escapeHtml(p.price || 'Price unavailable')}</strong></div><p>${escapeHtml(p.slug)}</p><dl class="settings-details"><div><dt>Store region</dt><dd>${escapeHtml(String(p.region || app.currentRegion || '').toUpperCase())}</dd></div><div><dt>First observed</dt><dd>${escapeHtml(relativeTime(details.firstObservedAt))}</dd></div><div><dt>Last checked</dt><dd>${escapeHtml(relativeTime(p.lastSeenAt))}</dd></div><div><dt>Last changed</dt><dd>${escapeHtml(relativeTime(details.lastChangedAt))}</dd></div><div><dt>History retention</dt><dd>${details.historyRetentionDays} days</dd></div></dl><a class="button-link" href="${escapeHtml(p.url)}" target="_blank" rel="noopener">Open UniFi Store ↗</a></div></div>
+    ${ruleForm}<section class="product-history"><h3>Price history</h3>${historyChart(details.history)}<h3>Recent changes</h3><div class="product-change-list">${changes || '<div class="history-empty">No changes recorded yet.</div>'}</div></section>`;
+  wireProductImages($('productDialogBody'));
+}
+
+async function openProductDialog(slug, preserveFocus = false) {
+  if (!preserveFocus) app.lastFocusedProduct = document.activeElement;
+  $('productDialog').classList.remove('hidden');
+  document.body.classList.add('dialog-open');
+  $('productDialogTitle').textContent = 'Loading product…';
+  $('productDialogBody').innerHTML = '<div class="dialog-loading">Loading product history and alert rules…</div>';
+  $('closeProductDialog').focus();
+  try { renderProductDialog(await api(`/api/products/${encodeURIComponent(slug)}`)); }
+  catch (err) { $('productDialogBody').innerHTML = `<div class="settings-result error">${escapeHtml(err.message)}</div>`; }
+}
+
+function closeProductDialog() {
+  $('productDialog').classList.add('hidden');
+  document.body.classList.remove('dialog-open');
+  app.currentProductDetails = null;
+  app.lastFocusedProduct?.focus?.();
+}
+
+async function saveProductRule(form) {
+  const readOverride = (name) => { const value = form.elements[name].value; return value === 'inherit' ? null : value === 'true'; };
+  const pause = form.elements.pause.value;
+  const pausedUntil = pause === 'active' ? null : pause === 'indefinite' ? 'indefinite' : pause.startsWith('existing:') ? pause.slice(9) : new Date(Date.now() + Number(pause) * 60000).toISOString();
+  const rule = { restock:readOverride('restock'), soldOut:readOverride('soldOut'), priceChange:readOverride('priceChange'), statusChange:readOverride('statusChange'), targetPrice:form.elements.targetPrice.value || null, priceDropOnly:form.elements.priceDropOnly.checked, immediateRestock:form.elements.immediateRestock.checked, pausedUntil };
+  const resultBox = form.querySelector('[data-rule-result]');
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true; button.textContent = 'Saving…';
+  try {
+    const result = await api(`/api/watch/${encodeURIComponent(form.dataset.ruleSlug)}/rules`, { method:'PUT', body:JSON.stringify({ rule }) });
+    const product = app.products.find((item) => item.slug === form.dataset.ruleSlug); if (product) product.watchRule = result.rule;
+    renderProducts(true); await openProductDialog(form.dataset.ruleSlug, true); toast('Product alert rules saved');
+  } catch (err) { resultBox.classList.remove('hidden'); resultBox.textContent = err.message; button.disabled = false; button.textContent = 'Save alert rules'; }
 }
 
 function renderEvents() {
   const icon = { restock:'↑', sold_out:'↓', price_change:'$', status_change:'↔' };
   $('activityList').innerHTML = app.events.map((e) => `<article class="event ${escapeHtml(e.type)}">
     <div class="event-icon">${icon[e.type] || '•'}</div>
-    <div><strong>${escapeHtml(e.name)}</strong><span class="event-meta">${escapeHtml(e.type.replace('_',' '))}${e.price ? ` · ${escapeHtml(e.price)}` : ''}${e.watchedAtDetection ? ' · watched' : ''}</span></div>
+    <button class="event-product" type="button" data-product-detail="${escapeHtml(e.slug)}"><strong>${escapeHtml(e.name)}</strong><span class="event-meta">${escapeHtml(e.type.replace('_',' '))}${e.price ? ` · ${escapeHtml(e.price)}` : ''}${e.watchedAtDetection ? ' · watched' : ''}</span></button>
     <time title="${escapeHtml(e.detectedAt)}">${escapeHtml(relativeTime(e.detectedAt))}</time>
   </article>`).join('');
   $('activityEmpty').classList.toggle('hidden', app.events.length > 0);
@@ -320,6 +495,7 @@ function renderSettings() {
   const count = info.backup?.count || 0;
   $('backupBadge').textContent = `${count} backup${count === 1 ? '' : 's'}`;
   $('latestBackup').textContent = info.backup?.latest ? `${relativeTime(info.backup.latest.createdAt)} · ${info.backup.latest.name}` : 'None yet';
+  if ($('historyBadge')) $('historyBadge').textContent = `${info.history?.observations || 0} change record${info.history?.observations === 1 ? '' : 's'}`;
   renderSecurity();
   renderPrivacy();
   renderNotificationSettings();
@@ -469,8 +645,21 @@ function renderConfiguration() {
   $('configCookieSecure').checked = Boolean(c.cookieSecure);
   $('configBackupHours').value = c.backupIntervalHours;
   $('configBackupRetention').value = c.backupRetention;
+  $('configHistoryRetention').value = c.historyRetentionDays;
   $('configMaxAttempts').value = c.notificationMaxAttempts;
   $('configGroupSeconds').value = c.notificationGroupSeconds;
+  $('configTimeZone').value = c.notificationTimeZone;
+  $('configCooldownMinutes').value = c.notificationCooldownMinutes;
+  $('configQuietEnabled').checked = Boolean(c.quietHoursEnabled);
+  $('configQuietStart').value = c.quietHoursStart;
+  $('configQuietEnd').value = c.quietHoursEnd;
+  $('configDigestEnabled').checked = Boolean(c.digestEnabled);
+  $('configDigestTime').value = c.digestTime;
+  $('operationalMonitorFailures').checked = c.operationalAlerts?.monitorFailures !== false;
+  $('operationalNotificationFailures').checked = c.operationalAlerts?.notificationFailures !== false;
+  $('operationalBackupFailures').checked = c.operationalAlerts?.backupFailures !== false;
+  $('operationalLowDisk').checked = c.operationalAlerts?.lowDiskSpace !== false;
+  $('deliveryModeBadge').textContent = c.digestEnabled ? `Daily · ${c.digestTime}` : c.quietHoursEnabled ? `Quiet ${c.quietHoursStart}–${c.quietHoursEnd}` : c.notificationGroupSeconds ? `Grouped ${c.notificationGroupSeconds}s` : 'Immediate';
   $('configRestartBadge').classList.toggle('hidden', !app.config.restartPending);
   const form = $('channelConfigForm');
   form.innerHTML = [
@@ -501,11 +690,23 @@ function baseConfigFromSettings() {
     publicBaseUrl: $('configPublicUrl').value.trim(),
     allowedOrigins: $('configAllowedOrigins').value.split(',').map((x) => x.trim()).filter(Boolean),
     cookieSecure: $('configCookieSecure').checked,
-    backupIntervalHours: Number($('configBackupHours').value),
-    backupRetention: Number($('configBackupRetention').value),
-    notificationMaxAttempts: Number($('configMaxAttempts').value),
-    notificationGroupSeconds: Number($('configGroupSeconds').value),
   };
+}
+
+function dataConfigFromSettings() {
+  return { ...app.config.config, backupIntervalHours:Number($('configBackupHours').value), backupRetention:Number($('configBackupRetention').value), historyRetentionDays:Number($('configHistoryRetention').value) };
+}
+
+function deliveryConfigFromSettings() {
+  return { ...app.config.config, notificationTimeZone:$('configTimeZone').value.trim(), notificationCooldownMinutes:Number($('configCooldownMinutes').value), notificationMaxAttempts:Number($('configMaxAttempts').value), notificationGroupSeconds:Number($('configGroupSeconds').value), quietHoursEnabled:$('configQuietEnabled').checked, quietHoursStart:$('configQuietStart').value, quietHoursEnd:$('configQuietEnd').value, digestEnabled:$('configDigestEnabled').checked, digestTime:$('configDigestTime').value, operationalAlerts:{ monitorFailures:$('operationalMonitorFailures').checked, notificationFailures:$('operationalNotificationFailures').checked, backupFailures:$('operationalBackupFailures').checked, lowDiskSpace:$('operationalLowDisk').checked } };
+}
+
+async function saveConfigurationSection(config, resultEl, successMessage) {
+  const result = await api('/api/config', { method:'PUT', body:JSON.stringify({ config }) });
+  app.config = { ...app.config, config:result.config, secretsConfigured:result.secretsConfigured, restartPending:result.restartRequired };
+  renderConfiguration();
+  resultEl.classList.remove('hidden');
+  resultEl.innerHTML = `<strong>${escapeHtml(successMessage)}</strong>${result.restartRequired ? ' Restart GearBeacon to apply store-region, access-mode, or bind-address changes.' : ' Changes are active now.'}`;
 }
 
 async function saveAppConfiguration(event) {
@@ -519,6 +720,39 @@ async function saveAppConfiguration(event) {
     resultEl.innerHTML = `<strong>Configuration validated and saved.</strong>${result.restartRequired ? ' Restart GearBeacon to apply store-region, access-mode, or bind-address changes.' : ' Changes are active now.'}`;
     toast('Configuration saved');
   } catch (err) { resultEl.classList.remove('hidden'); resultEl.textContent = err.message; }
+}
+
+async function saveDataConfiguration(event) {
+  event.preventDefault();
+  const resultEl = $('dataScheduleResult');
+  const button = event.submitter;
+  if (button) { button.disabled = true; button.textContent = 'Saving…'; }
+  try { await saveConfigurationSection(dataConfigFromSettings(), resultEl, 'Data settings saved.'); await refreshDataInfo(); toast('Data settings saved'); }
+  catch (err) { resultEl.classList.remove('hidden'); resultEl.textContent = err.message; }
+  finally { if (button) { button.disabled = false; button.textContent = 'Save data settings'; } }
+}
+
+async function saveDeliveryConfiguration(event) {
+  event.preventDefault();
+  const resultEl = $('deliveryResult');
+  const button = event.submitter;
+  if (button) { button.disabled = true; button.textContent = 'Saving…'; }
+  try { await saveConfigurationSection(deliveryConfigFromSettings(), resultEl, 'Delivery settings saved.'); toast('Delivery settings saved'); }
+  catch (err) { resultEl.classList.remove('hidden'); resultEl.textContent = err.message; }
+  finally { if (button) { button.disabled = false; button.textContent = 'Save delivery settings'; } }
+}
+
+async function previewDelivery() {
+  const resultEl = $('deliveryResult');
+  const button = $('previewDelivery'); button.disabled = true; button.textContent = 'Calculating…';
+  try {
+    const watched = app.products.find((product) => product.watched);
+    const params = new URLSearchParams({ eventType:'restock' }); if (watched) params.set('slug', watched.slug);
+    const result = await api(`/api/notifications/preview?${params}`);
+    resultEl.classList.remove('hidden');
+    resultEl.innerHTML = `<strong>${escapeHtml(result.copy.title)}</strong><br>${escapeHtml(result.copy.body)}<br>Delivery: ${escapeHtml(result.delivery.mode)} · ${escapeHtml(new Date(result.delivery.deliverAt).toLocaleString())} (${escapeHtml(result.delivery.timeZone)})${result.configuredChannels.length ? `<br>Channels: ${escapeHtml(result.configuredChannels.join(', '))}` : '<br>No server channel is currently enabled.'}`;
+  } catch (err) { resultEl.classList.remove('hidden'); resultEl.textContent = err.message; }
+  finally { button.disabled = false; button.textContent = 'Preview delivery'; }
 }
 
 function channelConfigPayload() {
@@ -581,11 +815,13 @@ async function refreshOperations() {
   try {
     const ops = await api('/api/operations'); app.operations = ops;
     $('runtimeBadge').textContent = `${ops.runtime.platform} · ${ops.runtime.standalone ? 'standalone' : ops.runtime.node}`;
-    $('securityWarnings').innerHTML = ops.securityWarnings.length ? ops.securityWarnings.map((item) => `<div class="warning ${escapeHtml(item.severity)}"><strong>${escapeHtml(item.severity.toUpperCase())}</strong><span>${escapeHtml(item.message)}</span></div>`).join('') : '<div class="warning good"><strong>SECURE</strong><span>No configuration warnings detected.</span></div>';
+    $('operationsSummary').className = `operations-summary ${escapeHtml(ops.summary.state)}`;
+    $('operationsSummary').innerHTML = `<div><span class="summary-state-dot"></span><div><strong>${escapeHtml(ops.summary.label)}</strong><small>${ops.summary.issues.length ? `${ops.summary.issues.length} item${ops.summary.issues.length === 1 ? '' : 's'} need review` : 'Monitoring, delivery, storage, and security checks are healthy'}</small></div></div>${ops.summary.issues.slice(0,3).map((item) => `<button ${item.settingsTab ? `data-settings-link="${escapeHtml(item.settingsTab)}"` : ''}>${escapeHtml(item.message)}</button>`).join('')}`;
+    $('securityWarnings').innerHTML = ops.securityWarnings.length ? ops.securityWarnings.map((item) => `<div class="warning ${escapeHtml(item.severity)}"><strong>${escapeHtml(item.severity.toUpperCase())}</strong><span>${escapeHtml(item.message)}</span>${item.settingsTab ? `<button data-settings-link="${escapeHtml(item.settingsTab)}">Open setting</button>` : ''}</div>`).join('') : '<div class="warning good"><strong>SECURE</strong><span>No configuration warnings detected.</span></div>';
     const queue = ops.notifications.queue;
     const failures = (queue.recentFailures || []).map((item) => `<div class="failure-row"><strong class="bad-text">${escapeHtml(item.channel)} · ${escapeHtml(item.region.toUpperCase())}</strong><small>${escapeHtml(item.last_error || 'Unknown delivery error')} · ${item.attempts}/${item.max_attempts} attempts</small></div>`).join('');
     const backupHistory = (ops.backups.history || []).slice(0, 6).map((item) => `<div class="failure-row"><strong class="${item.status === 'failed' ? 'bad-text' : ''}">${escapeHtml(item.reason)} · ${escapeHtml(item.status)}</strong><small>${escapeHtml(item.filename || item.detail || 'No file')} · ${escapeHtml(relativeTime(item.created_at))}</small></div>`).join('');
-    $('operationsGrid').innerHTML = `<article class="settings-card"><span class="settings-kicker">Regions</span><h3>Store health</h3>${ops.regions.map((r) => `<div class="ops-row"><span class="connection-dot ${r.lastSuccessAt && !r.lastError ? 'enabled' : ''}"></span><div><strong>${escapeHtml(r.label)}</strong><small>${r.lastError ? escapeHtml(r.lastError) : `Last check ${escapeHtml(relativeTime(r.lastSuccessAt))} · next ${escapeHtml(relativeTime(r.nextCheckAt))}`}</small></div><b>${r.productCount || 0} products</b></div>`).join('')}</article><article class="settings-card"><span class="settings-kicker">Delivery</span><h3>Notification queue</h3><dl class="settings-details"><div><dt>Pending</dt><dd>${queue.pending}</dd></div><div><dt>Delivered</dt><dd>${queue.sent}</dd></div><div><dt>Failed</dt><dd>${queue.failed}</dd></div></dl>${failures ? `<div class="failure-list">${failures}</div>` : ''}${queue.failed ? '<div class="settings-actions"><button data-retry-failed>Retry failed</button></div>' : ''}</article><article class="settings-card"><span class="settings-kicker">Data safety</span><h3>Backups</h3><dl class="settings-details"><div><dt>Validated</dt><dd>${ops.backups.count}</dd></div><div><dt>Integrity</dt><dd>${ops.backups.integrity.ok ? 'OK' : 'Failed'}</dd></div><div><dt>Latest</dt><dd>${ops.backups.latest ? escapeHtml(relativeTime(ops.backups.latest.createdAt)) : 'None'}</dd></div></dl>${backupHistory ? `<div class="failure-list">${backupHistory}</div>` : ''}</article><article class="settings-card"><span class="settings-kicker">Storage & build</span><h3>Installation</h3><dl class="settings-details"><div><dt>Database</dt><dd>${bytes(ops.storage.databaseSize)}</dd></div><div><dt>Free space</dt><dd>${bytes(ops.storage.freeSpace)}</dd></div><div><dt>Version</dt><dd>V${escapeHtml(ops.runtime.version)}</dd></div><div><dt>Commit / image</dt><dd>${escapeHtml(ops.runtime.commit || ops.runtime.image || 'Source checkout')}</dd></div></dl></article>`;
+    $('operationsGrid').innerHTML = `<article class="settings-card"><span class="settings-kicker">Regions</span><h3>Store health</h3>${ops.regions.map((r) => `<div class="ops-row"><span class="connection-dot ${r.lastSuccessAt && !r.lastError ? 'enabled' : ''}"></span><div><strong>${escapeHtml(r.label)}</strong><small>${r.lastError ? escapeHtml(r.lastError) : `Last check ${escapeHtml(relativeTime(r.lastSuccessAt))} · next ${escapeHtml(relativeTime(r.nextCheckAt))}`}</small></div><b>${r.productCount || 0} products</b></div>`).join('')}</article><article class="settings-card"><span class="settings-kicker">Delivery</span><h3>Notification queue</h3><dl class="settings-details"><div><dt>Pending</dt><dd>${queue.pending}</dd></div><div><dt>Delivered</dt><dd>${queue.sent}</dd></div><div><dt>Failed</dt><dd>${queue.failed}</dd></div><div><dt>Next scheduled</dt><dd>${queue.nextDeliveryAt ? escapeHtml(relativeTime(queue.nextDeliveryAt)) : 'None'}</dd></div></dl>${failures ? `<div class="failure-list">${failures}</div>` : ''}<div class="settings-actions wrap">${queue.failed ? '<button data-retry-failed>Retry failed</button>' : ''}<button data-settings-link="notifications">Delivery settings</button></div></article><article class="settings-card"><span class="settings-kicker">Data safety</span><h3>Backups</h3><dl class="settings-details"><div><dt>Validated</dt><dd>${ops.backups.count}</dd></div><div><dt>Integrity</dt><dd>${ops.backups.integrity.ok ? 'OK' : 'Failed'}</dd></div><div><dt>Latest</dt><dd>${ops.backups.latest ? escapeHtml(relativeTime(ops.backups.latest.createdAt)) : 'None'}</dd></div></dl>${backupHistory ? `<div class="failure-list">${backupHistory}</div>` : ''}<div class="settings-actions"><button data-settings-link="data">Data settings</button></div></article><article class="settings-card"><span class="settings-kicker">Storage & build</span><h3>Installation</h3><dl class="settings-details"><div><dt>Database</dt><dd>${bytes(ops.storage.databaseSize)}</dd></div><div><dt>Free space</dt><dd>${bytes(ops.storage.freeSpace)}</dd></div><div><dt>Version</dt><dd>V${escapeHtml(ops.runtime.version)}</dd></div><div><dt>Commit / image</dt><dd>${escapeHtml(ops.runtime.commit || ops.runtime.image || 'Source checkout')}</dd></div></dl></article>`;
     await refreshLogs();
   } catch (err) { $('operationsGrid').textContent = `Operations unavailable: ${err.message}`; }
 }
@@ -813,16 +1049,7 @@ function maybeBrowserNotify(events) {
   app.latestEventId = newest;
   localStorage.setItem(eventStorageKey, newest);
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
-  const prefs = app.notificationPreferences || {};
-  fresh.filter((e) => {
-    if (e.type === 'new_product') return prefs.newProduct;
-    if (!e.watchedAtDetection) return false;
-    if (e.type === 'restock') return prefs.restock !== false;
-    if (e.type === 'sold_out') return prefs.soldOut;
-    if (e.type === 'price_change') return prefs.priceChange;
-    if (e.type === 'status_change') return prefs.statusChange;
-    return false;
-  }).reverse().forEach((e) => {
+  fresh.filter((e) => e.notificationDecision?.allowed).reverse().forEach((e) => {
     const titles = { restock:`${e.name} is back in stock`, sold_out:`${e.name} sold out`, price_change:`${e.name} price changed`, status_change:`${e.name} status changed`, new_product:`New UniFi product: ${e.name}` };
     const n = new Notification(`GearBeacon: ${titles[e.type] || e.name}`, { body: `${e.price ? `${e.price} · ` : ''}Detected ${relativeTime(e.detectedAt)}` });
     if (e.url) n.onclick = () => window.open(e.url, '_blank');
@@ -853,27 +1080,70 @@ async function toggleWatch(slug) {
   const product = app.products.find((p) => p.slug === slug);
   if (!product) return;
   try {
-    if (product.watched) await api(`/api/watch/${encodeURIComponent(slug)}`, { method: 'DELETE' });
-    else await api('/api/watch', { method: 'POST', body: JSON.stringify({ slug }) });
-    product.watched = !product.watched;
-    renderProducts();
+    if (product.watched) {
+      await api(`/api/watch/${encodeURIComponent(slug)}`, { method:'DELETE' });
+      product.watched = false; product.watchRule = null; app.selectedWatch.delete(slug);
+    } else {
+      const result = await api('/api/watch', { method:'POST', body:JSON.stringify({ slug }) });
+      Object.assign(product, result.product || {}, { watched:true });
+    }
+    renderProducts(true);
     toast(product.watched ? `Watching ${product.name}` : `Stopped watching ${product.name}`);
+    if (!$('productDialog').classList.contains('hidden')) openProductDialog(slug, true);
   } catch (err) { toast(err.message); }
 }
 
+async function bulkWatchAction(action) {
+  const slugs = [...app.selectedWatch];
+  if (!slugs.length) return;
+  if (action === 'remove' && !window.confirm(`Remove ${slugs.length} selected product${slugs.length === 1 ? '' : 's'} from the watchlist?`)) return;
+  const buttons = [...$('bulkActions').querySelectorAll('button')];
+  buttons.forEach((button) => { button.disabled = true; });
+  try {
+    const result = await api('/api/watch/bulk', { method:'POST', body:JSON.stringify({ action, slugs, minutes:Number($('bulkPauseDuration').value) }) });
+    if (action === 'remove') for (const product of app.products.filter((item) => slugs.includes(item.slug))) { product.watched = false; product.watchRule = null; }
+    else for (const changed of result.products || []) { const product = app.products.find((item) => item.slug === changed.slug); if (product) Object.assign(product, changed); }
+    app.selectedWatch.clear(); renderProducts(true); toast(`${result.affected} product${result.affected === 1 ? '' : 's'} ${action === 'pause' ? 'paused' : action === 'resume' ? 'resumed' : 'removed'}`);
+  } catch (err) { toast(err.message); }
+  finally { buttons.forEach((button) => { button.disabled = false; }); }
+}
+
 document.addEventListener('click', (event) => {
+  const imageRetry = event.target.closest('[data-image-retry]');
+  if (imageRetry) {
+    event.preventDefault(); event.stopPropagation();
+    app.brokenImages.delete(imageRetry.dataset.imageRetry);
+    if (app.currentProductDetails?.product?.imageUrl === imageRetry.dataset.imageRetry) renderProductDialog(app.currentProductDetails);
+    else renderProducts(true);
+    return;
+  }
   const watch = event.target.closest('[data-watch]');
   if (watch) { event.preventDefault(); toggleWatch(watch.dataset.watch); return; }
   const category = event.target.closest('[data-category]');
-  if (category) { app.browseCategory = category.dataset.category; renderProducts(); return; }
+  if (category) { app.browseCategory = category.dataset.category; app.browseVisibleCount = 48; renderProducts(true); return; }
+  const details = event.target.closest('[data-product-detail]');
+  if (details) { event.preventDefault(); openProductDialog(details.dataset.productDetail); return; }
   const go = event.target.closest('[data-goto]');
   if (go) activateTab(go.dataset.goto);
+  const setting = event.target.closest('[data-settings-link]');
+  if (setting) { activateTab('settings'); activateSettingsTab(setting.dataset.settingsLink); }
   const revoke = event.target.closest('[data-revoke-session]');
   if (revoke) revokeSession(revoke.dataset.revokeSession);
   const test = event.target.closest('[data-test-channel]');
   if (test) testChannel(test.dataset.testChannel, test);
   const retry = event.target.closest('[data-retry-failed]');
   if (retry) api('/api/notifications/retry-failed', { method:'POST' }).then((result) => { toast(`${result.queued} failed deliveries queued`); refreshOperations(); }).catch((err) => toast(err.message));
+});
+document.addEventListener('change', (event) => {
+  const selection = event.target.closest('[data-watch-select]');
+  if (!selection) return;
+  if (selection.checked) app.selectedWatch.add(selection.dataset.watchSelect); else app.selectedWatch.delete(selection.dataset.watchSelect);
+  renderBulkActions();
+});
+document.addEventListener('submit', (event) => {
+  const form = event.target.closest('#productRuleForm');
+  if (!form) return;
+  event.preventDefault(); saveProductRule(form);
 });
 
 function activateTab(tab) {
@@ -914,7 +1184,17 @@ document.querySelectorAll('[data-settings-tab]').forEach((tab) => {
   });
 });
 $('themeBtn').addEventListener('click', () => applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
-$('search').addEventListener('input', renderProducts);
+let browseSearchTimer = null;
+$('search').addEventListener('input', () => { clearTimeout(browseSearchTimer); browseSearchTimer = setTimeout(() => { app.browseVisibleCount = 48; renderProducts(true); }, 180); });
+for (const id of ['watchSearch','watchStatus','watchCategory','watchSort']) $(id).addEventListener(id === 'watchSearch' ? 'input' : 'change', () => renderProducts(true));
+$('browseLoadMore').addEventListener('click', () => { app.browseVisibleCount += 48; renderProducts(true); });
+$('bulkPause').addEventListener('click', () => bulkWatchAction('pause'));
+$('bulkResume').addEventListener('click', () => bulkWatchAction('resume'));
+$('bulkRemove').addEventListener('click', () => bulkWatchAction('remove'));
+$('bulkClear').addEventListener('click', () => { app.selectedWatch.clear(); renderProducts(true); });
+$('closeProductDialog').addEventListener('click', closeProductDialog);
+$('productDialogBackdrop').addEventListener('click', closeProductDialog);
+document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !$('productDialog').classList.contains('hidden')) closeProductDialog(); });
 $('checkBtn').addEventListener('click', async () => {
   $('checkBtn').disabled = true;
   $('checkBtn').textContent = 'Checking…';
@@ -941,6 +1221,9 @@ $('prepareUpdateBtn').addEventListener('click', prepareUpdate);
 $('saveNotificationPrefs').addEventListener('click', saveNotificationPreferences);
 $('testNotificationBtn').addEventListener('click', testServerNotification);
 $('appConfigForm').addEventListener('submit', saveAppConfiguration);
+$('dataScheduleForm').addEventListener('submit', saveDataConfiguration);
+$('notificationDeliveryForm').addEventListener('submit', saveDeliveryConfiguration);
+$('previewDelivery').addEventListener('click', previewDelivery);
 $('channelConfigForm').addEventListener('submit', (event) => { event.preventDefault(); saveChannelConfiguration(); });
 $('saveChannels').addEventListener('click', saveChannelConfiguration);
 $('refreshOperations').addEventListener('click', refreshOperations);
@@ -972,6 +1255,7 @@ $('logoutBtn').addEventListener('click', logout);
 $('regionPicker').addEventListener('change', async () => {
   app.currentRegion = $('regionPicker').value;
   app.latestEventId = null;
+  app.selectedWatch.clear(); app.browseVisibleCount = 48; app.watchRenderKey = ''; app.browseRenderKey = '';
   localStorage.setItem('gearbeacon.region', app.currentRegion);
   await refresh();
   toast(`Switched to ${$('regionPicker').selectedOptions[0].textContent}`);
