@@ -155,6 +155,8 @@ try {
   cdp = await connectCdp(pageTarget.webSocketDebuggerUrl);
   await cdp.send('Runtime.enable');
   await cdp.send('Page.enable');
+  await cdp.send('DOM.enable');
+  await cdp.send('CSS.enable');
 
   await waitForBrowser("!document.getElementById('authGate').classList.contains('hidden')", 'Owner setup screen did not appear');
   await assertAccessible('Owner setup screen');
@@ -191,13 +193,15 @@ try {
   assert(watchImportPlacement.visible && Math.abs(watchImportPlacement.headingRight - watchImportPlacement.buttonRight) <= 3 && watchImportPlacement.buttonLeft > watchImportPlacement.headingMid, `Watchlist import action is not positioned at the top right: ${JSON.stringify(watchImportPlacement)}`);
 
   const navigationTheme = await evaluate("document.documentElement.dataset.theme");
+  const documentNode = await cdp.send('DOM.getDocument');
+  const browseTabNode = await cdp.send('DOM.querySelector', { nodeId:documentNode.root.nodeId, selector:'[data-tab="browse"]' });
   for (const theme of ['dark', 'light']) {
     await evaluate(`applyTheme(${JSON.stringify(theme)})`);
-    const browseTabPoint = await evaluate("(() => { const rect=document.querySelector('[data-tab=\"browse\"]').getBoundingClientRect(); return { x:rect.left+rect.width/2, y:rect.top+rect.height/2 }; })()");
-    await cdp.send('Input.dispatchMouseEvent', { type:'mouseMoved', x:browseTabPoint.x, y:browseTabPoint.y });
-    const navigationHover = await evaluate("(() => { const tab=document.querySelector('[data-tab=\"browse\"]'); const tabs=document.querySelector('.tabs'); return { hovered:tab.matches(':hover'), transform:getComputedStyle(tab).transform, tabTop:tab.getBoundingClientRect().top, containerTop:tabs.getBoundingClientRect().top }; })()");
-    assert(navigationHover.hovered && navigationHover.transform === 'none' && navigationHover.tabTop >= navigationHover.containerTop, `Top navigation clipped on hover in ${theme} mode: ${JSON.stringify(navigationHover)}`);
+    await cdp.send('CSS.forcePseudoState', { nodeId:browseTabNode.nodeId, forcedPseudoClasses:['hover'] });
+    const navigationHover = await evaluate("(() => { const tab=document.querySelector('[data-tab=\"browse\"]'); const tabs=document.querySelector('.tabs'); return { transform:getComputedStyle(tab).transform, tabTop:tab.getBoundingClientRect().top, containerTop:tabs.getBoundingClientRect().top }; })()");
+    assert(navigationHover.transform === 'none' && navigationHover.tabTop >= navigationHover.containerTop, `Top navigation clipped on hover in ${theme} mode: ${JSON.stringify(navigationHover)}`);
   }
+  await cdp.send('CSS.forcePseudoState', { nodeId:browseTabNode.nodeId, forcedPseudoClasses:[] });
   await evaluate(`applyTheme(${JSON.stringify(navigationTheme)})`);
 
   await evaluate("document.querySelector('[data-tab=\"browse\"]').click()");
