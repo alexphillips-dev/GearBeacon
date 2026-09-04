@@ -1,5 +1,7 @@
 const $ = (id) => document.getElementById(id);
 const THEME_KEY = 'gearbeacon.theme';
+const SETTINGS_TAB_KEY = 'gearbeacon.settingsTab';
+const SETTINGS_TABS = ['general', 'notifications', 'data', 'security', 'privacy'];
 
 function applyTheme(theme) {
   const next = theme === 'light' ? 'light' : 'dark';
@@ -168,7 +170,21 @@ function productDetail(p) {
 function imageMarkup(p, className = 'product-image') {
   const fallback = `<div class="image-placeholder" aria-hidden="true"></div>`;
   if (!p.imageUrl) return fallback;
-  return `${fallback}<img class="${className}" src="${escapeHtml(p.imageUrl)}" alt="${escapeHtml(p.name)}" loading="lazy" onload="this.parentElement.classList.add('image-loaded')" onerror="this.remove()" />`;
+  return `${fallback}<img class="${className}" src="${escapeHtml(p.imageUrl)}" alt="${escapeHtml(p.name)}" loading="lazy" data-product-image />`;
+}
+function wireProductImages(root = document) {
+  root.querySelectorAll('img[data-product-image]').forEach((image) => {
+    if (image.dataset.imageWired === 'true') return;
+    image.dataset.imageWired = 'true';
+    const showImage = () => image.parentElement?.classList.add('image-loaded');
+    const removeBrokenImage = () => image.remove();
+    image.addEventListener('load', showImage, { once: true });
+    image.addEventListener('error', removeBrokenImage, { once: true });
+    if (image.complete) {
+      if (image.naturalWidth > 0) showImage();
+      else removeBrokenImage();
+    }
+  });
 }
 function watchCard(p) {
   const badgeClass = p.inStock ? 'in' : p.comingSoon ? 'soon' : 'out';
@@ -241,6 +257,8 @@ function renderProducts() {
   $('browseEmpty').classList.toggle('hidden', filtered.length > 0);
   $('browseTitle').textContent = app.browseCategory === 'All' ? 'All products' : app.browseCategory;
   $('browseCount').textContent = `${filtered.length} product${filtered.length === 1 ? '' : 's'}`;
+  wireProductImages($('watchGrid'));
+  wireProductImages($('browseGrid'));
 }
 
 function renderEvents() {
@@ -866,7 +884,35 @@ function activateTab(tab) {
   document.querySelectorAll('.tab').forEach((x) => x.classList.toggle('active', x.dataset.tab === tab));
   document.querySelectorAll('.page').forEach((x) => x.classList.toggle('active', x.id === tab));
 }
+function activateSettingsTab(tab, focus = false) {
+  const selected = SETTINGS_TABS.includes(tab) ? tab : 'general';
+  localStorage.setItem(SETTINGS_TAB_KEY, selected);
+  document.querySelectorAll('[data-settings-tab]').forEach((button) => {
+    const active = button.dataset.settingsTab === selected;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+    button.tabIndex = active ? 0 : -1;
+    if (active && focus) button.focus();
+  });
+  document.querySelectorAll('[data-settings-panel]').forEach((panel) => {
+    const active = panel.dataset.settingsPanel === selected;
+    panel.classList.toggle('active', active);
+    panel.hidden = !active;
+  });
+}
 document.querySelectorAll('.tab').forEach((tab) => tab.addEventListener('click', () => activateTab(tab.dataset.tab)));
+document.querySelectorAll('[data-settings-tab]').forEach((tab) => {
+  tab.addEventListener('click', () => activateSettingsTab(tab.dataset.settingsTab));
+  tab.addEventListener('keydown', (event) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const current = SETTINGS_TABS.indexOf(tab.dataset.settingsTab);
+    const next = event.key === 'Home' ? 0
+      : event.key === 'End' ? SETTINGS_TABS.length - 1
+      : (current + (event.key === 'ArrowRight' ? 1 : -1) + SETTINGS_TABS.length) % SETTINGS_TABS.length;
+    activateSettingsTab(SETTINGS_TABS[next], true);
+  });
+});
 $('themeBtn').addEventListener('click', () => applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
 $('search').addEventListener('input', renderProducts);
 $('checkBtn').addEventListener('click', async () => {
@@ -941,6 +987,7 @@ if ('Notification' in window && Notification.permission === 'granted') $('notify
 
 const initialTab = location.hash.slice(1);
 if (['watchlist','browse','activity','operations','settings'].includes(initialTab)) activateTab(initialTab);
+activateSettingsTab(localStorage.getItem(SETTINGS_TAB_KEY) || 'general');
 
 initialize();
 setInterval(() => {

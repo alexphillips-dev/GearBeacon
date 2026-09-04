@@ -166,7 +166,16 @@
         <div><h2>Settings</h2><p>Private access, notifications, updates, and upgrade-safe data management.</p></div>
       </div>
 
-      <div class="settings-grid">
+      <div class="settings-tabs" role="tablist" aria-label="Settings sections">
+        <button id="settingsTabGeneral" class="settings-tab active" type="button" role="tab" aria-selected="true" aria-controls="settingsPanelGeneral" data-settings-tab="general">General</button>
+        <button id="settingsTabNotifications" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelNotifications" data-settings-tab="notifications">Notifications</button>
+        <button id="settingsTabData" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelData" data-settings-tab="data">Data</button>
+        <button id="settingsTabSecurity" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelSecurity" data-settings-tab="security">Security</button>
+        <button id="settingsTabPrivacy" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelPrivacy" data-settings-tab="privacy">Privacy</button>
+      </div>
+
+      <section id="settingsPanelGeneral" class="settings-panel active" role="tabpanel" aria-labelledby="settingsTabGeneral" data-settings-panel="general">
+        <div class="settings-grid">
         <article class="settings-card">
           <div class="settings-card-head">
             <div><span class="settings-kicker">Application</span><h3>GearBeacon <span id="settingsVersion">V1.6.0</span></h3></div>
@@ -195,7 +204,11 @@
           </form>
           <div id="configResult" class="settings-result hidden"></div>
         </article>
+        </div>
+      </section>
 
+      <section id="settingsPanelNotifications" class="settings-panel" role="tabpanel" aria-labelledby="settingsTabNotifications" data-settings-panel="notifications" hidden>
+        <div class="settings-grid">
         <article class="settings-card wide-card">
           <div class="settings-card-head"><div><span class="settings-kicker">Encrypted locally</span><h3>Notification channels</h3></div><span id="secretKeyBadge" class="settings-badge">Separate key file</span></div>
           <p>Leave a secret blank to keep the saved value; enter an empty value after choosing “clear” to remove it. Test buttons send only through that channel.</p>
@@ -203,9 +216,7 @@
           <div class="settings-actions"><button id="saveChannels" class="primary" type="button">Save channels</button></div>
           <div id="channelConfigResult" class="settings-result hidden"></div>
         </article>
-
-
-        <article class="settings-card">
+        <article class="settings-card wide-card">
           <div class="settings-card-head">
             <div><span class="settings-kicker">Alerts</span><h3>Notifications</h3></div>
             <span id="channelBadge" class="settings-badge">Browser only</span>
@@ -224,7 +235,12 @@
           </div>
           <div id="notificationResult" class="settings-result hidden"></div>
         </article>
-        <article class="settings-card">
+        </div>
+      </section>
+
+      <section id="settingsPanelData" class="settings-panel" role="tabpanel" aria-labelledby="settingsTabData" data-settings-panel="data" hidden>
+        <div class="settings-grid">
+        <article class="settings-card wide-card">
           <div class="settings-card-head">
             <div><span class="settings-kicker">Data safety</span><h3>Backups & transfer</h3></div>
             <span id="backupBadge" class="settings-badge">0 backups</span>
@@ -243,8 +259,12 @@
           </div>
           <div class="settings-note">Importing replaces this monitor's current watchlist/data after first creating a safety backup.</div>
         </article>
+        </div>
+      </section>
 
-        <article class="settings-card">
+      <section id="settingsPanelSecurity" class="settings-panel" role="tabpanel" aria-labelledby="settingsTabSecurity" data-settings-panel="security" hidden>
+        <div class="settings-grid">
+        <article class="settings-card wide-card">
           <div class="settings-card-head">
             <div><span class="settings-kicker">Private access</span><h3>Owner security</h3></div>
             <span id="accessBadge" class="settings-badge">Local</span>
@@ -264,8 +284,12 @@
           <div id="securityResult" class="settings-result hidden"></div>
           <div id="sessionList" class="session-list"></div>
         </article>
+        </div>
+      </section>
 
-        <article class="settings-card">
+      <section id="settingsPanelPrivacy" class="settings-panel" role="tabpanel" aria-labelledby="settingsTabPrivacy" data-settings-panel="privacy" hidden>
+        <div class="settings-grid">
+        <article class="settings-card wide-card">
           <div class="settings-card-head">
             <div><span class="settings-kicker">Privacy</span><h3>Outbound connections</h3></div>
             <span class="settings-badge">No telemetry</span>
@@ -273,7 +297,8 @@
           <p>GearBeacon has no public account service, hosted database, analytics, or telemetry. This list shows every server-side outbound integration.</p>
           <div id="outboundList" class="outbound-list"></div>
         </article>
-      </div>
+        </div>
+      </section>
     </section>
 
     <footer>
