@@ -180,6 +180,8 @@ try {
 
   await evaluate("document.getElementById('tabWatchlist').focus(); document.getElementById('tabWatchlist').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}))");
   assert(await evaluate("document.activeElement === document.getElementById('tabBrowse') && document.getElementById('browse').classList.contains('active') && document.getElementById('watchlist').hidden"), 'Main tabs do not support roving keyboard focus and panel state.');
+  const operationsNavigation = await evaluate("({ topLevel:Boolean(document.querySelector('[data-tab=\"operations\"]')), lastSettingsTab:document.querySelector('.settings-tabs [data-settings-tab]:last-child')?.dataset.settingsTab })");
+  assert(!operationsNavigation.topLevel && operationsNavigation.lastSettingsTab === 'operations', `Operations was not moved to the final Settings subtab: ${JSON.stringify(operationsNavigation)}`);
   await evaluate("activateTab('watchlist')");
 
   await cdp.send('Emulation.setEmulatedMedia', { features:[{ name:'prefers-reduced-motion', value:'reduce' }] });
@@ -430,8 +432,8 @@ try {
   await evaluate("document.getElementById('testPrimaryBackup').click()");
   await waitForBrowser("!document.getElementById('testPrimaryBackup').disabled && /Restore test passed/.test(document.getElementById('backupTestResult').textContent)", 'Non-destructive browser restore test did not pass');
 
-  await evaluate("document.querySelector('[data-tab=\"operations\"]').click()");
-  await waitForBrowser("app.operations?.summary?.state && document.getElementById('operationsSummary').textContent.trim().length > 0", 'Operations summary did not render');
+  await evaluate("document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabOperations').click()");
+  await waitForBrowser("document.getElementById('settings').classList.contains('active') && !document.getElementById('settingsPanelOperations').hidden && app.operations?.summary?.state && document.getElementById('operationsSummary').textContent.trim().length > 0", 'Settings Operations summary did not render');
   await assertAccessible('Operations dashboard');
   await evaluate("document.getElementById('runDiagnostics').click()");
   await waitForBrowser("!document.getElementById('runDiagnostics').disabled && document.querySelectorAll('#diagnosticsPanel .diagnostic-item').length >= 7", 'Installation diagnostics did not render');

@@ -109,7 +109,6 @@
       <button id="tabWatchlist" data-tab="watchlist" class="tab active" role="tab" aria-selected="true" aria-controls="watchlist">Watchlist <span id="watchCount" class="count">0</span></button>
       <button id="tabBrowse" data-tab="browse" class="tab" role="tab" aria-selected="false" aria-controls="browse" tabindex="-1">Browse</button>
       <button id="tabActivity" data-tab="activity" class="tab" role="tab" aria-selected="false" aria-controls="activity" tabindex="-1">Activity</button>
-      <button id="tabOperations" data-tab="operations" class="tab" role="tab" aria-selected="false" aria-controls="operations" tabindex="-1">Operations</button>
       <button id="tabSettings" data-tab="settings" class="tab" role="tab" aria-selected="false" aria-controls="settings" tabindex="-1">Settings</button>
     </nav>
 
@@ -134,19 +133,6 @@
         <button class="primary" data-goto="browse">Browse products</button>
         <button id="resetWatchEmpty" class="hidden" type="button">Reset Watchlist filters</button>
       </div>
-    </section>
-
-    <section id="operations" class="page" role="tabpanel" aria-labelledby="tabOperations" hidden>
-      <div class="section-heading"><div><h2>Operations</h2><p>Region health, delivery reliability, backups, storage, security, and local logs.</p></div><div class="settings-actions"><button id="runDiagnostics" class="primary">Run diagnostics</button><button id="refreshOperations">Refresh</button><button id="downloadSupportBundle">Support bundle</button><button id="downloadLogs">Download logs</button></div></div>
-      <div id="operationsSummary" class="operations-summary"><strong>Checking installation health…</strong></div>
-      <section id="diagnosticsPanel" class="diagnostics-panel hidden" aria-live="polite"></section>
-      <div id="securityWarnings" class="warning-list"></div>
-      <div id="operationsGrid" class="ops-grid"></div>
-      <article class="settings-card ops-log-card">
-        <div class="settings-card-head"><div><span class="settings-kicker">Application logs</span><h3>Recent activity</h3></div><span id="runtimeBadge" class="settings-badge">Runtime</span></div>
-        <div class="log-filters"><select id="logLevel" aria-label="Filter logs by level"><option value="">All levels</option><option value="info">Info</option><option value="warn">Warning</option><option value="error">Error</option></select><input id="logSearch" type="search" placeholder="Filter logs" aria-label="Search logs" /><button id="applyLogFilter">Filter</button></div>
-        <div id="operationsLogs" class="log-list"></div>
-      </article>
     </section>
 
     <section id="browse" class="page store-surface" role="tabpanel" aria-labelledby="tabBrowse" hidden>
@@ -195,7 +181,7 @@
 
     <section id="settings" class="page" role="tabpanel" aria-labelledby="tabSettings" hidden>
       <div class="section-heading">
-        <div><h2>Settings</h2><p>Private access, notifications, updates, and upgrade-safe data management.</p></div>
+        <div><h2>Settings</h2><p>Private access, notifications, data management, and installation health.</p></div>
       </div>
 
       <div class="settings-tabs" role="tablist" aria-label="Settings sections">
@@ -204,6 +190,7 @@
         <button id="settingsTabData" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelData" data-settings-tab="data" tabindex="-1">Data</button>
         <button id="settingsTabSecurity" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelSecurity" data-settings-tab="security" tabindex="-1">Security</button>
         <button id="settingsTabPrivacy" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelPrivacy" data-settings-tab="privacy" tabindex="-1">Privacy</button>
+        <button id="settingsTabOperations" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelOperations" data-settings-tab="operations" tabindex="-1">Operations</button>
       </div>
 
       <section id="settingsPanelGeneral" class="settings-panel active" role="tabpanel" aria-labelledby="settingsTabGeneral" data-settings-panel="general">
@@ -379,6 +366,19 @@
           <div id="outboundList" class="outbound-list"></div>
         </article>
         </div>
+      </section>
+
+      <section id="settingsPanelOperations" class="settings-panel" role="tabpanel" aria-labelledby="settingsTabOperations" data-settings-panel="operations" hidden>
+        <div class="section-heading"><div><h2>Operations</h2><p>Region health, delivery reliability, backups, storage, security, and local logs.</p></div><div class="settings-actions"><button id="runDiagnostics" class="primary">Run diagnostics</button><button id="refreshOperations">Refresh</button><button id="downloadSupportBundle">Support bundle</button><button id="downloadLogs">Download logs</button></div></div>
+        <div id="operationsSummary" class="operations-summary"><strong>Checking installation health…</strong></div>
+        <section id="diagnosticsPanel" class="diagnostics-panel hidden" aria-live="polite"></section>
+        <div id="securityWarnings" class="warning-list"></div>
+        <div id="operationsGrid" class="ops-grid"></div>
+        <article class="settings-card ops-log-card">
+          <div class="settings-card-head"><div><span class="settings-kicker">Application logs</span><h3>Recent activity</h3></div><span id="runtimeBadge" class="settings-badge">Runtime</span></div>
+          <div class="log-filters"><select id="logLevel" aria-label="Filter logs by level"><option value="">All levels</option><option value="info">Info</option><option value="warn">Warning</option><option value="error">Error</option></select><input id="logSearch" type="search" placeholder="Filter logs" aria-label="Search logs" /><button id="applyLogFilter">Filter</button></div>
+          <div id="operationsLogs" class="log-list"></div>
+        </article>
       </section>
     </section>
 
