@@ -2,6 +2,8 @@
   "name": "gearbeacon-mobile",
   "version": "1.4.0",
   "private": true,
+  "description": "GearBeacon mobile client for Ubiquiti product monitoring and stock alerts",
+  "license": "Apache-2.0",
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
     "start": "expo start",
