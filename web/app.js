@@ -340,7 +340,7 @@ function watchCard(p) {
   </article>`;
 }
 function storeCard(p) {
-  const statusClass = p.inStock ? 'in' : p.comingSoon ? 'soon' : 'out';
+  const statusClass = p.unlisted ? 'out unlisted' : p.inStock ? 'in' : p.comingSoon ? 'soon' : 'out sold-out';
   const status = p.unlisted ? 'Unlisted' : p.inStock ? 'In stock' : p.comingSoon ? 'Coming soon' : 'Sold out';
   return `<article class="store-card" data-product-card="${escapeHtml(p.slug)}">
     <button class="store-image media-shell product-detail-trigger" type="button" data-product-detail="${escapeHtml(p.slug)}">${imageMarkup(p)}</button>
