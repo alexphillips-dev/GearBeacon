@@ -419,12 +419,13 @@ footer { margin-top:28px; padding-top:18px; border-top:1px solid var(--border); 
   width:46px; height:46px; padding:0; display:grid; place-items:center; border-color:var(--primary-bg); border-radius:50%;
   background:var(--primary-bg); color:var(--primary-text); box-shadow:0 10px 28px rgba(0,0,0,.28); font-size:22px; font-weight:800; line-height:1;
   opacity:0; visibility:hidden; transform:none; pointer-events:none;
-  transition:opacity .36s ease,visibility 0s linear .36s,background-color .18s ease,transform .16s ease;
+  transition:opacity .22s ease,visibility 0s linear .22s,background-color .18s ease,transform .16s ease;
 }
-.to-top.visible { opacity:1; visibility:visible; transform:none; pointer-events:auto; transition-delay:0s; }
+.to-top.visible { visibility:visible; transform:none; pointer-events:auto; transition-delay:0s; animation:to-top-fade-in 1.2s cubic-bezier(.22,.61,.36,1) both; }
 .to-top.visible:hover { transform:translateY(-2px); }
 .to-top span { transform:translateY(-1px); }
 .to-top.visible ~ .toast { bottom:calc(max(22px,env(safe-area-inset-bottom)) + 56px); }
+@keyframes to-top-fade-in { from { opacity:0; } to { opacity:1; } }
 .dialog-open { overflow:hidden; }
 .product-dialog { position:fixed; inset:0; z-index:120; display:flex; justify-content:flex-end; }
 .product-dialog-backdrop { position:absolute; inset:0; width:100%; height:100%; border:0; border-radius:0; background:rgba(0,0,0,.58); backdrop-filter:blur(5px); transform:none !important; }
