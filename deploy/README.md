@@ -64,7 +64,21 @@ docker compose up -d
 docker compose logs gearbeacon
 ```
 
-Compose uses the published GHCR image when available and can build the checkout. It maps only host loopback, requires owner authentication inside the container, and stores SQLite, backups, and the separate notification encryption key in `gearbeacon-data`.
+Compose uses the published GHCR image when available and can build the checkout. It maps only host loopback, requires owner authentication inside the container, and stores SQLite, primary backups, and the separate notification encryption key in `gearbeacon-data`.
+
+For recovery from a lost Docker volume or host disk, mount a second destination and configure it in Settings → Data:
+
+```yaml
+services:
+  gearbeacon:
+    environment:
+      GEARBEACON_SECONDARY_BACKUP_DIR: /recovery
+    volumes:
+      - gearbeacon-data:/data
+      - /mnt/nas/gearbeacon:/recovery
+```
+
+Use a real separately protected disk or NAS path for the host side. GearBeacon warns when the secondary path appears to share the primary data filesystem. To keep the recovery copies confidential, enable encrypted secondary exports in Settings and save a passphrase of at least 12 characters. Store that passphrase outside GearBeacon; it is required to decrypt those copies after a total installation loss.
 
 To expose only a private host interface, change the mapping deliberately:
 
@@ -122,6 +136,22 @@ Recovery procedure:
 
 Recovery revokes every existing session. Never leave the reset flag active.
 
+## Backup and disaster-recovery setup
+
+The primary backup directory lives under the GearBeacon data directory. Configure a secondary absolute directory or mounted share in Settings → Data when recovery must survive failure of that primary disk or container volume. GearBeacon rejects symbolic-link destinations, verifies read/write access, and can retain the copies as either validated SQLite snapshots or passphrase-encrypted JSON exports.
+
+After configuration:
+
+1. Select **Create backup now**.
+2. Confirm the secondary recovery card in Operations reports a copy.
+3. Select **Test latest primary**, then **Test latest secondary**.
+4. Store the secondary encryption passphrase and a copy of `secrets.key` in an appropriate secure location. The passphrase recovers encrypted backup content; `secrets.key` preserves saved notification credentials when restoring the SQLite database.
+5. Repeat both restore tests after storage, permission, mount, or platform changes.
+
+The restore test is non-destructive: it works on a temporary copy, runs SQLite integrity checks or decrypts and validates the export, verifies schema compatibility, and never replaces the active database. A secondary-copy failure leaves a successfully validated primary backup intact and raises an Operations warning.
+
+For full recovery from SQLite, stop GearBeacon before replacing the active database, preserve the failed database for investigation, copy a tested backup into place, keep `secrets.key` alongside it, and then start the same or a schema-compatible newer GearBeacon release. Encrypted JSON recovery exports can be restored through Settings → Data on a fresh installation.
+
 ## Owner-controlled updates and rollback
 
 1. Review **Check for updates** and its release notes.
@@ -147,6 +177,12 @@ For rollback, stop GearBeacon, copy the validated `pre-update-*` SQLite backup o
 - `GET /healthz` — process liveness without private data.
 - `GET /readyz` — every configured region has current healthy catalog data.
 - `GET /api/health` — authenticated detailed monitor health.
-- Operations — authenticated regional status, queue failures, backup integrity/history, disk use, warnings, and filtered/downloadable application logs.
+- Operations — authenticated regional status, pending confirmations, queue failures, primary/secondary recovery, disk use, warnings, diagnostics, redacted support bundle, and filtered/downloadable application logs.
 
 Container and service managers should use `/healthz` for liveness and `/readyz` when routing should depend on fresh store data.
+
+Use **Run diagnostics** after initial setup and whenever storage, notifications, connectivity, or reverse-proxy settings change. The downloaded support bundle is designed for troubleshooting and redacts secrets, addresses, and local paths, but review any diagnostic artifact before sharing it outside your household or organization.
+
+## Release candidates
+
+Tags containing a prerelease suffix, for example `v1.8.0-rc.1`, publish checksummed standalone packages and a GitHub prerelease. They publish only prerelease-specific container tags and never replace the stable `latest` image tag. Test a release candidate with a copied data directory or after both restore tests pass; then use the normal owner-controlled update procedure. Stable release tags such as `v1.8.0` move `latest` only after the release workflow succeeds.

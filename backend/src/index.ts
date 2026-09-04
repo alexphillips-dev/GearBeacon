@@ -1,4 +1,4 @@
-// GearBeacon V1.7 backend
+// GearBeacon V1.8 backend
 // Private, owner-operated stock monitoring for local and self-hosted installs.
 // @ts-nocheck
 
@@ -14,8 +14,8 @@ const { URL } = require('node:url');
 const { DatabaseSync } = require('node:sqlite');
 const { renderEmail, buildMimeEmail } = require('./email');
 
-const APP_VERSION = '1.7.0';
-const DATABASE_SCHEMA_VERSION = 6;
+const APP_VERSION = '1.8.0';
+const DATABASE_SCHEMA_VERSION = 7;
 const STORE_BASE = 'https://store.ui.com';
 const REGIONS = {
   us: { label: 'United States', path: 'us/en', currency: 'USD' },
@@ -84,6 +84,9 @@ const MIN_CATALOG_RATIO = Math.min(0.95, Math.max(0.1, Number(process.env.GEARBE
 const STALE_AFTER_SECONDS = Math.max(POLL_SECONDS * 3, Number(process.env.GEARBEACON_STALE_AFTER_SECONDS || 180));
 let BACKUP_RETENTION = Math.max(1, Math.min(100, Number(process.env.GEARBEACON_BACKUP_RETENTION || 10)));
 let BACKUP_INTERVAL_HOURS = Math.max(0, Number(process.env.GEARBEACON_BACKUP_INTERVAL_HOURS || 24));
+let EVENT_RETENTION_DAYS = Math.max(0, Math.min(3650, Number(process.env.GEARBEACON_EVENT_RETENTION_DAYS || 365)));
+let SECONDARY_BACKUP_DIR = String(process.env.GEARBEACON_SECONDARY_BACKUP_DIR || '').trim();
+let SECONDARY_ENCRYPTED_EXPORTS = ['1', 'true', 'yes'].includes(String(process.env.GEARBEACON_SECONDARY_ENCRYPTED_EXPORTS || '').toLowerCase());
 const rawAccessMode = String(process.env.GEARBEACON_ACCESS_MODE || 'local').trim().toLowerCase();
 if (!['local', 'private', 'proxy'].includes(rawAccessMode)) throw new Error('GEARBEACON_ACCESS_MODE must be local, private, or proxy.');
 let ACCESS_MODE = rawAccessMode;
@@ -322,16 +325,18 @@ function schemaVersion() {
   return Number(db.prepare('SELECT COALESCE(MAX(version),0) AS version FROM schema_migrations').get()?.version || 0);
 }
 
-function listBackups() {
-  if (!fs.existsSync(BACKUP_DIR)) return [];
-  return fs.readdirSync(BACKUP_DIR)
-    .filter((name) => name.endsWith('.sqlite3') || name.endsWith('.json'))
-    .map((name) => {
-      const full = path.join(BACKUP_DIR, name);
-      const stat = fs.statSync(full);
-      return { name, path: full, size: stat.size, createdAt: stat.mtime.toISOString() };
-    })
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+function listBackups(directory = BACKUP_DIR) {
+  if (!directory || !fs.existsSync(directory)) return [];
+  try {
+    return fs.readdirSync(directory)
+      .filter((name) => name.endsWith('.sqlite3') || name.endsWith('.json'))
+      .map((name) => {
+        const full = path.join(directory, name);
+        const stat = fs.statSync(full);
+        return { name, path: full, size: stat.size, createdAt: stat.mtime.toISOString() };
+      })
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  } catch { return []; }
 }
 
 function trimBackups() {
@@ -339,6 +344,68 @@ function trimBackups() {
   for (const old of databaseBackups.slice(BACKUP_RETENTION)) {
     try { fs.unlinkSync(old.path); } catch {}
   }
+}
+
+function ensureSecondaryBackupDirectory() {
+  if (!SECONDARY_BACKUP_DIR) return null;
+  fs.mkdirSync(SECONDARY_BACKUP_DIR, { recursive:true, mode:0o700 });
+  const stat = fs.lstatSync(SECONDARY_BACKUP_DIR);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('Secondary backup destination is not a regular directory.');
+  fs.accessSync(SECONDARY_BACKUP_DIR, fs.constants.R_OK | fs.constants.W_OK);
+  try { if (process.platform !== 'win32') fs.chmodSync(SECONDARY_BACKUP_DIR, 0o700); } catch {}
+  return SECONDARY_BACKUP_DIR;
+}
+
+function backupLocationsShareDevice() {
+  if (!SECONDARY_BACKUP_DIR || !fs.existsSync(SECONDARY_BACKUP_DIR)) return null;
+  try { return fs.statSync(BACKUP_DIR).dev === fs.statSync(SECONDARY_BACKUP_DIR).dev; }
+  catch { return null; }
+}
+
+function trimSecondaryBackups() {
+  if (!SECONDARY_BACKUP_DIR) return;
+  for (const old of listBackups(SECONDARY_BACKUP_DIR).slice(BACKUP_RETENTION)) {
+    try { fs.unlinkSync(old.path); } catch {}
+  }
+}
+
+let runtimeReadyForRecoveryCopies = false;
+
+function createSecondaryRecoveryCopy(primaryBackup, reason) {
+  if (!SECONDARY_BACKUP_DIR || !runtimeReadyForRecoveryCopies) return null;
+  let temporary = null;
+  try {
+    ensureSecondaryBackupDirectory();
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    let filename;
+    let destination;
+    if (SECONDARY_ENCRYPTED_EXPORTS) {
+      const passphrase = String(storedSecrets().secondaryBackupPassphrase || '');
+      if (passphrase.length < 12) throw new Error('Scheduled encrypted recovery copies require a saved passphrase of at least 12 characters.');
+      filename = `${safeFilePart(reason)}-${stamp}.encrypted.gearbeacon.json`;
+      destination = path.join(SECONDARY_BACKUP_DIR, filename);
+      temporary = `${destination}.tmp-${process.pid}`;
+      const encrypted = encryptSnapshot(exportSnapshot(), passphrase);
+      fs.writeFileSync(temporary, JSON.stringify(encrypted), { encoding:'utf8', flag:'wx', mode:0o600 });
+      const verified = decryptSnapshot(safeJsonParse(fs.readFileSync(temporary, 'utf8'), null), passphrase);
+      previewSnapshot(verified);
+      fs.renameSync(temporary, destination);
+    } else {
+      if (!primaryBackup?.path) throw new Error('A validated primary backup is required for the recovery copy.');
+      filename = primaryBackup.filename;
+      destination = path.join(SECONDARY_BACKUP_DIR, filename);
+      temporary = `${destination}.tmp-${process.pid}`;
+      fs.copyFileSync(primaryBackup.path, temporary, fs.constants.COPYFILE_EXCL);
+      const integrity = databaseIntegrity(temporary);
+      if (!integrity.ok) throw new Error(`Secondary copy integrity failed: ${integrity.messages.join('; ')}`);
+      fs.renameSync(temporary, destination);
+    }
+    trimSecondaryBackups();
+    return { configured:true, ok:true, filename, size:fs.statSync(destination).size, createdAt:isoNow(), encrypted:SECONDARY_ENCRYPTED_EXPORTS, sameFilesystem:backupLocationsShareDevice() };
+  } catch (err) {
+    writeAppLog('error', 'backups', 'Secondary recovery copy failed.', { error:String(err?.message || err), directory:SECONDARY_BACKUP_DIR });
+    return { configured:true, ok:false, error:String(err?.message || err) };
+  } finally { if (temporary && fs.existsSync(temporary)) { try { fs.unlinkSync(temporary); } catch {} } }
 }
 
 function databaseIntegrity(file = DB_FILE) {
@@ -374,8 +441,10 @@ function createDatabaseBackup(reason = 'manual') {
     }
     trimBackups();
     const size = fs.statSync(destination).size;
-    if (tableExists('backup_log')) db.prepare('INSERT INTO backup_log(filename,reason,status,size,detail,created_at) VALUES(?,?,?,?,?,?)').run(filename, reason, 'validated', size, null, isoNow());
-    return { filename, path: destination, size, createdAt: isoNow(), reason, validated: true };
+    const primary = { filename, path: destination, size, createdAt: isoNow(), reason, validated: true };
+    const secondary = createSecondaryRecoveryCopy(primary, reason);
+    if (tableExists('backup_log')) db.prepare('INSERT INTO backup_log(filename,reason,status,size,detail,created_at) VALUES(?,?,?,?,?,?)').run(filename, reason, 'validated', size, secondary ? JSON.stringify({ secondary }) : null, isoNow());
+    return { ...primary, secondary };
   } catch (err) {
     if (tableExists('backup_log')) db.prepare('INSERT INTO backup_log(filename,reason,status,size,detail,created_at) VALUES(?,?,?,?,?,?)').run(null, reason, 'failed', null, String(err?.message || err).slice(0, 1000), isoNow());
     throw err;
@@ -546,6 +615,42 @@ const MIGRATIONS = [
       );
     `,
   },
+  {
+    version: 7,
+    name: 'monitor-confidence-activity-and-recovery',
+    sql: `
+      ALTER TABLE events ADD COLUMN type TEXT;
+      ALTER TABLE events ADD COLUMN slug TEXT;
+      ALTER TABLE events ADD COLUMN name TEXT;
+      ALTER TABLE events ADD COLUMN alert_kind TEXT;
+      CREATE INDEX IF NOT EXISTS idx_events_detected ON events(detected_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_events_region_type_detected ON events(region,type,detected_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_events_region_slug_detected ON events(region,slug,detected_at DESC);
+      CREATE TABLE IF NOT EXISTS pending_transitions (
+        region TEXT NOT NULL,
+        slug TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        candidate_json TEXT NOT NULL,
+        first_seen_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL,
+        observations INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY(region,slug,kind)
+      );
+      CREATE INDEX IF NOT EXISTS idx_pending_transitions_region ON pending_transitions(region,last_seen_at DESC);
+      CREATE TABLE IF NOT EXISTS monitor_checks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        region TEXT NOT NULL,
+        checked_at TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        catalog_count INTEGER,
+        duration_ms INTEGER,
+        detail TEXT,
+        partial_errors_json TEXT,
+        retry_after_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_monitor_checks_region_checked ON monitor_checks(region,checked_at DESC);
+    `,
+  },
 ];
 
 function runMigrations() {
@@ -569,6 +674,15 @@ function runMigrations() {
     }
   }
   if (current !== DATABASE_SCHEMA_VERSION) throw new Error(`Unexpected GearBeacon schema version ${current}; expected ${DATABASE_SCHEMA_VERSION}.`);
+}
+
+function backfillEventColumns() {
+  if (!tableExists('events') || !db.prepare("SELECT name FROM pragma_table_info('events') WHERE name='type'").get()) return;
+  const update = db.prepare('UPDATE events SET type=?,slug=?,name=?,alert_kind=? WHERE id=?');
+  for (const row of db.prepare("SELECT id,data_json FROM events WHERE type IS NULL OR slug IS NULL OR name IS NULL").all()) {
+    const event = safeJsonParse(row.data_json, {});
+    update.run(event.type || null, event.slug || null, event.name || null, event.alertKind || event.type || null, row.id);
+  }
 }
 
 function writeAppLog(level, source, message, detail = null) {
@@ -634,6 +748,9 @@ const DEFAULT_APP_CONFIG = Object.freeze({
   backupIntervalHours: BACKUP_INTERVAL_HOURS,
   backupRetention: BACKUP_RETENTION,
   historyRetentionDays: HISTORY_RETENTION_DAYS,
+  eventRetentionDays: EVENT_RETENTION_DAYS,
+  secondaryBackupDir: SECONDARY_BACKUP_DIR,
+  secondaryEncryptedExports: SECONDARY_ENCRYPTED_EXPORTS,
   notificationMaxAttempts: NOTIFICATION_MAX_ATTEMPTS,
   notificationGroupSeconds: NOTIFICATION_GROUP_SECONDS,
   notificationTimeZone: NOTIFICATION_TIME_ZONE,
@@ -687,6 +804,23 @@ function validTimeZone(value) {
   return text;
 }
 
+function validBackupDirectory(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  if (!path.isAbsolute(text)) throw new Error('Secondary backup directory must be an absolute path or mounted network path.');
+  const resolved = path.resolve(text);
+  const within = (parent, child) => {
+    const relative = path.relative(path.resolve(parent), path.resolve(child));
+    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+  };
+  if (within(USER_DATA_DIR, resolved) || within(resolved, USER_DATA_DIR)) throw new Error('Secondary backups must use a directory separate from the GearBeacon data directory.');
+  if (fs.existsSync(resolved)) {
+    const stat = fs.lstatSync(resolved);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('Secondary backup directory must be a real directory, not a file or symbolic link.');
+  }
+  return resolved;
+}
+
 function normalizeAppConfig(input, base = DEFAULT_APP_CONFIG) {
   const body = input && typeof input === 'object' ? input : {};
   const regions = Array.isArray(body.regions) ? [...new Set(body.regions.map((x) => String(x).toLowerCase()).filter((x) => REGIONS[x]))] : [...base.regions];
@@ -707,6 +841,8 @@ function normalizeAppConfig(input, base = DEFAULT_APP_CONFIG) {
   if (!Number.isInteger(backupRetention) || backupRetention < 1 || backupRetention > 100) throw new Error('Backup retention must be between 1 and 100.');
   const historyRetentionDays = Number(body.historyRetentionDays ?? base.historyRetentionDays);
   if (!Number.isInteger(historyRetentionDays) || historyRetentionDays < 30 || historyRetentionDays > 3650) throw new Error('Product history retention must be between 30 and 3650 days.');
+  const eventRetentionDays = Number(body.eventRetentionDays ?? base.eventRetentionDays);
+  if (!Number.isInteger(eventRetentionDays) || (eventRetentionDays !== 0 && (eventRetentionDays < 30 || eventRetentionDays > 3650))) throw new Error('Activity retention must be 0 for unlimited, or between 30 and 3650 days.');
   const notificationMaxAttempts = Number(body.notificationMaxAttempts ?? base.notificationMaxAttempts);
   if (!Number.isInteger(notificationMaxAttempts) || notificationMaxAttempts < 1 || notificationMaxAttempts > 10) throw new Error('Notification attempts must be between 1 and 10.');
   const notificationGroupSeconds = Number(body.notificationGroupSeconds ?? base.notificationGroupSeconds);
@@ -743,6 +879,9 @@ function normalizeAppConfig(input, base = DEFAULT_APP_CONFIG) {
     backupIntervalHours,
     backupRetention,
     historyRetentionDays,
+    eventRetentionDays,
+    secondaryBackupDir: validBackupDirectory(body.secondaryBackupDir ?? base.secondaryBackupDir),
+    secondaryEncryptedExports: Boolean(body.secondaryEncryptedExports ?? base.secondaryEncryptedExports),
     notificationMaxAttempts,
     notificationGroupSeconds,
     notificationTimeZone: validTimeZone(body.notificationTimeZone ?? base.notificationTimeZone),
@@ -791,6 +930,9 @@ function applyAppConfig(config, secrets, { startup = false } = {}) {
   BACKUP_INTERVAL_HOURS = config.backupIntervalHours;
   BACKUP_RETENTION = config.backupRetention;
   HISTORY_RETENTION_DAYS = config.historyRetentionDays;
+  EVENT_RETENTION_DAYS = config.eventRetentionDays;
+  SECONDARY_BACKUP_DIR = config.secondaryBackupDir;
+  SECONDARY_ENCRYPTED_EXPORTS = config.secondaryEncryptedExports;
   NOTIFICATION_MAX_ATTEMPTS = config.notificationMaxAttempts;
   NOTIFICATION_GROUP_SECONDS = config.notificationGroupSeconds;
   NOTIFICATION_TIME_ZONE = config.notificationTimeZone;
@@ -844,6 +986,7 @@ function secretStatus(secrets = storedSecrets()) {
     webhookToken: Boolean(secrets.webhookToken || GENERIC_WEBHOOK_TOKEN),
     webhookHmacSecret: Boolean(secrets.webhookHmacSecret || GENERIC_WEBHOOK_HMAC_SECRET),
     smtpPassword: Boolean(secrets.smtpPassword || SMTP_PASSWORD),
+    secondaryBackupPassphrase: Boolean(secrets.secondaryBackupPassphrase),
   };
 }
 
@@ -853,12 +996,20 @@ function saveBrowserConfig(input) {
   const currentSecrets = storedSecrets();
   const nextSecrets = { ...currentSecrets };
   const incomingSecrets = input?.secrets && typeof input.secrets === 'object' ? input.secrets : {};
-  for (const key of ['ntfyToken', 'discordWebhookUrl', 'gotifyToken', 'webhookUrl', 'webhookToken', 'webhookHmacSecret', 'smtpPassword']) {
+  for (const key of ['ntfyToken', 'discordWebhookUrl', 'gotifyToken', 'webhookUrl', 'webhookToken', 'webhookHmacSecret', 'smtpPassword', 'secondaryBackupPassphrase']) {
     if (incomingSecrets[key] === null || incomingSecrets[key] === undefined) continue;
     const value = String(incomingSecrets[key]).trim();
     if (['discordWebhookUrl', 'webhookUrl'].includes(key) && value) validHttpUrl(value);
     nextSecrets[key] = value;
   }
+  if (next.secondaryBackupDir) {
+    fs.mkdirSync(next.secondaryBackupDir, { recursive:true, mode:0o700 });
+    const stat = fs.lstatSync(next.secondaryBackupDir);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('Secondary backup destination is not a regular directory.');
+    fs.accessSync(next.secondaryBackupDir, fs.constants.R_OK | fs.constants.W_OK);
+  }
+  if (nextSecrets.secondaryBackupPassphrase && String(nextSecrets.secondaryBackupPassphrase).length < 12) throw new Error('Secondary backup passphrase must be at least 12 characters.');
+  if (next.secondaryEncryptedExports && String(nextSecrets.secondaryBackupPassphrase || '').length < 12) throw new Error('Save a secondary backup passphrase of at least 12 characters before enabling encrypted recovery copies.');
   const encryptedSecrets = encryptLocalSecrets(nextSecrets);
   db.exec('BEGIN IMMEDIATE');
   try {
@@ -871,6 +1022,8 @@ function saveBrowserConfig(input) {
   }
   const restartRequired = next.accessMode !== ACCESS_MODE || next.bindHost !== BIND_HOST || JSON.stringify(next.regions) !== JSON.stringify(ACTIVE_REGIONS);
   applyAppConfig(next, nextSecrets);
+  pruneProductObservations();
+  pruneEvents();
   scheduleBackups();
   for (const region of ACTIVE_REGIONS) if (monitors?.[region]) regionContext.run(region, scheduleMonitor);
   writeAppLog('info', 'configuration', 'Owner saved application configuration.', { restartRequired });
@@ -925,7 +1078,7 @@ function importLegacyStateIfNeeded(region = currentRegion()) {
     products: parsed.products && typeof parsed.products === 'object' ? parsed.products : {},
     events: Array.isArray(parsed.events) ? parsed.events.slice(-1000) : [],
   };
-  persistState(legacyState, region);
+  persistState(legacyState, region, { replaceEvents:true });
   setMeta(`legacy_imported_${MOCK_MODE ? 'mock' : region}`, '1');
   setMeta('legacy_source', legacy);
   console.log(`[data] migrated legacy JSON data from ${legacy}`);
@@ -944,7 +1097,7 @@ function loadState(region = currentRegion()) {
   return { watchlist, products, events };
 }
 
-function persistState(nextState, region = currentRegion()) {
+function persistState(nextState, region = currentRegion(), { replaceEvents = false } = {}) {
   db.exec('BEGIN IMMEDIATE');
   try {
     const wanted = new Set(nextState.watchlist || []);
@@ -958,9 +1111,13 @@ function persistState(nextState, region = currentRegion()) {
     const addProduct = db.prepare('INSERT INTO products(region,slug,data_json,updated_at) VALUES(?,?,?,?)');
     for (const [slug, product] of Object.entries(nextState.products || {})) addProduct.run(region, slug, JSON.stringify(product), isoNow());
 
-    db.prepare('DELETE FROM events WHERE region=?').run(region);
-    const addEvent = db.prepare('INSERT INTO events(id,region,detected_at,data_json) VALUES(?,?,?,?)');
-    for (const event of (nextState.events || []).slice(-1000)) addEvent.run(event.id, region, event.detectedAt || isoNow(), JSON.stringify(event));
+    if (replaceEvents) {
+      db.prepare('DELETE FROM events WHERE region=?').run(region);
+      const addEvent = db.prepare('INSERT INTO events(id,region,detected_at,data_json,type,slug,name,alert_kind) VALUES(?,?,?,?,?,?,?,?)');
+      for (const event of (nextState.events || []).slice(-100000)) {
+        addEvent.run(event.id, region, event.detectedAt || isoNow(), JSON.stringify(event), event.type || null, event.slug || null, event.name || null, event.alertKind || event.type || null);
+      }
+    }
     db.exec('COMMIT');
   } catch (err) {
     try { db.exec('ROLLBACK'); } catch {}
@@ -977,6 +1134,7 @@ if (dbExistedAtStartup && ((previousAppVersion && previousAppVersion !== APP_VER
   if (startupSafetyBackup) console.log(`[data] safety backup created before version migration: ${startupSafetyBackup.filename}`);
 }
 runMigrations();
+backfillEventColumns();
 if (startupSafetyBackup && tableExists('backup_log')) {
   const logged = db.prepare('SELECT id FROM backup_log WHERE filename=? LIMIT 1').get(startupSafetyBackup.filename);
   if (!logged) db.prepare('INSERT INTO backup_log(filename,reason,status,size,detail,created_at) VALUES(?,?,?,?,?,?)')
@@ -999,6 +1157,7 @@ const states = Object.fromEntries(ACTIVE_REGIONS.map((region) => [region, loadSt
 for (const region of ACTIVE_REGIONS) {
   for (const product of Object.values(states[region].products)) recordProductObservation(product, 'migration-baseline', region);
 }
+runtimeReadyForRecoveryCopies = true;
 function contextualProxy(values) {
   return new Proxy({}, {
     get(_target, property) { return values[currentRegion()][property]; },
@@ -1044,6 +1203,8 @@ const monitors = Object.fromEntries(ACTIVE_REGIONS.map((region) => [region, {
   lastDurationMs: null,
   catalogHealth: 'starting',
   partialErrors: [],
+  pendingChanges: 0,
+  retryAfterAt: null,
   lastAlertAt: null,
 }]));
 const monitor = contextualProxy(monitors);
@@ -1060,10 +1221,12 @@ const MOCK_PRODUCTS = [
 
 function mockCatalog() {
   const region = currentRegion();
-  return MOCK_PRODUCTS.map((p) => {
-    const status = mockOverrides[p.slug] || p.status;
+  return MOCK_PRODUCTS.filter((p) => mockOverrides[p.slug]?.present !== false).map((p) => {
+    const override = mockOverrides[p.slug] || {};
+    const status = override.status || p.status;
     return {
       ...p,
+      price: override.price === undefined ? p.price : override.price,
       status,
       imageUrl: p.imageUrl || null,
       inStock: status === 'Available',
@@ -1087,6 +1250,19 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
   }
 }
 
+function storeHttpError(response, context) {
+  const error = new Error(`${context} returned HTTP ${response.status}`);
+  const retryAfter = String(response.headers.get('retry-after') || '').trim();
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    const date = new Date(retryAfter);
+    const delayMs = Number.isFinite(seconds) ? Math.max(0, seconds * 1000) : Number.isNaN(date.valueOf()) ? 0 : Math.max(0, date.valueOf() - Date.now());
+    if (delayMs) error.retryAfterAt = new Date(Date.now() + Math.min(delayMs, 24 * 60 * 60 * 1000)).toISOString();
+  }
+  error.statusCode = response.status;
+  return error;
+}
+
 async function getBuildId(force = false) {
   const region = currentRegion();
   const buildIdCache = buildIdCaches[region];
@@ -1096,7 +1272,7 @@ async function getBuildId(force = false) {
   }
   const home = `${STORE_BASE}/${REGIONS[region].path}`;
   const res = await fetchWithTimeout(home, { headers: HEADERS });
-  if (!res.ok) throw new Error(`Store homepage returned HTTP ${res.status}`);
+  if (!res.ok) throw storeHttpError(res, 'Store homepage');
   const html = await res.text();
   const match = html.match(/"buildId":"([^"]+)"/);
   if (!match) throw new Error('Could not discover the UniFi Store Next.js buildId.');
@@ -1131,7 +1307,7 @@ async function fetchCategory(buildId, category) {
       err.code = 'BUILD_OR_ROUTE_404';
       throw err;
     }
-    if (!res.ok) throw new Error(`${category}: HTTP ${res.status}`);
+    if (!res.ok) throw storeHttpError(res, category);
 
     const payload = await res.json();
     const props = payload.pageProps || {};
@@ -1291,15 +1467,18 @@ function normalizeProduct(product) {
 async function fetchCatalogWithBuild(buildId) {
   const results = await Promise.allSettled(CATEGORIES.map((category) => fetchCategory(buildId, category)));
   let saw404 = false;
+  let retryableResponse = null;
   const raw = [];
   const errors = [];
   results.forEach((result, index) => {
     if (result.status === 'fulfilled') raw.push(...result.value);
     else {
       if (result.reason && result.reason.code === 'BUILD_OR_ROUTE_404') saw404 = true;
+      if (result.reason?.statusCode === 429 || result.reason?.retryAfterAt) retryableResponse = result.reason;
       errors.push(`${CATEGORIES[index]}: ${result.reason?.message || result.reason}`);
     }
   });
+  if (retryableResponse) throw retryableResponse;
   if (saw404) {
     const err = new Error('One or more category endpoints returned 404.');
     err.code = 'BUILD_OR_ROUTE_404';
@@ -1366,7 +1545,7 @@ function eventTriggerReason(type, alertKind, rule, watchedAtDetection) {
   return watchedAtDetection ? 'A watched product changed on the UniFi Store.' : 'GearBeacon detected a store change.';
 }
 
-function createEvent(type, previous, current, watchedAtDetection) {
+function createEvent(type, previous, current, watchedAtDetection, confirmation = null) {
   const region = currentRegion();
   const rule = watchedAtDetection ? watchRule(current.slug, region) : { ...DEFAULT_WATCH_RULE };
   const prices = eventPriceSnapshot(previous, current);
@@ -1403,6 +1582,7 @@ function createEvent(type, previous, current, watchedAtDetection) {
     notificationTimeZone: NOTIFICATION_TIME_ZONE,
     previousStateSince,
     previousStateDurationSeconds,
+    confirmation: confirmation || { policy:'single-valid-observation', observations:1, required:1, firstObservedAt:detectedAt, confirmedAt:detectedAt },
     region,
     detectedAt,
   };
@@ -1888,7 +2068,7 @@ function enqueueAlert(event, options = {}) {
     event.serverAlert = { recordedAt:isoNow(), ...serverAlert };
     const stored = state.events.find((item) => item.id === event.id);
     if (stored && stored !== event) stored.serverAlert = event.serverAlert;
-    if (stored) saveStateSoon();
+    if (stored) db.prepare('UPDATE events SET data_json=? WHERE id=?').run(JSON.stringify(stored), event.id);
   };
   if (!decision.allowed) {
     rememberPlan({ state:'muted', reason:decision.reason });
@@ -2037,9 +2217,57 @@ function scheduleNotificationWorker() {
 }
 
 function recordEvent(event) {
+  db.prepare(`INSERT INTO events(id,region,detected_at,data_json,type,slug,name,alert_kind) VALUES(?,?,?,?,?,?,?,?)
+    ON CONFLICT(id) DO UPDATE SET data_json=excluded.data_json,type=excluded.type,slug=excluded.slug,name=excluded.name,alert_kind=excluded.alert_kind`)
+    .run(event.id, event.region || currentRegion(), event.detectedAt || isoNow(), JSON.stringify(event), event.type || null, event.slug || null, event.name || null, event.alertKind || event.type || null);
   state.events.push(event);
   if (state.events.length > 1000) state.events = state.events.slice(-1000);
-  saveStateSoon();
+  pruneEvents();
+}
+
+function pruneEvents() {
+  if (!EVENT_RETENTION_DAYS) return;
+  const cutoff = new Date(Date.now() - EVENT_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  db.prepare('DELETE FROM events WHERE detected_at<?').run(cutoff);
+}
+
+function clearPendingTransition(slug, kind, region = currentRegion()) {
+  db.prepare('DELETE FROM pending_transitions WHERE region=? AND slug=? AND kind=?').run(region, slug, kind);
+}
+
+function clearPendingTransitions(slug, kinds = null, region = currentRegion()) {
+  if (!kinds) return db.prepare('DELETE FROM pending_transitions WHERE region=? AND slug=?').run(region, slug);
+  for (const kind of kinds) clearPendingTransition(slug, kind, region);
+}
+
+function observePendingTransition(slug, kind, candidate, required = 2, region = currentRegion()) {
+  const serialized = JSON.stringify(candidate);
+  const existing = db.prepare('SELECT candidate_json,first_seen_at,observations FROM pending_transitions WHERE region=? AND slug=? AND kind=?').get(region, slug, kind);
+  const same = existing?.candidate_json === serialized;
+  const observations = same ? Number(existing.observations || 0) + 1 : 1;
+  const firstObservedAt = same ? existing.first_seen_at : isoNow();
+  const lastObservedAt = isoNow();
+  db.prepare(`INSERT INTO pending_transitions(region,slug,kind,candidate_json,first_seen_at,last_seen_at,observations) VALUES(?,?,?,?,?,?,?)
+    ON CONFLICT(region,slug,kind) DO UPDATE SET candidate_json=excluded.candidate_json,first_seen_at=excluded.first_seen_at,last_seen_at=excluded.last_seen_at,observations=excluded.observations`)
+    .run(region, slug, kind, serialized, firstObservedAt, lastObservedAt, observations);
+  const evidence = { policy:'consecutive-valid-observations', kind, observations, required, firstObservedAt, confirmedAt:observations >= required ? lastObservedAt : null };
+  if (observations >= required) clearPendingTransition(slug, kind, region);
+  return { confirmed:observations >= required, evidence };
+}
+
+function pendingTransitions(region = null, limit = 100) {
+  const rows = region
+    ? db.prepare('SELECT region,slug,kind,candidate_json,first_seen_at,last_seen_at,observations FROM pending_transitions WHERE region=? ORDER BY last_seen_at DESC LIMIT ?').all(region, limit)
+    : db.prepare('SELECT region,slug,kind,candidate_json,first_seen_at,last_seen_at,observations FROM pending_transitions ORDER BY last_seen_at DESC LIMIT ?').all(limit);
+  return rows.map((row) => ({ region:row.region, slug:row.slug, kind:row.kind, candidate:safeJsonParse(row.candidate_json, {}), firstObservedAt:row.first_seen_at, lastObservedAt:row.last_seen_at, observations:Number(row.observations) }));
+}
+
+function recordMonitorCheck(outcome, startedAt, detail = null) {
+  if (!tableExists('monitor_checks')) return;
+  const duration = Math.max(0, Date.now() - startedAt);
+  db.prepare(`INSERT INTO monitor_checks(region,checked_at,outcome,catalog_count,duration_ms,detail,partial_errors_json,retry_after_at) VALUES(?,?,?,?,?,?,?,?)`)
+    .run(currentRegion(), isoNow(), outcome, monitor.productCount || null, duration, detail ? String(detail).slice(0, 2000) : null, JSON.stringify(monitor.partialErrors || []), monitor.retryAfterAt || null);
+  db.prepare('DELETE FROM monitor_checks WHERE id NOT IN (SELECT id FROM monitor_checks ORDER BY id DESC LIMIT 2000)').run();
 }
 
 async function checkStore(reason = 'timer') {
@@ -2048,12 +2276,14 @@ async function checkStore(reason = 'timer') {
   monitor.checking = true;
   monitor.lastCheckAt = isoNow();
   monitor.lastError = null;
+  monitor.partialErrors = [];
+  monitor.retryAfterAt = null;
   monitor.cycle += 1;
   console.log(`[monitor] ${monitor.lastCheckAt} check #${monitor.cycle} (${reason})`);
 
   try {
     const catalog = await fetchCatalog();
-    const knownCount = Object.keys(state.products).length;
+    const knownCount = Object.values(state.products).filter((product) => !product.unlisted).length;
     if (!MOCK_MODE && knownCount >= 20 && catalog.length < Math.max(10, Math.floor(knownCount * MIN_CATALOG_RATIO))) {
       throw new Error(`Catalog health guard rejected ${catalog.length} products; previous baseline has ${knownCount}. No stock state was changed.`);
     }
@@ -2063,60 +2293,127 @@ async function checkStore(reason = 'timer') {
     const prefs = notificationPreferences();
     const watch = new Set(state.watchlist);
     const hadBaseline = knownCount > 0;
+    const queueEvent = (event) => {
+      recordEvent(event);
+      if (shouldNotifyEvent(event, prefs)) notifications.push(event);
+    };
 
     for (const product of catalog) {
-      incoming[product.slug] = product;
       const previous = state.products[product.slug];
       if (!previous) {
+        clearPendingTransitions(product.slug);
         product.firstDiscoveredAt = product.lastSeenAt;
         product.lastChangedAt = product.lastSeenAt;
+        product.unlisted = false;
+        incoming[product.slug] = product;
         recordProductObservation(product, 'discovered');
         if (hadBaseline) {
           const event = createEvent('new_product', null, product, false);
-          recordEvent(event);
-          if (shouldNotifyEvent(event, prefs)) notifications.push(event);
+          queueEvent(event);
         }
         continue;
       }
+      clearPendingTransition(product.slug, 'unlisted');
       const watchedAtDetection = watch.has(product.slug);
       const changeTypes = [];
+      let effective = {
+        ...previous,
+        name:product.name,
+        category:product.category,
+        imageUrl:product.imageUrl || previous.imageUrl || null,
+        url:product.url,
+        region:product.region,
+        lastSeenAt:product.lastSeenAt,
+        firstDiscoveredAt:previous.firstDiscoveredAt || previous.lastSeenAt || product.lastSeenAt,
+      };
 
-      if (!previous.inStock && product.inStock) {
-        changeTypes.push('restock');
-        const event = createEvent('restock', previous, product, watchedAtDetection);
-        recordEvent(event);
-        if (shouldNotifyEvent(event, prefs)) notifications.push(event);
-      } else if (previous.inStock && !product.inStock) {
-        changeTypes.push('sold-out');
-        const event = createEvent('sold_out', previous, product, watchedAtDetection);
-        recordEvent(event);
-        if (shouldNotifyEvent(event, prefs)) notifications.push(event);
-      } else if (previous.status !== product.status) {
-        changeTypes.push('status');
-        const event = createEvent('status_change', previous, product, watchedAtDetection);
-        recordEvent(event);
-        if (shouldNotifyEvent(event, prefs)) notifications.push(event);
+      if (previous.unlisted) {
+        clearPendingTransitions(product.slug);
+        effective = { ...product, firstDiscoveredAt:effective.firstDiscoveredAt, lastChangedAt:product.lastSeenAt, unlisted:false };
+        changeTypes.push('relisted');
+        queueEvent(createEvent(product.inStock ? 'restock' : 'status_change', previous, effective, watchedAtDetection, {
+          policy:'catalog-reappearance', kind:'relisted', observations:1, required:1, firstObservedAt:product.lastSeenAt, confirmedAt:product.lastSeenAt,
+        }));
+      } else {
+        const availabilityChanged = Boolean(previous.inStock) !== Boolean(product.inStock);
+        if (availabilityChanged && product.inStock) {
+          clearPendingTransition(product.slug, 'availability');
+          effective = { ...effective, inStock:true, status:product.status, comingSoon:product.comingSoon, restockEtaAt:product.restockEtaAt, soldOutAt:product.soldOutAt, unlisted:false };
+          changeTypes.push('restock');
+          queueEvent(createEvent('restock', previous, effective, watchedAtDetection, {
+            policy:'restock-fast-path', kind:'availability', observations:1, required:1, firstObservedAt:product.lastSeenAt, confirmedAt:product.lastSeenAt,
+          }));
+        } else if (availabilityChanged) {
+          const pending = observePendingTransition(product.slug, 'availability', { inStock:false, status:product.status, comingSoon:product.comingSoon });
+          if (pending.confirmed) {
+            effective = { ...effective, inStock:false, status:product.status, comingSoon:product.comingSoon, restockEtaAt:product.restockEtaAt, soldOutAt:product.soldOutAt || product.lastSeenAt, unlisted:false };
+            changeTypes.push('sold-out');
+            queueEvent(createEvent('sold_out', previous, effective, watchedAtDetection, pending.evidence));
+          }
+        } else {
+          clearPendingTransition(product.slug, 'availability');
+          effective.inStock = product.inStock;
+          effective.restockEtaAt = product.restockEtaAt;
+          effective.soldOutAt = product.soldOutAt;
+        }
+
+        if (!availabilityChanged && previous.status !== product.status) {
+          const pending = observePendingTransition(product.slug, 'status', { status:product.status, comingSoon:product.comingSoon });
+          if (pending.confirmed) {
+            effective = { ...effective, status:product.status, comingSoon:product.comingSoon, unlisted:false };
+            changeTypes.push('status');
+            queueEvent(createEvent('status_change', previous, effective, watchedAtDetection, pending.evidence));
+          }
+        } else if (!availabilityChanged) {
+          clearPendingTransition(product.slug, 'status');
+          effective.status = product.status;
+          effective.comingSoon = product.comingSoon;
+        } else {
+          clearPendingTransition(product.slug, 'status');
+        }
+
+        if (previous.price && product.price && previous.price !== product.price) {
+          const pending = observePendingTransition(product.slug, 'price', { price:product.price });
+          if (pending.confirmed) {
+            effective.price = product.price;
+            changeTypes.push('price');
+            queueEvent(createEvent('price_change', previous, effective, watchedAtDetection, pending.evidence));
+          }
+        } else {
+          clearPendingTransition(product.slug, 'price');
+          if (!previous.price && product.price) effective.price = product.price;
+        }
       }
 
-      if (previous.price && product.price && previous.price !== product.price) {
-        changeTypes.push('price');
-        const event = createEvent('price_change', previous, product, watchedAtDetection);
-        recordEvent(event);
-        if (shouldNotifyEvent(event, prefs)) notifications.push(event);
-      }
-      product.firstDiscoveredAt = previous.firstDiscoveredAt || previous.lastSeenAt || product.lastSeenAt;
-      product.lastChangedAt = changeTypes.length ? product.lastSeenAt : (previous.lastChangedAt || previous.lastSeenAt || product.lastSeenAt);
-      recordProductObservation(product, changeTypes.join('+') || 'observed');
+      effective.lastChangedAt = changeTypes.length ? product.lastSeenAt : (previous.lastChangedAt || previous.lastSeenAt || product.lastSeenAt);
+      incoming[product.slug] = effective;
+      recordProductObservation(effective, changeTypes.join('+') || 'observed');
     }
 
-    // Preserve products that temporarily disappear from a partial catalog fetch.
-    // GearBeacon never infers a sellout from a missing response.
+    // Missing products are never treated as sold out. Two complete, valid
+    // catalogs are required before a product is classified as unlisted.
+    if (!monitor.partialErrors.length) {
+      for (const previous of Object.values(state.products)) {
+        if (incoming[previous.slug] || previous.unlisted) continue;
+        clearPendingTransitions(previous.slug, ['availability', 'status', 'price']);
+        const pending = observePendingTransition(previous.slug, 'unlisted', { status:'Unlisted', unlisted:true });
+        if (!pending.confirmed) continue;
+        const unlisted = { ...previous, status:'Unlisted', inStock:false, comingSoon:false, unlisted:true, lastChangedAt:isoNow() };
+        incoming[previous.slug] = unlisted;
+        recordProductObservation(unlisted, 'unlisted');
+        queueEvent(createEvent('status_change', previous, unlisted, watch.has(previous.slug), pending.evidence));
+      }
+    }
+
+    // Preserve last-known-good data for partial catalogs and pending changes.
     state.products = { ...state.products, ...incoming };
-    monitor.productCount = Object.keys(incoming).length;
+    monitor.productCount = catalog.length;
     monitor.lastSuccessAt = isoNow();
     monitor.consecutiveFailures = 0;
     monitor.catalogHealth = monitor.partialErrors.length ? 'degraded' : 'healthy';
+    monitor.pendingChanges = Number(db.prepare('SELECT COUNT(*) AS count FROM pending_transitions WHERE region=?').get(currentRegion())?.count || 0);
     pruneProductObservations();
+    pruneEvents();
     saveStateSoon();
 
     for (const event of notifications) enqueueAlert(event);
@@ -2126,15 +2423,18 @@ async function checkStore(reason = 'timer') {
       if (free !== null && free < 1024 * 1024 * 1024) enqueueOperationalAlert('disk', 'Storage space is low', `Only ${Math.max(0, Math.round(free / 1024 / 1024))} MB remains in the GearBeacon data filesystem.`);
     } catch {}
     console.log(`[monitor] success: ${monitor.productCount} products, ${notifications.length} notification event(s)`);
-    writeAppLog('info', 'monitor', `Store check succeeded for ${currentRegion()}.`, { reason, products: monitor.productCount, notificationEvents: notifications.length, catalogHealth: monitor.catalogHealth });
-    return { ok: true, products: monitor.productCount, notifications: notifications.length, catalogHealth: monitor.catalogHealth };
+    writeAppLog('info', 'monitor', `Store check succeeded for ${currentRegion()}.`, { reason, products: monitor.productCount, notificationEvents: notifications.length, catalogHealth: monitor.catalogHealth, pendingChanges:monitor.pendingChanges });
+    recordMonitorCheck('success', startedAt, monitor.partialErrors.length ? 'Catalog was usable but one or more categories failed.' : null);
+    return { ok: true, products: monitor.productCount, notifications: notifications.length, catalogHealth: monitor.catalogHealth, pendingChanges:monitor.pendingChanges };
   } catch (err) {
     monitor.consecutiveFailures += 1;
     monitor.lastError = err?.message || String(err);
+    monitor.retryAfterAt = err?.retryAfterAt || null;
     const lastSuccessAge = monitor.lastSuccessAt ? (Date.now() - new Date(monitor.lastSuccessAt).getTime()) / 1000 : Infinity;
     monitor.catalogHealth = lastSuccessAge > STALE_AFTER_SECONDS ? 'stale' : 'error';
     console.error('[monitor] failed:', monitor.lastError);
     writeAppLog('error', 'monitor', `Store check failed for ${currentRegion()}.`, { reason, error: monitor.lastError, consecutiveFailures: monitor.consecutiveFailures });
+    recordMonitorCheck('failed', startedAt, monitor.lastError);
     if (monitor.consecutiveFailures === 3) enqueueOperationalAlert('monitor', 'Store monitoring is unhealthy', `${REGIONS[currentRegion()].label} has failed three consecutive checks: ${monitor.lastError}`);
     return { ok: false, error: monitor.lastError, consecutiveFailures: monitor.consecutiveFailures };
   } finally {
@@ -2145,8 +2445,11 @@ async function checkStore(reason = 'timer') {
 
 const monitorTimers = new Map();
 function monitorDelaySeconds() {
-  if (!monitor.consecutiveFailures) return POLL_SECONDS;
-  return Math.min(15 * 60, POLL_SECONDS * (2 ** Math.min(monitor.consecutiveFailures, 4)));
+  let delay = monitor.consecutiveFailures ? Math.min(15 * 60, POLL_SECONDS * (2 ** Math.min(monitor.consecutiveFailures, 4))) : POLL_SECONDS;
+  if (monitor.retryAfterAt) delay = Math.max(delay, Math.ceil((new Date(monitor.retryAfterAt).getTime() - Date.now()) / 1000));
+  // Never jitter earlier than an upstream Retry-After deadline.
+  const jitter = monitor.retryAfterAt ? 1 + Math.random() * 0.1 : 0.95 + Math.random() * 0.1;
+  return Math.max(5, Math.round(delay * jitter));
 }
 
 function scheduleMonitor() {
@@ -2351,11 +2654,20 @@ function productDetailsForApi(slug) {
 
 function backupSummary() {
   const backups = listBackups().filter((item) => item.name.endsWith('.sqlite3'));
+  const secondaryBackups = SECONDARY_BACKUP_DIR ? listBackups(SECONDARY_BACKUP_DIR) : [];
   return {
     count: backups.length,
     retention: BACKUP_RETENTION,
     intervalHours: BACKUP_INTERVAL_HOURS,
     latest: backups[0] || null,
+    secondary: {
+      configured:Boolean(SECONDARY_BACKUP_DIR),
+      directory:SECONDARY_BACKUP_DIR || null,
+      encrypted:SECONDARY_ENCRYPTED_EXPORTS,
+      count:secondaryBackups.length,
+      latest:secondaryBackups[0] || null,
+      sameFilesystem:backupLocationsShareDevice(),
+    },
   };
 }
 
@@ -2367,7 +2679,11 @@ function scheduleBackups() {
     try {
       for (const region of ACTIVE_REGIONS) flushState(region);
       const backup = createDatabaseBackup('scheduled');
-      if (backup) { console.log(`[data] scheduled backup created: ${backup.filename}`); writeAppLog('info', 'backups', 'Scheduled backup created and validated.', { filename: backup.filename, size: backup.size }); }
+      if (backup) {
+        console.log(`[data] scheduled backup created: ${backup.filename}`);
+        writeAppLog('info', 'backups', 'Scheduled backup created and validated.', { filename: backup.filename, size: backup.size, secondary:backup.secondary || null });
+        if (backup.secondary?.ok === false) enqueueOperationalAlert('backup', 'Secondary recovery copy failed', backup.secondary.error || 'The primary backup succeeded but its secondary copy did not.');
+      }
     } catch (err) {
       console.error('[data] scheduled backup failed:', err?.message || err);
       writeAppLog('error', 'backups', 'Scheduled backup failed.', { error: err?.message || String(err) });
@@ -2398,6 +2714,10 @@ function dataInfo() {
       observations: tableExists('product_observations') ? Number(db.prepare('SELECT COUNT(*) AS count FROM product_observations').get()?.count || 0) : 0,
       retentionDays: HISTORY_RETENTION_DAYS,
     },
+    activity: {
+      events:Number(db.prepare('SELECT COUNT(*) AS count FROM events').get()?.count || 0),
+      retentionDays:EVENT_RETENTION_DAYS,
+    },
     legacySource: getMeta('legacy_source'),
   };
 }
@@ -2410,6 +2730,7 @@ function securityWarnings() {
   if (ACCESS_MODE === 'proxy' && !PUBLIC_BASE_URL.startsWith('https://')) warnings.push({ severity:'high', code:'proxy-url', settingsTab:'general', message:'Proxy mode should use an HTTPS public URL.' });
   if (!SMTP_REJECT_UNAUTHORIZED && smtpConfigured()) warnings.push({ severity:'medium', code:'smtp-certificates', settingsTab:'notifications', message:'SMTP certificate verification is disabled.' });
   if (setupRequired()) warnings.push({ severity:'high', code:'setup-token', settingsTab:'security', message:'Complete owner setup and remove any configured setup token.' });
+  if (SECONDARY_BACKUP_DIR && backupLocationsShareDevice() === true) warnings.push({ severity:'medium', code:'backup-same-device', settingsTab:'data', message:'Primary and secondary backups are on the same storage device. Use a NAS share or separately mounted volume for stronger recovery.' });
   return warnings;
 }
 
@@ -2431,10 +2752,14 @@ function operationsSummary() {
   const warnings = securityWarnings();
   const queue = notificationQueueSummary();
   const unhealthyRegions = ACTIVE_REGIONS.filter((region) => !monitors[region].lastSuccessAt || monitors[region].lastError || monitors[region].catalogHealth === 'stale');
+  const pending = pendingTransitions(null, 100);
+  const latestSecondaryAttempt = backupRows.map((row) => safeJsonParse(row.detail, null)?.secondary).find((item) => item?.configured);
+  const secondaryUnavailable = storage.backup.secondary.configured && storage.backup.latest && !storage.backup.secondary.latest;
   const issues = [
     ...warnings.map((item) => ({ severity:item.severity === 'high' ? 'action' : 'degraded', message:item.message, settingsTab:item.settingsTab })),
     ...(queue.failed ? [{ severity:'action', message:`${queue.failed} notification delivery job${queue.failed === 1 ? '' : 's'} failed.`, settingsTab:'notifications' }] : []),
     ...(!storage.integrity.ok ? [{ severity:'action', message:'Database integrity check failed.', settingsTab:'data' }] : []),
+    ...(latestSecondaryAttempt?.ok === false || secondaryUnavailable ? [{ severity:'degraded', message:'The latest primary backup succeeded, but the secondary recovery copy is unavailable.', settingsTab:'data' }] : []),
     ...(unhealthyRegions.length ? [{ severity:'degraded', message:`${unhealthyRegions.length} store region${unhealthyRegions.length === 1 ? ' is' : 's are'} unhealthy.` }] : []),
   ];
   const overall = issues.some((item) => item.severity === 'action') ? 'action' : issues.length ? 'degraded' : 'healthy';
@@ -2453,10 +2778,231 @@ function operationsSummary() {
     summary: { state:overall, label:overall === 'action' ? 'Action required' : overall === 'degraded' ? 'Degraded' : 'Healthy', issues },
     notifications: { queue, recent: notificationRows },
     backups: { ...backupSummary(), history: backupRows, integrity: storage.integrity },
+    monitoringConfidence: { pending, count:Number(db.prepare('SELECT COUNT(*) AS count FROM pending_transitions').get()?.count || 0), recentChecks:db.prepare('SELECT region,checked_at AS checkedAt,outcome,catalog_count AS catalogCount,duration_ms AS durationMs,detail,partial_errors_json AS partialErrors,retry_after_at AS retryAfterAt FROM monitor_checks ORDER BY id DESC LIMIT 30').all().map((row) => ({ ...row, partialErrors:safeJsonParse(row.partialErrors, []) })) },
     storage: { databasePath: storage.databasePath, databaseSize: storage.databaseSize, freeSpace: storage.freeSpace, userDataDir: storage.userDataDir },
     securityWarnings: warnings,
     onboardingComplete: getSetting('onboarding_complete', '0') === '1',
   };
+}
+
+function activityFilterSql(url) {
+  const scope = String(url.searchParams.get('scope') || url.searchParams.get('region') || DEFAULT_REGION).toLowerCase();
+  const regions = scope === 'all' ? [...ACTIVE_REGIONS] : ACTIVE_REGIONS.includes(scope) ? [scope] : null;
+  if (!regions) throw new Error(`Activity region must be all or one of: ${ACTIVE_REGIONS.join(', ')}.`);
+  const conditions = [`e.region IN (${regions.map(() => '?').join(',')})`];
+  const parameters = [...regions];
+  const type = String(url.searchParams.get('type') || 'all').toLowerCase();
+  const allowedTypes = ['restock', 'sold_out', 'price_change', 'status_change', 'new_product'];
+  if (type !== 'all') {
+    if (!allowedTypes.includes(type)) throw new Error('Activity type is not supported.');
+    conditions.push('e.type=?'); parameters.push(type);
+  }
+  const search = String(url.searchParams.get('search') || '').trim().toLowerCase().slice(0, 200);
+  if (search) {
+    conditions.push("(lower(COALESCE(e.name,'')) LIKE ? OR lower(COALESCE(e.slug,'')) LIKE ?)");
+    parameters.push(`%${search}%`, `%${search}%`);
+  }
+  const normalizeDate = (value, end = false) => {
+    if (!value) return null;
+    const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+    const date = new Date(dateOnly ? `${value}T00:00:00.000Z` : value);
+    if (Number.isNaN(date.valueOf())) throw new Error('Activity dates must be valid ISO dates.');
+    if (end && dateOnly) date.setUTCDate(date.getUTCDate() + 1);
+    return date.toISOString();
+  };
+  const from = normalizeDate(String(url.searchParams.get('from') || ''));
+  const to = normalizeDate(String(url.searchParams.get('to') || ''), true);
+  if (from) { conditions.push('e.detected_at>=?'); parameters.push(from); }
+  if (to) { conditions.push('e.detected_at<?'); parameters.push(to); }
+  const delivery = String(url.searchParams.get('delivery') || 'all').toLowerCase();
+  if (!['all', 'sent', 'pending', 'failed', 'not-sent'].includes(delivery)) throw new Error('Activity delivery filter is not supported.');
+  if (delivery === 'sent') conditions.push("(EXISTS (SELECT 1 FROM notification_queue nq WHERE nq.event_id=e.id AND nq.status='sent') OR EXISTS (SELECT 1 FROM notification_log nl WHERE nl.event_id=e.id AND nl.status='sent'))");
+  if (delivery === 'pending') conditions.push("EXISTS (SELECT 1 FROM notification_queue nq WHERE nq.event_id=e.id AND nq.status IN ('pending','processing'))");
+  if (delivery === 'failed') conditions.push("(EXISTS (SELECT 1 FROM notification_queue nq WHERE nq.event_id=e.id AND nq.status='failed') OR EXISTS (SELECT 1 FROM notification_log nl WHERE nl.event_id=e.id AND nl.status='failed'))");
+  if (delivery === 'not-sent') conditions.push('NOT EXISTS (SELECT 1 FROM notification_queue nq WHERE nq.event_id=e.id) AND NOT EXISTS (SELECT 1 FROM notification_log nl WHERE nl.event_id=e.id)');
+  return { where:conditions.join(' AND '), parameters, filters:{ scope, type, search, from, to, delivery } };
+}
+
+function enrichActivityEvents(events) {
+  const eventIds = events.map((event) => event.id).filter(Boolean);
+  const queueByEvent = new Map();
+  const logsByEvent = new Map();
+  if (eventIds.length) {
+    for (let offset = 0; offset < eventIds.length; offset += 500) {
+      const ids = eventIds.slice(offset, offset + 500);
+      const placeholders = ids.map(() => '?').join(',');
+      for (const row of db.prepare(`SELECT event_id,channel,status,attempts,max_attempts,next_attempt_at,last_error,updated_at FROM notification_queue WHERE event_id IN (${placeholders})`).all(...ids)) {
+        if (!queueByEvent.has(row.event_id)) queueByEvent.set(row.event_id, []);
+        queueByEvent.get(row.event_id).push(row);
+      }
+      for (const row of db.prepare(`SELECT event_id,channel,status,detail,created_at FROM notification_log WHERE event_id IN (${placeholders}) ORDER BY id DESC`).all(...ids)) {
+        if (!logsByEvent.has(row.event_id)) logsByEvent.set(row.event_id, []);
+        logsByEvent.get(row.event_id).push(row);
+      }
+    }
+  }
+  return events.map((event) => regionContext.run(event.region || DEFAULT_REGION, () => {
+    const decision = notificationDecision(event);
+    return { ...event, notificationDecision:decision, serverAlert:eventServerAlertSummary(event, decision, queueByEvent.get(event.id) || [], logsByEvent.get(event.id) || []) };
+  }));
+}
+
+function activityQuery(url, { exportLimit = null } = {}) {
+  const filter = activityFilterSql(url);
+  const count = Number(db.prepare(`SELECT COUNT(*) AS count FROM events e WHERE ${filter.where}`).get(...filter.parameters)?.count || 0);
+  const requestedLimit = Number(url.searchParams.get('limit') || 50);
+  const requestedPage = Number(url.searchParams.get('page') || 1);
+  const limit = exportLimit || (Number.isInteger(requestedLimit) ? Math.min(100, Math.max(10, requestedLimit)) : 50);
+  const page = exportLimit ? 1 : Number.isInteger(requestedPage) ? Math.max(1, requestedPage) : 1;
+  const offset = exportLimit ? 0 : (page - 1) * limit;
+  const rows = db.prepare(`SELECT e.data_json FROM events e WHERE ${filter.where} ORDER BY e.detected_at DESC,e.id DESC LIMIT ? OFFSET ?`).all(...filter.parameters, limit, offset);
+  const events = enrichActivityEvents(rows.map((row) => safeJsonParse(row.data_json, null)).filter(Boolean));
+  return { events, count, page, limit, pages:Math.max(1, Math.ceil(count / limit)), filters:filter.filters, truncated:Boolean(exportLimit && count > exportLimit) };
+}
+
+function csvCell(value) {
+  const text = value == null ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value);
+  return `"${text.replaceAll('"', '""')}"`;
+}
+
+function activityCsv(events) {
+  const columns = ['detectedAt','region','type','alertKind','name','slug','previousStatus','status','previousPrice','price','delivery','confirmationPolicy','confirmationObservations'];
+  const rows = events.map((event) => [event.detectedAt,event.region,event.type,event.alertKind,event.name,event.slug,event.previousStatus,event.status,event.previousPrice,event.price,event.serverAlert?.state,event.confirmation?.policy,event.confirmation?.observations]);
+  return `${columns.map(csvCell).join(',')}\r\n${rows.map((row) => row.map(csvCell).join(',')).join('\r\n')}\r\n`;
+}
+
+function backupFileForTest(input = {}) {
+  const location = input.location === 'secondary' ? 'secondary' : 'primary';
+  const directory = location === 'secondary' ? SECONDARY_BACKUP_DIR : BACKUP_DIR;
+  if (!directory) throw new Error('The secondary backup destination is not configured.');
+  const available = listBackups(directory);
+  const requested = String(input.filename || '').trim();
+  const backup = requested ? available.find((item) => item.name === path.basename(requested) && item.name === requested) : available[0];
+  if (!backup) throw new Error(`No ${location} backup is available to test.`);
+  return { ...backup, location };
+}
+
+function testBackupRestore(input = {}) {
+  const backup = backupFileForTest(input);
+  if (backup.name.endsWith('.sqlite3')) {
+    const integrity = databaseIntegrity(backup.path);
+    const target = new DatabaseSync(backup.path, { readOnly:true });
+    try {
+      const schema = Number(target.prepare('SELECT COALESCE(MAX(version),0) AS version FROM schema_migrations').get()?.version || 0);
+      const required = ['watchlist', 'products', 'events', 'settings'];
+      const tables = new Set(target.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((row) => row.name));
+      const missing = required.filter((name) => !tables.has(name));
+      return { ok:integrity.ok && schema > 0 && schema <= DATABASE_SCHEMA_VERSION && !missing.length, testedAt:isoNow(), filename:backup.name, location:backup.location, format:'sqlite', integrity, schemaVersion:schema, compatible:schema > 0 && schema <= DATABASE_SCHEMA_VERSION, missingTables:missing, size:backup.size };
+    } finally { target.close(); }
+  }
+  const wrapper = safeJsonParse(fs.readFileSync(backup.path, 'utf8'), null);
+  const encrypted = wrapper?.format === 'GearBeaconEncryptedBackup';
+  const passphrase = input.passphrase || (backup.location === 'secondary' ? storedSecrets().secondaryBackupPassphrase : '');
+  const snapshot = decryptSnapshot(wrapper, passphrase);
+  const preview = previewSnapshot(snapshot);
+  return { ok:true, testedAt:isoNow(), filename:backup.name, location:backup.location, format:encrypted ? 'encrypted-json' : 'json', encrypted, size:backup.size, preview };
+}
+
+function diagnosticItem(id, label, status, detail, action = null) {
+  return { id, label, status, detail, ...(action ? { action } : {}) };
+}
+
+async function runDiagnostics({ network = true } = {}) {
+  const checks = [];
+  const integrity = databaseIntegrity();
+  checks.push(diagnosticItem('database', 'Database integrity', integrity.ok ? 'pass' : 'fail', integrity.ok ? 'SQLite integrity check returned OK.' : integrity.messages.join('; '), 'data'));
+  try {
+    fs.accessSync(USER_DATA_DIR, fs.constants.R_OK | fs.constants.W_OK);
+    fs.accessSync(BACKUP_DIR, fs.constants.R_OK | fs.constants.W_OK);
+    checks.push(diagnosticItem('storage-write', 'Data and backup access', 'pass', 'The process can read and write both primary directories.', 'data'));
+  } catch (err) { checks.push(diagnosticItem('storage-write', 'Data and backup access', 'fail', String(err?.message || err), 'data')); }
+  try {
+    const key = secretKey();
+    if (getSetting('encrypted_notification_secrets', '')) storedSecrets();
+    checks.push(diagnosticItem('secret-key', 'Local encryption key', key.length === 32 ? 'pass' : 'fail', 'The separate key file is readable and saved credentials can be decrypted.', 'notifications'));
+  } catch (err) { checks.push(diagnosticItem('secret-key', 'Local encryption key', 'fail', String(err?.message || err), 'notifications')); }
+  try {
+    const tested = testBackupRestore({ location:'primary' });
+    checks.push(diagnosticItem('restore', 'Latest primary backup', tested.ok ? 'pass' : 'fail', tested.ok ? `${tested.filename} passed a non-destructive restore-read test.` : `${tested.filename} is not compatible or complete.`, 'data'));
+  } catch (err) { checks.push(diagnosticItem('restore', 'Latest primary backup', 'warn', String(err?.message || err), 'data')); }
+  if (SECONDARY_BACKUP_DIR) {
+    try {
+      ensureSecondaryBackupDirectory();
+      const same = backupLocationsShareDevice();
+      checks.push(diagnosticItem('secondary', 'Secondary recovery destination', same ? 'warn' : 'pass', same ? 'The destination is writable but appears to use the same storage device as the primary database.' : 'The destination is writable and appears to use separate storage.', 'data'));
+      try {
+        const tested = testBackupRestore({ location:'secondary' });
+        checks.push(diagnosticItem('secondary-restore', 'Latest secondary recovery copy', tested.ok ? 'pass' : 'fail', tested.ok ? `${tested.filename} passed its restore-read test.` : 'The latest secondary recovery copy failed validation.', 'data'));
+      } catch (err) { checks.push(diagnosticItem('secondary-restore', 'Latest secondary recovery copy', 'warn', String(err?.message || err), 'data')); }
+    } catch (err) { checks.push(diagnosticItem('secondary', 'Secondary recovery destination', 'fail', String(err?.message || err), 'data')); }
+  } else checks.push(diagnosticItem('secondary', 'Secondary recovery destination', 'warn', 'No secondary destination is configured. Primary backups remain on the GearBeacon data filesystem.', 'data'));
+  const storage = dataInfo();
+  checks.push(diagnosticItem('disk', 'Free storage', storage.freeSpace === null ? 'warn' : storage.freeSpace >= 1024 * 1024 * 1024 ? 'pass' : 'fail', storage.freeSpace === null ? 'Free-space reporting is unavailable on this platform.' : `${Math.round(storage.freeSpace / 1024 / 1024)} MB is available.`, 'data'));
+  const queue = notificationQueueSummary();
+  checks.push(diagnosticItem('delivery', 'Notification queue', queue.failed ? 'fail' : 'pass', queue.failed ? `${queue.failed} delivery job${queue.failed === 1 ? '' : 's'} exhausted the retry limit.` : `${queue.pending + queue.processing} jobs pending; no terminal failures.`, 'notifications'));
+  for (const region of ACTIVE_REGIONS) {
+    const current = monitors[region];
+    let status = current.lastSuccessAt && !current.lastError ? 'pass' : 'warn';
+    let detail = current.lastSuccessAt ? `Last successful catalog check: ${current.lastSuccessAt}.` : 'This region has not completed a successful catalog check.';
+    if (network && !MOCK_MODE) {
+      try {
+        const response = await regionContext.run(region, () => fetchWithTimeout(`${STORE_BASE}/${REGIONS[region].path}`, { headers:HEADERS }, 8000));
+        if (!response.ok) throw storeHttpError(response, 'Store reachability probe');
+        try { await response.body?.cancel(); } catch {}
+        status = 'pass'; detail = 'DNS, TLS, and the UniFi Store endpoint responded successfully.';
+      } catch (err) { status = 'fail'; detail = String(err?.message || err); }
+    } else if (MOCK_MODE) { status = 'pass'; detail = 'Mock catalog endpoint is available.'; }
+    checks.push(diagnosticItem(`store-${region}`, `${REGIONS[region].label} store`, status, detail));
+  }
+  for (const warning of securityWarnings()) checks.push(diagnosticItem(`security-${warning.code}`, 'Access configuration', warning.severity === 'high' ? 'fail' : 'warn', warning.message, warning.settingsTab));
+  const failed = checks.filter((item) => item.status === 'fail').length;
+  const warned = checks.filter((item) => item.status === 'warn').length;
+  const result = { ok:failed === 0, generatedAt:isoNow(), summary:{ status:failed ? 'fail' : warned ? 'warn' : 'pass', failed, warned, passed:checks.length - failed - warned }, checks };
+  writeAppLog(failed ? 'error' : warned ? 'warn' : 'info', 'diagnostics', 'Owner ran installation diagnostics.', result.summary);
+  return result;
+}
+
+function scrubSupportValue(value, key = '') {
+  if (/password|secret|token|credential|session|cookie|authorization|path$|directory$|dir$/i.test(key)) return '[redacted]';
+  if (Array.isArray(value)) return value.map((item) => scrubSupportValue(item));
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, scrubSupportValue(item, name)]));
+  if (typeof value === 'string') return value
+    .replace(/(bearer\s+)[^\s,;]+/ig, '$1[redacted]')
+    .replace(/(password|secret|token|authorization)(["'=:\s]+)[^\s,"'}]+/ig, '$1$2[redacted]')
+    .replace(/\b(?:https?|wss?):\/\/[^\s"'<>]+/ig, '[url redacted]')
+    .replace(/\b[A-Z]:\\(?:[^\\\r\n]+\\)*[^\\\r\n]*/ig, '[local path redacted]')
+    .replace(/(^|[\s("'=])\/(?:Users|home|var|data|mnt|srv|opt|tmp|private|Library)(?:\/[^\s"',;)}]+)*/g, '$1[local path redacted]')
+    .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[address redacted]')
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/ig, '[address redacted]');
+  return value;
+}
+
+function supportBundle() {
+  const config = storedAppConfig();
+  const safeConfig = {
+    ...config,
+    bindHost:'[redacted]',
+    publicBaseUrl:config.publicBaseUrl ? '[configured]' : '',
+    allowedOrigins:(config.allowedOrigins || []).length ? [`${config.allowedOrigins.length} configured`] : [],
+    secondaryBackupDir:config.secondaryBackupDir ? '[configured]' : '',
+    ntfyBaseUrl:config.ntfyBaseUrl ? '[configured]' : '',
+    ntfyTopic:config.ntfyTopic ? '[configured]' : '',
+    gotifyBaseUrl:config.gotifyBaseUrl ? '[configured]' : '',
+    smtpHost:config.smtpHost ? '[configured]' : '',
+    smtpUser:config.smtpUser ? '[configured]' : '',
+    smtpFrom:config.smtpFrom ? '[configured]' : '',
+    smtpTo:(config.smtpTo || []).length ? ['[configured]'] : [],
+  };
+  const logs = db.prepare('SELECT level,source,message,detail_json,created_at FROM app_log ORDER BY id DESC LIMIT 500').all().map((row) => ({ ...row, detail:safeJsonParse(row.detail_json, null), detail_json:undefined }));
+  return scrubSupportValue({
+    format:'GearBeaconSupportBundle', formatVersion:1, generatedAt:isoNow(),
+    note:'Secrets, credentials, sessions, recipient addresses, and notification destinations are excluded or redacted.',
+    runtime:operationsSummary().runtime,
+    configuration:safeConfig,
+    operations:operationsSummary(),
+    data:{ ...dataInfo(), databasePath:'[local path redacted]', userDataDir:'[local path redacted]', backupDir:'[local path redacted]' },
+    logs,
+  });
 }
 
 function updatePreparation() {
@@ -2497,7 +3043,8 @@ function exportSnapshot() {
       watchlist: [...states[region].watchlist],
       watchCreatedAt,
       products: states[region].products,
-      events: states[region].events,
+      events: db.prepare('SELECT data_json FROM events WHERE region=? ORDER BY detected_at').all(region)
+        .map((row) => safeJsonParse(row.data_json, null)).filter(Boolean),
       watchRules,
       productHistory: db.prepare(`SELECT slug,observed_at AS observedAt,change_type AS changeType,status,in_stock AS inStock,price_text AS price,price_value AS priceValue
         FROM product_observations WHERE region=? ORDER BY observed_at`).all(region).map((row) => ({ ...row, inStock:Boolean(row.inStock) })),
@@ -2562,7 +3109,7 @@ function normalizeImportedSnapshot(snapshot) {
     watchlist: Array.isArray(value?.watchlist) ? value.watchlist.map(String).filter(Boolean) : [],
     watchCreatedAt: value?.watchCreatedAt && typeof value.watchCreatedAt === 'object' && !Array.isArray(value.watchCreatedAt) ? value.watchCreatedAt : {},
     products: value?.products && typeof value.products === 'object' && !Array.isArray(value.products) ? value.products : {},
-    events: Array.isArray(value?.events) ? value.events.filter((event) => event && event.id).slice(-1000) : [],
+    events: Array.isArray(value?.events) ? value.events.filter((event) => event && event.id).slice(-100000) : [],
     watchRules: value?.watchRules && typeof value.watchRules === 'object' && !Array.isArray(value.watchRules) ? value.watchRules : {},
     productHistory: Array.isArray(value?.productHistory) ? value.productHistory.filter((item) => item?.slug && item?.observedAt).slice(-100000) : [],
   });
@@ -2590,7 +3137,7 @@ function importSnapshot(snapshot) {
   const importedRegions = [];
   for (const [region, regionState] of Object.entries(normalized.regions)) {
     if (!ACTIVE_REGIONS.includes(region)) continue;
-    persistState(regionState, region);
+    persistState(regionState, region, { replaceEvents:true });
     const restoreWatchCreatedAt = db.prepare('UPDATE watchlist SET created_at=? WHERE region=? AND slug=?');
     for (const [slug, createdAt] of Object.entries(regionState.watchCreatedAt || {})) {
       const parsed = new Date(String(createdAt));
@@ -3056,6 +3603,17 @@ function sendJsonDownload(res, body, filename) {
   res.end(text);
 }
 
+function sendTextDownload(res, text, filename, type = 'text/plain; charset=utf-8') {
+  res.writeHead(200, {
+    'Content-Type': type,
+    'Content-Length': Buffer.byteLength(text),
+    'Content-Disposition': `attachment; filename="${safeFilePart(filename)}"`,
+    'Cache-Control': 'no-store',
+    ...commonResponseHeaders(res),
+  });
+  res.end(text);
+}
+
 function sendText(res, status, text, type = 'text/plain; charset=utf-8') {
   res.writeHead(status, {
     'Content-Type': type,
@@ -3244,6 +3802,48 @@ async function handleApi(req, res, url) {
 
   if (req.method === 'GET' && url.pathname === '/api/operations') {
     return sendJson(res, 200, operationsSummary());
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/operations/diagnostics') {
+    const body = await readJsonBody(req);
+    return sendJson(res, 200, await runDiagnostics({ network:body?.network !== false }));
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/operations/support-bundle') {
+    return sendJsonDownload(res, supportBundle(), `GearBeacon-Support-${new Date().toISOString().slice(0, 10)}.json`);
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/data/test-restore') {
+    const body = await readJsonBody(req);
+    try {
+      const result = testBackupRestore(body || {});
+      writeAppLog(result.ok ? 'info' : 'error', 'backups', 'Owner completed a non-destructive backup restore test.', { filename:result.filename, location:result.location, ok:result.ok });
+      return sendJson(res, result.ok ? 200 : 409, result.ok ? result : { error:'The selected backup did not pass its restore test.', ...result });
+    } catch (err) { return sendJson(res, 400, { error:err.message }); }
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/activity') {
+    try { return sendJson(res, 200, activityQuery(url)); }
+    catch (err) { return sendJson(res, 400, { error:err.message }); }
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/activity/export') {
+    try {
+      const result = activityQuery(url, { exportLimit:10000 });
+      const format = String(url.searchParams.get('format') || 'csv').toLowerCase();
+      const stamp = new Date().toISOString().slice(0, 10);
+      if (format === 'json') return sendJsonDownload(res, { exportedAt:isoNow(), ...result }, `GearBeacon-Activity-${stamp}.json`);
+      if (format !== 'csv') return sendJson(res, 400, { error:'Activity export format must be csv or json.' });
+      return sendTextDownload(res, activityCsv(result.events), `GearBeacon-Activity-${stamp}.csv`, 'text/csv; charset=utf-8');
+    } catch (err) { return sendJson(res, 400, { error:err.message }); }
+  }
+
+  if (req.method === 'GET' && url.pathname.startsWith('/api/activity/')) {
+    const id = decodeURIComponent(url.pathname.slice('/api/activity/'.length));
+    const row = db.prepare('SELECT data_json FROM events WHERE id=?').get(id);
+    if (!row) return sendJson(res, 404, { error:'Activity event not found.' });
+    const event = safeJsonParse(row.data_json, null);
+    return sendJson(res, 200, { event:enrichActivityEvents(event ? [event] : [])[0] || null });
   }
 
   if (req.method === 'GET' && url.pathname === '/api/logs') {
@@ -3571,8 +4171,20 @@ async function handleRegionApi(req, res, url) {
     const slug = decodeURIComponent(url.pathname.slice('/api/mock/toggle/'.length));
     const existing = mockCatalog().find((p) => p.slug === slug);
     if (!existing) return sendJson(res, 404, { error: 'mock product not found' });
-    mockOverrides[slug] = existing.inStock ? 'SoldOut' : 'Available';
-    return sendJson(res, 200, { ok: true, slug, status: mockOverrides[slug] });
+    mockOverrides[slug] = { ...(mockOverrides[slug] || {}), status:existing.inStock ? 'SoldOut' : 'Available', present:true };
+    return sendJson(res, 200, { ok: true, slug, status: mockOverrides[slug].status });
+  }
+
+  if (MOCK_MODE && req.method === 'POST' && url.pathname.startsWith('/api/mock/product/')) {
+    const slug = decodeURIComponent(url.pathname.slice('/api/mock/product/'.length));
+    const source = MOCK_PRODUCTS.find((product) => product.slug === slug);
+    if (!source) return sendJson(res, 404, { error:'mock product not found' });
+    const body = await readJsonBody(req);
+    const status = body?.status === undefined ? (mockOverrides[slug]?.status || source.status) : String(body.status);
+    if (!['Available', 'SoldOut', 'ComingSoon'].includes(status)) return sendJson(res, 400, { error:'Mock status must be Available, SoldOut, or ComingSoon.' });
+    const price = body?.price === undefined ? (mockOverrides[slug]?.price ?? source.price) : String(body.price);
+    mockOverrides[slug] = { status, price, present:body?.present !== false };
+    return sendJson(res, 200, { ok:true, slug, ...mockOverrides[slug] });
   }
 
   return sendJson(res, 404, { error: 'Not found' });

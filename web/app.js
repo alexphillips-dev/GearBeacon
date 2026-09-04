@@ -31,6 +31,7 @@ const app = {
   status: null,
   products: [],
   events: [],
+  activity: { events:[], count:0, page:1, pages:1, limit:50, loaded:false },
   dataInfo: null,
   config: null,
   operations: null,
@@ -48,7 +49,10 @@ const app = {
   currentProductDetails: null,
   watchImportPreview: null,
   watchImportLastFocus: null,
+  activityDialogLastFocus: null,
   latestEventId: null,
+  serverFailures: 0,
+  lastOperationsRefresh: 0,
 };
 
 function escapeHtml(value) {
@@ -194,7 +198,7 @@ async function enterApp() {
   $('logoutBtn').classList.toggle('hidden', !app.auth?.authenticationRequired);
   showCatalogSkeletons();
   await refresh();
-  await Promise.all([refreshDataInfo(), refreshNotificationPreferences(), refreshSessions(), refreshConfiguration()]);
+  await Promise.all([refreshDataInfo(), refreshNotificationPreferences(), refreshSessions(), refreshConfiguration(), refreshOperations()]);
   if (!app.auth?.onboardingComplete) showWizard();
   else if (app.pendingProductSlug && app.products.some((product) => product.slug === app.pendingProductSlug)) {
     const slug = app.pendingProductSlug;
@@ -251,6 +255,7 @@ async function logout() {
 }
 
 function productDetail(p) {
+  if (p.unlisted) return 'No longer listed in two complete catalog checks';
   if (p.inStock) return 'Available now';
   if (p.restockEtaAt) return `Store ETA ${new Date(p.restockEtaAt).toLocaleDateString()}`;
   if (p.comingSoon) return 'Coming soon';
@@ -317,7 +322,7 @@ function wireProductImages(root = document) {
 }
 function watchCard(p) {
   const badgeClass = p.inStock ? 'in' : p.comingSoon ? 'soon' : 'out';
-  const badgeText = p.inStock ? 'In stock' : p.comingSoon ? 'Coming soon' : 'Sold out';
+  const badgeText = p.unlisted ? 'Unlisted' : p.inStock ? 'In stock' : p.comingSoon ? 'Coming soon' : 'Sold out';
   const changedRecently = p.lastChangedAt && Date.now() - new Date(p.lastChangedAt).getTime() < 7 * 24 * 60 * 60 * 1000;
   return `<article class="card watch-card${watchPaused(p) ? ' paused' : ''}" data-product-card="${escapeHtml(p.slug)}">
     <label class="watch-select"><input type="checkbox" data-watch-select="${escapeHtml(p.slug)}" ${app.selectedWatch.has(p.slug) ? 'checked' : ''}/><span>Select ${escapeHtml(p.name)}</span></label>
@@ -336,7 +341,7 @@ function watchCard(p) {
 }
 function storeCard(p) {
   const statusClass = p.inStock ? 'in' : p.comingSoon ? 'soon' : 'out';
-  const status = p.inStock ? 'In stock' : p.comingSoon ? 'Coming soon' : 'Sold out';
+  const status = p.unlisted ? 'Unlisted' : p.inStock ? 'In stock' : p.comingSoon ? 'Coming soon' : 'Sold out';
   return `<article class="store-card" data-product-card="${escapeHtml(p.slug)}">
     <button class="store-image media-shell product-detail-trigger" type="button" data-product-detail="${escapeHtml(p.slug)}">${imageMarkup(p)}</button>
     <div class="store-card-body">
@@ -599,7 +604,7 @@ function renderProductDialog(details) {
     <div class="settings-result hidden" data-rule-result></div>
   </form>` : `<div class="product-watch-prompt"><p>Add this product to your watchlist to configure its alert rules.</p><button class="primary" data-watch="${escapeHtml(p.slug)}">Watch this product</button></div>`;
   const changes = details.history.slice(0, 12).map((item) => `<div class="product-change"><span class="connection-dot ${item.inStock ? 'enabled' : ''}"></span><div><strong>${escapeHtml(item.changeType.replaceAll('-', ' '))}</strong><small>${escapeHtml(item.status || 'Unknown')}${item.price ? ` · ${escapeHtml(item.price)}` : ''}</small></div><time>${escapeHtml(relativeTime(item.observedAt))}</time></div>`).join('');
-  $('productDialogBody').innerHTML = `<div class="product-hero"><div class="product-hero-image media-shell">${imageMarkup(p, 'product-image')}</div><div><div class="product-status-row"><span class="badge ${p.inStock ? 'in' : p.comingSoon ? 'soon' : 'out'}">${p.inStock ? 'In stock' : p.comingSoon ? 'Coming soon' : 'Sold out'}</span><strong>${escapeHtml(p.price || 'Price unavailable')}</strong></div><p>${escapeHtml(p.slug)}</p><dl class="settings-details"><div><dt>Store region</dt><dd>${escapeHtml(String(p.region || app.currentRegion || '').toUpperCase())}</dd></div><div><dt>First observed</dt><dd>${escapeHtml(relativeTime(details.firstObservedAt))}</dd></div><div><dt>Last checked</dt><dd>${escapeHtml(relativeTime(p.lastSeenAt))}</dd></div><div><dt>Last changed</dt><dd>${escapeHtml(relativeTime(details.lastChangedAt))}</dd></div><div><dt>History retention</dt><dd>${details.historyRetentionDays} days</dd></div></dl><a class="button-link" href="${escapeHtml(p.url)}" target="_blank" rel="noopener">Open UniFi Store ↗</a></div></div>
+  $('productDialogBody').innerHTML = `<div class="product-hero"><div class="product-hero-image media-shell">${imageMarkup(p, 'product-image')}</div><div><div class="product-status-row"><span class="badge ${p.inStock ? 'in' : p.comingSoon ? 'soon' : 'out'}">${p.unlisted ? 'Unlisted' : p.inStock ? 'In stock' : p.comingSoon ? 'Coming soon' : 'Sold out'}</span><strong>${escapeHtml(p.price || 'Price unavailable')}</strong></div><p>${escapeHtml(p.slug)}</p><dl class="settings-details"><div><dt>Store region</dt><dd>${escapeHtml(String(p.region || app.currentRegion || '').toUpperCase())}</dd></div><div><dt>First observed</dt><dd>${escapeHtml(relativeTime(details.firstObservedAt))}</dd></div><div><dt>Last checked</dt><dd>${escapeHtml(relativeTime(p.lastSeenAt))}</dd></div><div><dt>Last changed</dt><dd>${escapeHtml(relativeTime(details.lastChangedAt))}</dd></div><div><dt>History retention</dt><dd>${details.historyRetentionDays} days</dd></div></dl><a class="button-link" href="${escapeHtml(p.url)}" target="_blank" rel="noopener">Open UniFi Store ↗</a></div></div>
     ${ruleForm}<section class="product-history"><h3>Price history</h3>${historyChart(details.history)}<h3>Recent changes</h3><div class="product-change-list">${changes || '<div class="history-empty">No changes recorded yet.</div>'}</div></section>`;
   wireProductImages($('productDialogBody'));
 }
@@ -639,20 +644,95 @@ async function saveProductRule(form) {
 
 function renderEvents() {
   const icon = { restock:'↑', sold_out:'↓', price_change:'$', status_change:'↔', new_product:'+' };
-  $('activityList').innerHTML = app.events.map((e) => {
+  const events = app.activity.events || [];
+  $('activityList').innerHTML = events.map((e) => {
     const metadata = activityMeta(e);
     const metadataText = metadata.map((part) => `${part.text}${part.extra ? ` ${part.extra}` : ''}`).join(' · ');
     const metadataHtml = metadata.map((part) => `<span class="event-meta-part ${escapeHtml(part.className)}">${escapeHtml(part.text)}${part.extra ? ` <span class="event-delta-percent">${escapeHtml(part.extra)}</span>` : ''}</span>`).join('');
     const alert = e.serverAlert || { state:'no-channel', label:'No channel' };
     const exactTime = exactEventTime(e);
     const activityLabel = `Open ${e.name} activity details. ${metadataText}. Server alert: ${alert.label}. Detected ${exactTime}.`;
-    return `<button class="event event-button ${escapeHtml(e.type)}" type="button" data-product-detail="${escapeHtml(e.slug)}" aria-label="${escapeHtml(activityLabel)}">
+    return `<button class="event event-button ${escapeHtml(e.type)}" type="button" data-activity-event="${escapeHtml(e.id)}" aria-label="${escapeHtml(activityLabel)}">
       <span class="event-icon" aria-hidden="true">${icon[e.type] || '•'}</span>
       <span class="event-main"><strong>${escapeHtml(e.name)}</strong><span class="event-meta" title="${escapeHtml(metadataText)}">${metadataHtml}</span></span>
       <span class="event-side"><span class="event-alert ${escapeHtml(alert.state)}" title="${escapeHtml(serverAlertTitle(e))}"><span class="event-alert-dot" aria-hidden="true"></span><span class="event-alert-label">${escapeHtml(alert.label)}</span></span><time datetime="${escapeHtml(e.detectedAt)}" title="${escapeHtml(exactTime)}">${escapeHtml(relativeTime(e.detectedAt))}</time></span>
     </button>`;
   }).join('');
-  $('activityEmpty').classList.toggle('hidden', app.events.length > 0);
+  $('activityEmpty').classList.toggle('hidden', events.length > 0 || !app.activity.loaded);
+  $('activityResultCount').textContent = app.activity.loaded ? `${app.activity.count} matching event${app.activity.count === 1 ? '' : 's'}` : 'Loading activity…';
+  const retention = app.config?.config?.eventRetentionDays;
+  $('activityRetention').textContent = retention === 0 ? 'Activity retained until manually changed' : retention ? `${retention}-day activity retention` : 'Retained activity';
+  $('activityPagination').classList.toggle('hidden', !app.activity.loaded || app.activity.pages <= 1);
+  $('activityPage').textContent = `Page ${app.activity.page} of ${app.activity.pages}`;
+  $('activityPrevious').disabled = app.activity.page <= 1;
+  $('activityNext').disabled = app.activity.page >= app.activity.pages;
+}
+
+function activityQueryParameters(page = app.activity.page || 1) {
+  const params = new URLSearchParams({
+    scope:$('activityRegion').value || 'all',
+    type:$('activityType').value || 'all',
+    delivery:$('activityDelivery').value || 'all',
+    page:String(page),
+    limit:'50',
+  });
+  if ($('activitySearch').value.trim()) params.set('search', $('activitySearch').value.trim());
+  if ($('activityFrom').value) params.set('from', $('activityFrom').value);
+  if ($('activityTo').value) params.set('to', $('activityTo').value);
+  return params;
+}
+
+async function refreshActivity(page = app.activity.page || 1) {
+  $('activityResultCount').textContent = 'Loading activity…';
+  try {
+    const result = await api(`/api/activity?${activityQueryParameters(page)}`);
+    app.activity = { ...result, loaded:true };
+    renderEvents();
+  } catch (err) {
+    $('activityResultCount').textContent = `Activity unavailable: ${err.message}`;
+    app.activity = { ...app.activity, events:[], loaded:true };
+    renderEvents();
+  }
+}
+
+async function exportActivity(format) {
+  try {
+    const params = activityQueryParameters(1);
+    params.delete('page'); params.delete('limit'); params.set('format', format);
+    const res = await fetch(`/api/activity/export?${params}`, { credentials:'same-origin', cache:'no-store' });
+    await saveDownloadResponse(res, `GearBeacon-Activity-${new Date().toISOString().slice(0,10)}.${format}`);
+    toast(`Activity exported as ${format.toUpperCase()}`);
+  } catch (err) { toast(err.message); }
+}
+
+function renderActivityDialog(event) {
+  const metadata = activityMeta(event).map((item) => `${item.text}${item.extra ? ` ${item.extra}` : ''}`).join(' · ');
+  const confirmation = event.confirmation || {};
+  const alert = event.serverAlert || {};
+  $('activityDialogTitle').textContent = event.name || 'Activity details';
+  $('activityDialogBody').innerHTML = `<section class="activity-detail-hero"><span class="settings-kicker">${escapeHtml(String(event.region || '').toUpperCase())} · ${escapeHtml(humanStatus(event.type))}</span><h3>${escapeHtml(event.name || event.slug)}</h3><p>${escapeHtml(metadata)}</p></section><div class="activity-evidence"><article class="settings-card"><span class="settings-kicker">Monitor evidence</span><h3>Confirmation</h3><dl class="settings-details"><div><dt>Policy</dt><dd>${escapeHtml(humanStatus(confirmation.policy || 'legacy event'))}</dd></div><div><dt>Observations</dt><dd>${escapeHtml(confirmation.observations || 1)} of ${escapeHtml(confirmation.required || 1)}</dd></div><div><dt>First observed</dt><dd>${escapeHtml(confirmation.firstObservedAt ? new Date(confirmation.firstObservedAt).toLocaleString() : exactEventTime(event))}</dd></div><div><dt>Confirmed</dt><dd>${escapeHtml(confirmation.confirmedAt ? new Date(confirmation.confirmedAt).toLocaleString() : exactEventTime(event))}</dd></div></dl></article><article class="settings-card"><span class="settings-kicker">Server notification</span><h3>${escapeHtml(alert.label || 'No delivery')}</h3><p>${escapeHtml(serverAlertTitle(event))}</p><dl class="settings-details"><div><dt>Outcome</dt><dd>${escapeHtml(humanStatus(alert.state || 'not recorded'))}</dd></div><div><dt>Channels</dt><dd>${escapeHtml((alert.channels || []).join(', ') || 'None')}</dd></div><div><dt>Detected</dt><dd>${escapeHtml(exactEventTime(event))}</dd></div></dl></article></div><div class="settings-actions wrap"><button class="primary" type="button" data-activity-product="${escapeHtml(event.slug)}" data-activity-region="${escapeHtml(event.region || app.currentRegion || '')}">Open product details</button>${event.url ? `<a class="button-link" href="${escapeHtml(event.url)}" target="_blank" rel="noopener">Open UniFi Store ↗</a>` : ''}</div>`;
+}
+
+async function openActivityDialog(id) {
+  app.activityDialogLastFocus = document.activeElement;
+  $('activityDialog').classList.remove('hidden'); document.body.classList.add('dialog-open');
+  $('activityDialogTitle').textContent = 'Loading activity…'; $('activityDialogBody').innerHTML = '<div class="dialog-loading">Loading confirmation and delivery evidence…</div>'; $('closeActivityDialog').focus();
+  try { renderActivityDialog((await api(`/api/activity/${encodeURIComponent(id)}`)).event); }
+  catch (err) { $('activityDialogBody').innerHTML = `<div class="settings-result error">${escapeHtml(err.message)}</div>`; }
+}
+
+function closeActivityDialog() {
+  $('activityDialog').classList.add('hidden');
+  if ($('productDialog').classList.contains('hidden') && $('watchImportDialog').classList.contains('hidden')) document.body.classList.remove('dialog-open');
+  app.activityDialogLastFocus?.focus?.();
+}
+
+async function openActivityProduct(slug, region) {
+  closeActivityDialog();
+  if (region && region !== app.currentRegion) {
+    app.currentRegion = region; localStorage.setItem('gearbeacon.region', region); await refresh();
+  }
+  await openProductDialog(slug);
 }
 
 function renderStatus() {
@@ -666,6 +746,10 @@ function renderStatus() {
   const picker = $('regionPicker');
   picker.innerHTML = s.regions.map((region) => `<option value="${escapeHtml(region.key)}" ${region.key === app.currentRegion ? 'selected' : ''}>${escapeHtml(region.label)}</option>`).join('');
   $('regionPickerWrap').classList.toggle('hidden', s.regions.length < 2);
+  const activityRegion = $('activityRegion');
+  const activitySelection = activityRegion.value || 'all';
+  activityRegion.innerHTML = `<option value="all">All enabled stores</option>${s.regions.map((region) => `<option value="${escapeHtml(region.key)}">${escapeHtml(region.label)}</option>`).join('')}`;
+  activityRegion.value = [...activityRegion.options].some((option) => option.value === activitySelection) ? activitySelection : 'all';
   const dot = $('statusDot');
   dot.className = 'dot';
   if (s.lastError) {
@@ -678,7 +762,7 @@ function renderStatus() {
   } else if (s.lastSuccessAt) {
     dot.classList.add('good');
     $('statusTitle').textContent = s.mockMode ? 'Monitor online · MOCK MODE' : 'Monitor online';
-    $('statusSub').textContent = `Last successful check ${relativeTime(s.lastSuccessAt)}`;
+    $('statusSub').textContent = `Last successful check ${relativeTime(s.lastSuccessAt)}${s.pendingChanges ? ` · ${s.pendingChanges} change${s.pendingChanges === 1 ? '' : 's'} awaiting confirmation` : ''}`;
   } else {
     $('statusTitle').textContent = 'Establishing baseline…';
     $('statusSub').textContent = 'No alert is sent on the first observation';
@@ -690,6 +774,24 @@ function renderStatus() {
   if (s.notifications.gotifyConfigured) channels.push('Gotify');
   if (s.notifications.smtpConfigured) channels.push('Email');
   $('notifyStatus').textContent = channels.length ? `Alert channels: ${channels.join(' · ')}` : 'No server-side alert channel configured';
+}
+
+function renderAttentionBanner() {
+  const banner = $('attentionBanner');
+  if (app.serverFailures) {
+    banner.className = 'attention-banner action';
+    $('attentionTitle').textContent = app.serverFailures > 1 ? 'GearBeacon is still reconnecting' : 'GearBeacon connection interrupted';
+    $('attentionDetail').textContent = 'The dashboard is preserving its last view and will retry automatically.';
+    banner.classList.remove('hidden');
+    return;
+  }
+  const summary = app.operations?.summary;
+  if (!summary || summary.state === 'healthy') { banner.className = 'attention-banner hidden'; return; }
+  const first = summary.issues?.[0];
+  banner.className = `attention-banner ${summary.state === 'action' ? 'action' : ''}`;
+  $('attentionTitle').textContent = summary.label || 'GearBeacon needs attention';
+  $('attentionDetail').textContent = first?.message || 'Open Operations for details.';
+  banner.classList.remove('hidden');
 }
 
 function renderSettings() {
@@ -704,6 +806,8 @@ function renderSettings() {
   const count = info.backup?.count || 0;
   $('backupBadge').textContent = `${count} backup${count === 1 ? '' : 's'}`;
   $('latestBackup').textContent = info.backup?.latest ? `${relativeTime(info.backup.latest.createdAt)} · ${info.backup.latest.name}` : 'None yet';
+  $('testPrimaryBackup').disabled = !info.backup?.latest;
+  $('testSecondaryBackup').disabled = !info.backup?.secondary?.latest;
   if ($('historyBadge')) $('historyBadge').textContent = `${info.history?.observations || 0} change record${info.history?.observations === 1 ? '' : 's'}`;
   renderSecurity();
   renderPrivacy();
@@ -855,6 +959,14 @@ function renderConfiguration() {
   $('configBackupHours').value = c.backupIntervalHours;
   $('configBackupRetention').value = c.backupRetention;
   $('configHistoryRetention').value = c.historyRetentionDays;
+  $('configEventRetention').value = c.eventRetentionDays;
+  $('configSecondaryBackupDir').value = c.secondaryBackupDir || '';
+  $('configSecondaryEncrypted').checked = Boolean(c.secondaryEncryptedExports);
+  const secondaryPassphraseSaved = Boolean(app.config.secretsConfigured?.secondaryBackupPassphrase);
+  $('secondaryPassphraseLabel').textContent = `Secondary export passphrase${secondaryPassphraseSaved ? ' · saved' : ''}`;
+  $('clearSecondaryPassphraseWrap').classList.toggle('hidden', !secondaryPassphraseSaved);
+  $('clearSecondaryPassphrase').checked = false;
+  $('configSecondaryPassphrase').value = '';
   $('configMaxAttempts').value = c.notificationMaxAttempts;
   $('configGroupSeconds').value = c.notificationGroupSeconds;
   $('configTimeZone').value = c.notificationTimeZone;
@@ -912,7 +1024,7 @@ function baseConfigFromSettings() {
 }
 
 function dataConfigFromSettings() {
-  return { ...app.config.config, backupIntervalHours:Number($('configBackupHours').value), backupRetention:Number($('configBackupRetention').value), historyRetentionDays:Number($('configHistoryRetention').value) };
+  return { ...app.config.config, backupIntervalHours:Number($('configBackupHours').value), backupRetention:Number($('configBackupRetention').value), historyRetentionDays:Number($('configHistoryRetention').value), eventRetentionDays:Number($('configEventRetention').value), secondaryBackupDir:$('configSecondaryBackupDir').value.trim(), secondaryEncryptedExports:$('configSecondaryEncrypted').checked };
 }
 
 function deliveryConfigFromSettings() {
@@ -966,7 +1078,13 @@ async function saveDataConfiguration(event) {
   const resultEl = $('dataScheduleResult');
   const button = event.submitter;
   if (button) { button.disabled = true; button.textContent = 'Saving…'; }
-  try { await saveConfigurationSection(dataConfigFromSettings(), resultEl, 'Data settings saved.'); await refreshDataInfo(); toast('Data settings saved'); }
+  try {
+    const secrets = { secondaryBackupPassphrase:$('clearSecondaryPassphrase').checked ? '' : $('configSecondaryPassphrase').value || null };
+    const result = await api('/api/config', { method:'PUT', body:JSON.stringify({ config:dataConfigFromSettings(), secrets }) });
+    app.config = { ...app.config, config:result.config, secretsConfigured:result.secretsConfigured, restartPending:result.restartRequired };
+    renderConfiguration(); resultEl.classList.remove('hidden'); resultEl.innerHTML = '<strong>Data settings saved.</strong> Changes are active now.';
+    await refreshDataInfo(); await refreshOperations(); toast('Data settings saved');
+  }
   catch (err) { resultEl.classList.remove('hidden'); resultEl.textContent = err.message; }
   finally { if (button) { button.disabled = false; button.textContent = 'Save data settings'; } }
 }
@@ -1104,6 +1222,7 @@ async function refreshLogs() {
 async function refreshOperations() {
   try {
     const ops = await api('/api/operations'); app.operations = ops;
+    app.lastOperationsRefresh = Date.now();
     $('runtimeBadge').textContent = `${ops.runtime.platform} · ${ops.runtime.standalone ? 'standalone' : ops.runtime.node}`;
     $('operationsSummary').className = `operations-summary ${escapeHtml(ops.summary.state)}`;
     $('operationsSummary').innerHTML = `<div><span class="summary-state-dot"></span><div><strong>${escapeHtml(ops.summary.label)}</strong><small>${ops.summary.issues.length ? `${ops.summary.issues.length} item${ops.summary.issues.length === 1 ? '' : 's'} need review` : 'Monitoring, delivery, storage, and security checks are healthy'}</small></div></div>${ops.summary.issues.slice(0,3).map((item) => `<button ${item.settingsTab ? `data-settings-link="${escapeHtml(item.settingsTab)}"` : ''}>${escapeHtml(item.message)}</button>`).join('')}`;
@@ -1112,8 +1231,24 @@ async function refreshOperations() {
     const failures = (queue.recentFailures || []).map((item) => `<div class="failure-row"><strong class="bad-text">${escapeHtml(item.channel)} · ${escapeHtml(item.region.toUpperCase())}</strong><small>${escapeHtml(item.last_error || 'Unknown delivery error')} · ${item.attempts}/${item.max_attempts} attempts</small></div>`).join('');
     const backupHistory = (ops.backups.history || []).slice(0, 6).map((item) => `<div class="failure-row"><strong class="${item.status === 'failed' ? 'bad-text' : ''}">${escapeHtml(item.reason)} · ${escapeHtml(item.status)}</strong><small>${escapeHtml(item.filename || item.detail || 'No file')} · ${escapeHtml(relativeTime(item.created_at))}</small></div>`).join('');
     $('operationsGrid').innerHTML = `<article class="settings-card"><span class="settings-kicker">Regions</span><h3>Store health</h3>${ops.regions.map((r) => `<div class="ops-row"><span class="connection-dot ${r.lastSuccessAt && !r.lastError ? 'enabled' : ''}"></span><div><strong>${escapeHtml(r.label)}</strong><small>${r.lastError ? escapeHtml(r.lastError) : `Last check ${escapeHtml(relativeTime(r.lastSuccessAt))} · next ${escapeHtml(relativeTime(r.nextCheckAt))}`}</small></div><b>${r.productCount || 0} products</b></div>`).join('')}</article><article class="settings-card"><span class="settings-kicker">Delivery</span><h3>Notification queue</h3><dl class="settings-details"><div><dt>Pending</dt><dd>${queue.pending}</dd></div><div><dt>Delivered</dt><dd>${queue.sent}</dd></div><div><dt>Failed</dt><dd>${queue.failed}</dd></div><div><dt>Next scheduled</dt><dd>${queue.nextDeliveryAt ? escapeHtml(relativeTime(queue.nextDeliveryAt)) : 'None'}</dd></div></dl>${failures ? `<div class="failure-list">${failures}</div>` : ''}<div class="settings-actions wrap">${queue.failed ? '<button data-retry-failed>Retry failed</button>' : ''}<button data-settings-link="notifications">Delivery settings</button></div></article><article class="settings-card"><span class="settings-kicker">Data safety</span><h3>Backups</h3><dl class="settings-details"><div><dt>Validated</dt><dd>${ops.backups.count}</dd></div><div><dt>Integrity</dt><dd>${ops.backups.integrity.ok ? 'OK' : 'Failed'}</dd></div><div><dt>Latest</dt><dd>${ops.backups.latest ? escapeHtml(relativeTime(ops.backups.latest.createdAt)) : 'None'}</dd></div></dl>${backupHistory ? `<div class="failure-list">${backupHistory}</div>` : ''}<div class="settings-actions"><button data-settings-link="data">Data settings</button></div></article><article class="settings-card"><span class="settings-kicker">Storage & build</span><h3>Installation</h3><dl class="settings-details"><div><dt>Database</dt><dd>${bytes(ops.storage.databaseSize)}</dd></div><div><dt>Free space</dt><dd>${bytes(ops.storage.freeSpace)}</dd></div><div><dt>Version</dt><dd>V${escapeHtml(ops.runtime.version)}</dd></div><div><dt>Commit / image</dt><dd>${escapeHtml(ops.runtime.commit || ops.runtime.image || 'Source checkout')}</dd></div></dl></article>`;
+    const confidence = ops.monitoringConfidence || { pending:[], count:0, recentChecks:[] };
+    const pendingRows = confidence.pending.slice(0, 6).map((item) => `<div class="failure-row"><strong>${escapeHtml(item.slug)} · ${escapeHtml(humanStatus(item.kind))}</strong><small>${item.observations} of 2 valid observations · ${escapeHtml(String(item.region).toUpperCase())}</small></div>`).join('');
+    const secondary = ops.backups.secondary || {};
+    $('operationsGrid').insertAdjacentHTML('beforeend', `<article class="settings-card"><span class="settings-kicker">Monitoring confidence</span><h3>${confidence.count ? `${confidence.count} pending change${confidence.count === 1 ? '' : 's'}` : 'No pending changes'}</h3><p>${confidence.count ? 'GearBeacon is preserving last-known-good values until another complete observation confirms these changes.' : 'Every recorded transition is confirmed under the current monitoring policy.'}</p>${pendingRows ? `<div class="failure-list">${pendingRows}</div>` : ''}</article><article class="settings-card"><span class="settings-kicker">Recovery copy</span><h3>${secondary.configured ? `${secondary.count} secondary cop${secondary.count === 1 ? 'y' : 'ies'}` : 'Not configured'}</h3><dl class="settings-details"><div><dt>Format</dt><dd>${secondary.configured ? secondary.encrypted ? 'Encrypted export' : 'Validated SQLite' : '—'}</dd></div><div><dt>Latest</dt><dd>${secondary.latest ? escapeHtml(relativeTime(secondary.latest.createdAt)) : 'None'}</dd></div><div><dt>Separate device</dt><dd>${secondary.sameFilesystem === null ? 'Unknown' : secondary.sameFilesystem ? 'No' : 'Yes'}</dd></div></dl><div class="settings-actions"><button data-settings-link="data">Recovery settings</button></div></article>`);
+    renderAttentionBanner();
     await refreshLogs();
   } catch (err) { $('operationsGrid').textContent = `Operations unavailable: ${err.message}`; }
+}
+
+async function runInstallationDiagnostics() {
+  const button = $('runDiagnostics'); const panel = $('diagnosticsPanel');
+  button.disabled = true; button.textContent = 'Running…'; panel.classList.remove('hidden'); panel.innerHTML = '<div class="dialog-loading">Checking storage, backups, encryption, delivery, and store connectivity…</div>';
+  try {
+    const result = await api('/api/operations/diagnostics', { method:'POST', body:JSON.stringify({ network:true }) });
+    panel.innerHTML = `<div class="diagnostics-panel-head"><h3>${result.summary.failed ? 'Diagnostics found required actions' : result.summary.warned ? 'Diagnostics completed with recommendations' : 'All diagnostics passed'}</h3><span class="settings-badge">${result.summary.passed} passed · ${result.summary.warned} warnings · ${result.summary.failed} failed</span></div><div class="diagnostic-list">${result.checks.map((check) => `<div class="diagnostic-item ${escapeHtml(check.status)}"><span class="connection-dot ${check.status === 'pass' ? 'enabled' : ''}"></span><div><strong>${escapeHtml(check.label)}</strong><small>${escapeHtml(check.detail)}</small></div></div>`).join('')}</div>`;
+    await refreshOperations();
+  } catch (err) { panel.innerHTML = `<div class="settings-result error">Diagnostics could not complete: ${escapeHtml(err.message)}</div>`; }
+  finally { button.disabled = false; button.textContent = 'Run diagnostics'; }
 }
 
 async function prepareUpdate() {
@@ -1254,6 +1389,19 @@ async function importDataFile(file) {
   finally { button.disabled = false; $('importFile').value = ''; }
 }
 
+async function testLatestBackup(location) {
+  const button = location === 'secondary' ? $('testSecondaryBackup') : $('testPrimaryBackup');
+  const resultEl = $('backupTestResult');
+  button.disabled = true; resultEl.classList.remove('hidden'); resultEl.textContent = `Testing the latest ${location} backup without changing active data…`;
+  try {
+    const result = await api('/api/data/test-restore', { method:'POST', body:JSON.stringify({ location }) });
+    resultEl.innerHTML = `<strong>Restore test passed.</strong> ${escapeHtml(result.filename)} is intact and compatible${result.schemaVersion ? ` with schema v${escapeHtml(result.schemaVersion)}` : ''}. Active data was not changed.`;
+    toast(`${location === 'secondary' ? 'Secondary' : 'Primary'} restore test passed`);
+    await refreshOperations();
+  } catch (err) { resultEl.textContent = `Restore test failed: ${err.message}`; }
+  finally { button.disabled = false; }
+}
+
 async function checkUpdates() {
   const button = $('updateBtn');
   const resultEl = $('updateResult');
@@ -1349,11 +1497,15 @@ function maybeBrowserNotify(events) {
 async function refresh() {
   try {
     const [status, products, events] = await Promise.all([api('/api/status'), api('/api/products'), api('/api/events?limit=100')]);
+    app.serverFailures = 0;
     app.status = status;
     app.products = products.products || [];
     maybeBrowserNotify(events.events || []);
     app.events = events.events || [];
     renderStatus(); renderProducts(); renderEvents(); renderSettings(); renderEmailPreviewProducts();
+    renderAttentionBanner();
+    if (app.activeTab === 'activity') await refreshActivity(app.activity.page || 1);
+    if (Date.now() - app.lastOperationsRefresh > 60000 && app.activeTab !== 'operations') refreshOperations();
   } catch (err) {
     if (/Region must be one of/i.test(err.message) && app.currentRegion) {
       app.currentRegion = null;
@@ -1361,8 +1513,10 @@ async function refresh() {
       return refresh();
     }
     $('statusDot').className = 'dot bad';
-    $('statusTitle').textContent = 'GearBeacon server unavailable';
-    $('statusSub').textContent = err.message;
+    app.serverFailures += 1;
+    $('statusTitle').textContent = 'Reconnecting to GearBeacon…';
+    $('statusSub').textContent = `${err.message} · automatic retry ${app.serverFailures}`;
+    renderAttentionBanner();
   }
 }
 
@@ -1409,6 +1563,10 @@ document.addEventListener('click', (event) => {
   }
   const watch = event.target.closest('[data-watch]');
   if (watch) { event.preventDefault(); toggleWatch(watch.dataset.watch); return; }
+  const activityEvent = event.target.closest('[data-activity-event]');
+  if (activityEvent) { event.preventDefault(); openActivityDialog(activityEvent.dataset.activityEvent); return; }
+  const activityProduct = event.target.closest('[data-activity-product]');
+  if (activityProduct) { event.preventDefault(); openActivityProduct(activityProduct.dataset.activityProduct, activityProduct.dataset.activityRegion); return; }
   const category = event.target.closest('[data-category]');
   if (category) { app.browseCategory = category.dataset.category; app.browseVisibleCount = 48; renderProducts(true); return; }
   const details = event.target.closest('[data-product-detail]');
@@ -1440,6 +1598,7 @@ function activateTab(tab) {
   app.activeTab = tab;
   if (tab === 'settings') { refreshDataInfo(); refreshNotificationPreferences(); refreshSessions(); refreshConfiguration(); }
   if (tab === 'operations') refreshOperations();
+  if (tab === 'activity') refreshActivity(app.activity.page || 1);
   if (['watchlist','browse','activity','operations','settings'].includes(tab)) history.replaceState(null, '', `#${tab}`);
   document.querySelectorAll('.tab').forEach((x) => x.classList.toggle('active', x.dataset.tab === tab));
   document.querySelectorAll('.page').forEach((x) => x.classList.toggle('active', x.id === tab));
@@ -1500,9 +1659,24 @@ $('watchImportInput').addEventListener('input', () => {
 });
 $('closeProductDialog').addEventListener('click', closeProductDialog);
 $('productDialogBackdrop').addEventListener('click', closeProductDialog);
+$('closeActivityDialog').addEventListener('click', closeActivityDialog);
+$('activityDialogBackdrop').addEventListener('click', closeActivityDialog);
 document.addEventListener('keydown', (event) => {
+  if (event.key === 'Tab') {
+    const dialog = [$('watchImportDialog'), $('activityDialog'), $('productDialog')].find((item) => item && !item.classList.contains('hidden'));
+    if (dialog) {
+      const focusable = [...dialog.querySelectorAll('button:not(:disabled),a[href],input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex]:not([tabindex="-1"])')].filter((item) => item.offsetParent !== null);
+      if (focusable.length) {
+        const first = focusable[0]; const last = focusable.at(-1);
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      }
+    }
+    return;
+  }
   if (event.key !== 'Escape') return;
   if (!$('watchImportDialog').classList.contains('hidden')) closeWatchImport();
+  else if (!$('activityDialog').classList.contains('hidden')) closeActivityDialog();
   else if (!$('productDialog').classList.contains('hidden')) closeProductDialog();
 });
 $('checkBtn').addEventListener('click', async () => {
@@ -1522,6 +1696,8 @@ $('backupBtn').addEventListener('click', async () => {
   } catch (err) { toast(err.message); }
   finally { button.disabled = false; }
 });
+$('testPrimaryBackup').addEventListener('click', () => testLatestBackup('primary'));
+$('testSecondaryBackup').addEventListener('click', () => testLatestBackup('secondary'));
 $('exportBtn').addEventListener('click', () => exportData(true));
 $('exportPlainBtn').addEventListener('click', () => exportData(false));
 $('importBtn').addEventListener('click', () => $('importFile').click());
@@ -1541,6 +1717,14 @@ $('emailPreviewViewport').addEventListener('change', () => $('emailPreviewCanvas
 $('channelConfigForm').addEventListener('submit', (event) => { event.preventDefault(); saveChannelConfiguration(); });
 $('saveChannels').addEventListener('click', saveChannelConfiguration);
 $('refreshOperations').addEventListener('click', refreshOperations);
+$('runDiagnostics').addEventListener('click', runInstallationDiagnostics);
+$('attentionAction').addEventListener('click', () => activateTab('operations'));
+$('activityFilters').addEventListener('submit', (event) => { event.preventDefault(); refreshActivity(1); });
+$('clearActivityFilters').addEventListener('click', () => { $('activityFilters').reset(); $('activityRegion').value = 'all'; refreshActivity(1); });
+$('activityPrevious').addEventListener('click', () => refreshActivity(Math.max(1, app.activity.page - 1)));
+$('activityNext').addEventListener('click', () => refreshActivity(Math.min(app.activity.pages, app.activity.page + 1)));
+$('exportActivityCsv').addEventListener('click', () => exportActivity('csv'));
+$('exportActivityJson').addEventListener('click', () => exportActivity('json'));
 $('applyLogFilter').addEventListener('click', refreshLogs);
 $('downloadLogs').addEventListener('click', async () => {
   try {
@@ -1549,6 +1733,13 @@ $('downloadLogs').addEventListener('click', async () => {
     if ($('logSearch').value.trim()) params.set('search', $('logSearch').value.trim());
     const res = await fetch(`/api/logs?${params}`, { credentials:'same-origin' });
     await saveDownloadResponse(res, `GearBeacon-Logs-${new Date().toISOString().slice(0,10)}.json`);
+  } catch (err) { toast(err.message); }
+});
+$('downloadSupportBundle').addEventListener('click', async () => {
+  try {
+    const res = await fetch('/api/operations/support-bundle', { credentials:'same-origin', cache:'no-store' });
+    await saveDownloadResponse(res, `GearBeacon-Support-${new Date().toISOString().slice(0,10)}.json`);
+    toast('Redacted support bundle downloaded');
   } catch (err) { toast(err.message); }
 });
 $('wizardNext').addEventListener('click', wizardNext);

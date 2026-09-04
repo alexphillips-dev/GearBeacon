@@ -10,9 +10,12 @@ if (major < 25 || (major === 25 && minor < 5)) {
 
 const root = resolve(import.meta.dirname, '..');
 const pkg = JSON.parse(readFileSync(join(root, 'backend', 'package.json'), 'utf8'));
+const packageVersion = String(process.env.GEARBEACON_PACKAGE_VERSION || pkg.version).replace(/^v/, '');
+const versionPattern = new RegExp(`^${pkg.version.replaceAll('.', '\\.')}([+-][0-9A-Za-z][0-9A-Za-z.-]*)?$`);
+if (!versionPattern.test(packageVersion)) throw new Error(`Standalone package version ${packageVersion} must match application version ${pkg.version} or add a prerelease suffix.`);
 const platform = process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : 'linux';
 const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
-const packageName = `GearBeacon-v${pkg.version}-${platform}-${arch}`;
+const packageName = `GearBeacon-v${packageVersion}-${platform}-${arch}`;
 const outputDir = join(root, 'dist', 'standalone', packageName);
 const executableName = process.platform === 'win32' ? 'GearBeacon.exe' : 'gearbeacon';
 const executable = join(outputDir, executableName);
@@ -62,7 +65,7 @@ for (const file of platformFiles) {
 }
 if (process.platform !== 'win32') chmodSync(executable, 0o755);
 writeFileSync(join(outputDir, 'build-info.json'), JSON.stringify({
-  name: 'GearBeacon', version: pkg.version, platform, arch,
+  name: 'GearBeacon', version: pkg.version, packageVersion, platform, arch,
   commit: process.env.GEARBEACON_BUILD_COMMIT || process.env.GITHUB_SHA || null,
   builtAt: new Date().toISOString(), unsigned: true,
 }, null, 2));
