@@ -42,6 +42,7 @@ jobs:
       - name: Build standalone application
         env:
           GEARBEACON_BUILD_COMMIT: ${{ github.sha }}
+          GEARBEACON_PACKAGE_VERSION: ${{ github.ref_name }}
         run: node scripts/build-standalone.mjs
       - name: Smoke test package
         shell: bash
@@ -89,8 +90,9 @@ jobs:
         shell: bash
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
+          BASE_VERSION="${TAG_VERSION%%[-+]*}"
           APP_VERSION=$(node -p "require('./backend/package.json').version")
-          test "$TAG_VERSION" = "$APP_VERSION"
+          test "$BASE_VERSION" = "$APP_VERSION"
           node scripts/check-versions.mjs
       - run: npx --yes -p typescript@5.8.3 tsc -p backend/tsconfig.json
       - run: node --no-warnings scripts/self-test.mjs
@@ -111,7 +113,11 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" release-assets/* --title "GearBeacon V${GITHUB_REF_NAME#v}" --generate-notes
+        shell: bash
+        run: |
+          PRERELEASE=()
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then PRERELEASE=(--prerelease); fi
+          gh release create "$GITHUB_REF_NAME" release-assets/* --title "GearBeacon V${GITHUB_REF_NAME#v}" --generate-notes "${PRERELEASE[@]}"
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
@@ -126,8 +132,8 @@ jobs:
           images: ghcr.io/${{ github.repository_owner }}/gearbeacon
           tags: |
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest
+            type=semver,pattern={{major}}.{{minor}},enable=${{ !contains(github.ref_name, '-') }}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
       - name: Publish amd64 and arm64 container
         uses: docker/build-push-action@v6
         with:

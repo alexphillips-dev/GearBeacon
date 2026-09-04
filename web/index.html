@@ -84,6 +84,12 @@
       </div>
     </header>
 
+    <section id="attentionBanner" class="attention-banner hidden" role="status" aria-live="polite">
+      <span id="attentionIcon" class="summary-state-dot" aria-hidden="true"></span>
+      <div><strong id="attentionTitle">GearBeacon needs attention</strong><small id="attentionDetail"></small></div>
+      <button id="attentionAction" type="button">Open Operations</button>
+    </section>
+
     <section id="statusPanel" class="status-card">
       <div class="status-left">
         <span id="statusDot" class="dot"></span>
@@ -129,8 +135,9 @@
     </section>
 
     <section id="operations" class="page">
-      <div class="section-heading"><div><h2>Operations</h2><p>Region health, delivery reliability, backups, storage, security, and local logs.</p></div><div class="settings-actions"><button id="refreshOperations">Refresh</button><button id="downloadLogs">Download logs</button></div></div>
+      <div class="section-heading"><div><h2>Operations</h2><p>Region health, delivery reliability, backups, storage, security, and local logs.</p></div><div class="settings-actions"><button id="runDiagnostics" class="primary">Run diagnostics</button><button id="refreshOperations">Refresh</button><button id="downloadSupportBundle">Support bundle</button><button id="downloadLogs">Download logs</button></div></div>
       <div id="operationsSummary" class="operations-summary"><strong>Checking installation health…</strong></div>
+      <section id="diagnosticsPanel" class="diagnostics-panel hidden" aria-live="polite"></section>
       <div id="securityWarnings" class="warning-list"></div>
       <div id="operationsGrid" class="ops-grid"></div>
       <article class="settings-card ops-log-card">
@@ -164,10 +171,23 @@
 
     <section id="activity" class="page">
       <div class="section-heading">
-        <div><h2>Stock activity</h2><p>Exact transitions detected by this GearBeacon monitor.</p></div>
+        <div><h2>Stock activity</h2><p>Search, explain, and export confirmed transitions from this GearBeacon monitor.</p></div>
+        <div class="settings-actions"><button id="exportActivityCsv">Export CSV</button><button id="exportActivityJson">Export JSON</button></div>
       </div>
+      <form id="activityFilters" class="activity-filters" aria-label="Activity filters">
+        <label class="field"><span>Product or SKU</span><input id="activitySearch" type="search" placeholder="Search activity" autocomplete="off" /></label>
+        <label class="field"><span>Store region</span><select id="activityRegion"><option value="all">All enabled stores</option></select></label>
+        <label class="field"><span>Change type</span><select id="activityType"><option value="all">All changes</option><option value="restock">Restocks</option><option value="sold_out">Sold out</option><option value="price_change">Price changes</option><option value="status_change">Status changes</option><option value="new_product">New products</option></select></label>
+        <label class="field"><span>Server alert</span><select id="activityDelivery"><option value="all">All outcomes</option><option value="sent">Sent</option><option value="pending">Pending or retrying</option><option value="failed">Failed</option><option value="not-sent">Not sent</option></select></label>
+        <label class="field"><span>From</span><input id="activityFrom" type="date" /></label>
+        <label class="field"><span>Through</span><input id="activityTo" type="date" /></label>
+        <button class="primary" type="submit">Apply filters</button>
+        <button id="clearActivityFilters" type="button">Clear</button>
+      </form>
+      <div class="activity-results-bar"><strong id="activityResultCount">Loading activity…</strong><span id="activityRetention">Retained activity</span></div>
       <div id="activityList" class="activity-list"></div>
       <div id="activityEmpty" class="empty hidden"><h3>No stock changes detected yet</h3><p>The first check establishes a baseline. Changes appear here after that.</p></div>
+      <div id="activityPagination" class="activity-pagination hidden"><button id="activityPrevious" type="button">Previous</button><span id="activityPage">Page 1</span><button id="activityNext" type="button">Next</button></div>
     </section>
 
 
@@ -188,7 +208,7 @@
         <div class="settings-grid">
         <article class="settings-card">
           <div class="settings-card-head">
-            <div><span class="settings-kicker">Application</span><h3>GearBeacon <span id="settingsVersion">V1.7.0</span></h3></div>
+            <div><span class="settings-kicker">Application</span><h3>GearBeacon <span id="settingsVersion">V1.8.0</span></h3></div>
             <span id="schemaBadge" class="settings-badge">SQLite</span>
           </div>
           <p>Your watched products live in a persistent SQLite database outside the GearBeacon application folder.</p>
@@ -292,7 +312,7 @@
         <article class="settings-card wide-card">
           <div class="settings-card-head"><div><span class="settings-kicker">Retention</span><h3>Backups & product history</h3></div><span id="historyBadge" class="settings-badge">Change-only history</span></div>
           <p>GearBeacon records only meaningful availability or price changes and automatically removes history beyond the selected retention period.</p>
-          <form id="dataScheduleForm" class="config-form"><div class="form-row"><label class="field"><span>Backup interval (hours)</span><input id="configBackupHours" type="number" min="0" max="720" /></label><label class="field"><span>Backups retained</span><input id="configBackupRetention" type="number" min="1" max="100" /></label><label class="field"><span>History retention (days)</span><input id="configHistoryRetention" type="number" min="30" max="3650" /></label></div><button class="primary" type="submit">Save data settings</button></form>
+          <form id="dataScheduleForm" class="config-form"><div class="form-row"><label class="field"><span>Backup interval (hours)</span><input id="configBackupHours" type="number" min="0" max="720" /></label><label class="field"><span>Backups retained</span><input id="configBackupRetention" type="number" min="1" max="100" /></label><label class="field"><span>Product history retention (days)</span><input id="configHistoryRetention" type="number" min="30" max="3650" /></label><label class="field"><span>Activity retention (0 = unlimited)</span><input id="configEventRetention" type="number" min="0" max="3650" /></label></div><label class="field"><span>Secondary backup directory or mounted share</span><input id="configSecondaryBackupDir" placeholder="D:\GearBeacon Recovery or /recovery" /></label><div class="inline-checks"><label><input id="configSecondaryEncrypted" type="checkbox" /> Store scheduled secondary copies as passphrase-encrypted exports</label></div><label class="field"><span id="secondaryPassphraseLabel">Secondary export passphrase</span><input id="configSecondaryPassphrase" type="password" minlength="12" autocomplete="new-password" placeholder="Leave blank to keep the saved passphrase" /></label><label id="clearSecondaryPassphraseWrap" class="clear-secret hidden"><input id="clearSecondaryPassphrase" type="checkbox" /> Clear saved secondary passphrase</label><button class="primary" type="submit">Save data settings</button></form>
           <div id="dataScheduleResult" class="settings-result hidden"></div>
         </article>
         <article class="settings-card wide-card">
@@ -307,11 +327,14 @@
           </dl>
           <div class="settings-actions wrap">
             <button id="backupBtn">Create backup now</button>
+            <button id="testPrimaryBackup">Test latest primary</button>
+            <button id="testSecondaryBackup">Test latest secondary</button>
             <button id="exportBtn">Export encrypted data</button>
             <button id="exportPlainBtn">Export plain JSON</button>
             <button id="importBtn">Import GearBeacon data</button>
             <input id="importFile" type="file" accept=".json,.gearbeacon.json,application/json" hidden />
           </div>
+          <div id="backupTestResult" class="settings-result hidden" aria-live="polite"></div>
           <div class="settings-note">Importing replaces this monitor's current watchlist/data after first creating a safety backup.</div>
         </article>
         </div>
@@ -357,7 +380,7 @@
     </section>
 
     <footer>
-      <span>GearBeacon V1.7 · Private self-hosted monitoring</span>
+      <span>GearBeacon V1.8 · Private self-hosted monitoring</span>
       <span id="notifyStatus"></span>
     </footer>
   </main>
@@ -392,6 +415,13 @@
           <div class="watch-import-confirm"><span id="watchImportSelection">0 products ready</span><button id="confirmWatchImport" class="primary" type="button" disabled>Add products</button></div>
         </section>
       </div>
+    </article>
+  </section>
+  <section id="activityDialog" class="product-dialog hidden" role="dialog" aria-modal="true" aria-labelledby="activityDialogTitle">
+    <button id="activityDialogBackdrop" class="product-dialog-backdrop" type="button" aria-label="Close activity details"></button>
+    <article class="product-dialog-panel activity-dialog-panel">
+      <div class="product-dialog-head"><div><span class="settings-kicker">Confirmed monitor evidence</span><h2 id="activityDialogTitle">Activity details</h2></div><button id="closeActivityDialog" class="icon-button" type="button" aria-label="Close activity details">×</button></div>
+      <div id="activityDialogBody" class="product-dialog-body"></div>
     </article>
   </section>
   <div id="toast" class="toast hidden"></div>

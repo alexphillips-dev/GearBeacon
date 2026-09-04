@@ -14,7 +14,9 @@ There is no GearBeacon cloud account, hosted database, public registration, subs
 - Keeps separate watchlists, product state, activity, and health for every enabled region.
 - Imports watchlists from pasted UniFi Store links, product SKUs/slugs, or TXT, CSV, and JSON files with a regional match-and-confirm review before anything is added.
 - Detects restocks, sellouts, price changes, status changes, and newly listed products.
+- Confirms potentially destructive changes across two complete observations while keeping fast one-check restock detection and the last-known-good state visible.
 - Shows a focused product view with current availability, store details, first/last-seen times, price history, and recent changes.
+- Keeps durable, searchable activity with evidence, delivery outcomes, date/type/region filters, pagination, and CSV or JSON export.
 - Supports per-product alert overrides, price-drop and target-price rules, immediate restocks, and temporary or indefinite pauses.
 - Searches, filters, sorts, selects, pauses, resumes, and removes watched products in bulk.
 - Delivers browser, ntfy, Discord, Gotify, SMTP email, or generic webhook alerts.
@@ -24,10 +26,12 @@ There is no GearBeacon cloud account, hosted database, public registration, subs
 - Configures stores, access, backups, and notification integrations in the browser.
 - Encrypts saved notification credentials using a generated installation key stored outside SQLite with restricted permissions.
 - Protects private and reverse-proxy installations with a single owner password, secure sessions, CSRF checks, origin checks, and security headers.
-- Validates catalogs to avoid false stock events when an upstream response is partial.
+- Validates catalogs, honors upstream retry guidance, and never treats a partial response as a product delisting.
 - Creates validated scheduled, manual, pre-import, and pre-update SQLite backups.
-- Exports passphrase-encrypted transfer files and previews them before restoring.
-- Shows region health, delivery failures, backup integrity, storage, security warnings, logs, and exact build information in Operations.
+- Can copy each backup to a separate disk or mounted share as validated SQLite or a passphrase-encrypted recovery export.
+- Exports passphrase-encrypted transfer files, previews imports, and tests primary or secondary restores without changing active data.
+- Shows region health, pending confirmations, delivery failures, recovery readiness, storage, security warnings, logs, diagnostics, and exact build information in Operations.
+- Downloads a privacy-redacted support bundle without owner credentials, saved notification secrets, local paths, or private addresses.
 - Detects updates but never silently downloads or installs one.
 
 ## Choose an installation
@@ -121,6 +125,16 @@ The data directory contains the SQLite database, validated backup files, and `se
 
 Backups use `PRAGMA integrity_check`, a consistent SQLite `VACUUM INTO` snapshot, and a second integrity check. GearBeacon automatically makes a validated backup before a schema upgrade or import. Encrypted exports use AES-256-GCM with a scrypt-derived key; owner credentials, sessions, and local integration secrets are excluded.
 
+Settings → Data can send scheduled, manual, pre-import, and pre-update backups to an optional secondary directory. Use an absolute path on another disk, NAS share, or mounted Docker volume. GearBeacon validates the destination, refuses symbolic-link destinations, reports when it appears to share the primary data filesystem, and can encrypt every secondary copy with a separately saved passphrase. A secondary-copy failure is reported without discarding a valid primary backup.
+
+Use **Test latest primary** and **Test latest secondary** after setup and periodically afterward. Restore tests open a temporary copy, verify its SQLite integrity or decrypt and validate its export structure, confirm schema compatibility, and leave the running database unchanged. Activity retention is independent of per-product history retention; `0` keeps activity until the owner changes the policy.
+
+## Reliable change detection
+
+Every store check records its outcome and catalog evidence. A restock seen in a complete valid catalog is recorded immediately. Sellouts, ordinary status changes, price changes, and products disappearing from the catalog must match on two complete observations before GearBeacon commits the transition or queues an alert. While confirmation is pending, the dashboard keeps displaying the last-known-good value and Operations shows the candidate and observation count.
+
+A product omitted from two consecutive complete catalogs becomes **Unlisted** rather than being silently removed. A later reappearance is detected immediately. Partial catalogs never advance missing-product evidence. HTTP rate limits honor `Retry-After`, and scheduled retries include jitter so multiple self-hosted installations do not retry in lockstep.
+
 ## Notifications
 
 Channel configuration, delivery timing, previews, and individual test buttons are in Settings. A channel can be configured but independently disabled. Restock alerts for watched products are enabled by default; sellout, price, status, and new-product alerts are opt-in.
@@ -146,7 +160,9 @@ Verify the HMAC against the raw request body and reject stale timestamps at the 
 
 ## Operations and updates
 
-The Operations page starts with an overall **Healthy**, **Degraded**, or **Action Required** state and links actionable warnings to the relevant Settings tab. It also includes every region's last/next check, product and watch counts, catalog errors, notification queue outcomes and next delivery, backup history and integrity, database/free-space sizes, security warnings, filtered downloadable logs, runtime architecture, commit, and container image information.
+The Operations page starts with an overall **Healthy**, **Degraded**, or **Action Required** state and links actionable warnings to the relevant Settings tab. The same highest-priority issue appears in a compact owner-attention banner throughout the dashboard. Operations also includes every region's last/next check, product and watch counts, catalog errors and pending confirmations, notification queue outcomes and next delivery, primary and secondary recovery status, database/free-space sizes, security warnings, filtered downloadable logs, runtime architecture, commit, and container image information.
+
+**Run diagnostics** checks database integrity, data/backup directory access, local encryption-key decryption, non-destructive restore readiness, free space, notification failures, store connectivity, and access-mode security. **Support bundle** downloads a redacted JSON snapshot of runtime health, recent checks, configuration state, queue summaries, and application logs. It excludes passwords, tokens, webhook URLs, local filesystem paths, host addresses, and product/watchlist data.
 
 **Check for updates** reads GitHub Releases (or a configured manifest) and shows notes and download links. **Prepare safe update** flushes current state, creates and validates a pre-update backup, and displays the platform command. GearBeacon never performs an unattended update.
 
@@ -174,6 +190,9 @@ Browser-saved settings are intended for most owners. Environment values seed new
 | `GEARBEACON_BACKUP_INTERVAL_HOURS` | `24` | `0` disables scheduled backups |
 | `GEARBEACON_BACKUP_RETENTION` | `10` | Database backups to retain |
 | `GEARBEACON_HISTORY_RETENTION_DAYS` | `365` | Change-only product history retention |
+| `GEARBEACON_EVENT_RETENTION_DAYS` | `365` | Activity retention; `0` keeps activity indefinitely |
+| `GEARBEACON_SECONDARY_BACKUP_DIR` | blank | Absolute recovery directory or mounted share |
+| `GEARBEACON_SECONDARY_ENCRYPTED_EXPORTS` | `0` | Encrypt secondary copies; save its passphrase in Settings first |
 | `GEARBEACON_NOTIFICATION_MAX_ATTEMPTS` | `5` | Delivery attempt limit |
 | `GEARBEACON_NOTIFICATION_GROUP_SECONDS` | `0` | Optional event grouping window |
 | `GEARBEACON_NOTIFICATION_COOLDOWN_MINUTES` | `30` | Suppress duplicate product/event alerts during this window |
@@ -221,9 +240,10 @@ Only liveness, readiness, and authentication bootstrap routes work without an ow
 - `/api/auth/*`, `/api/onboarding/complete` — owner access and setup
 - `/api/config`, `/api/config/validate` — sanitized configuration and validation
 - `/api/products`, `/api/products/:slug`, `/api/watchlist`, `/api/watch/*`, `/api/watch/import`, `/api/watch/import/preview`, `/api/events`, `/api/check` — regional monitor data, watchlist importing, details, history, and per-product rules
+- `/api/activity`, `/api/activity/:id`, `/api/activity/export` — searchable confirmed activity, evidence, pagination, and CSV/JSON export
 - `/api/notifications/*` — preferences, scheduling preview, individual tests, queue retry, and delivery history
-- `/api/operations`, `/api/logs` — private operational view and filtered log export
-- `/api/data/*` — integrity, backup, export, preview, and import
+- `/api/operations`, `/api/operations/diagnostics`, `/api/operations/support-bundle`, `/api/logs` — operational status, installation diagnostics, redacted support data, and filtered logs
+- `/api/data/*` — integrity, primary/secondary backup, non-destructive restore testing, export, preview, and import
 - `/api/update/check`, `/api/update/prepare` — manual release information and validated preparation
 
 ## Development and verification
@@ -238,9 +258,9 @@ node --no-warnings scripts/browser-smoke.mjs
 docker compose build
 ```
 
-CI exercises fresh installs and database upgrades on Windows, macOS, and Linux; real Chrome workflows at desktop and compact widths; browser configuration; product images, history, rules, scheduling and bulk actions; encrypted backup preview/restore; integration-secret encryption; every notification mock; webhook signing; SMTP STARTTLS; authentication, CSRF, origin, secure-cookie, and forwarded-header behavior; launcher syntax; real Docker Compose startup; amd64/arm64 containers; and native standalone packages. CodeQL and Trivy scan source and container images.
+CI exercises fresh installs and backup-protected upgrades from V1.5–V1.7 on Windows, macOS, and Linux; confirmation and unlisting behavior; searchable/exportable activity; primary and encrypted-secondary restore tests; diagnostics and support-bundle redaction; real Chrome workflows at desktop and compact widths; product images, rules, scheduling and bulk actions; integration-secret encryption; every notification mock; webhook signing; SMTP STARTTLS; authentication, CSRF, origin, secure-cookie, and forwarded-header behavior; launcher syntax; real Docker Compose startup; amd64/arm64 containers; and native standalone packages. CodeQL and Trivy scan source and container images.
 
-Tagged releases produce checksummed standalone packages for Windows x64, macOS x64/ARM64, and Linux x64/ARM64, plus amd64/arm64 GHCR images. Standalone builds use Node's single-executable application tooling.
+Tagged releases produce checksummed standalone packages for Windows x64, macOS x64/ARM64, and Linux x64/ARM64, plus amd64/arm64 GHCR images. Prerelease tags such as `v1.8.0-rc.1` create GitHub prereleases without moving the stable `latest` image tag. Standalone builds use Node's single-executable application tooling.
 
 ## Project layout
 

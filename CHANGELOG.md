@@ -1,5 +1,19 @@
 # GearBeacon changelog
 
+## V1.8.0 — Reliability, history, and recovery
+
+- Added persisted two-observation confirmation for sellouts, price changes, status changes, and delistings while preserving a one-observation fast path for restocks from complete, valid catalogs.
+- Preserved last-known-good product values while a change is pending, exposed pending evidence in Operations, and made unlisted products explicit after two complete catalogs omit them.
+- Added persisted monitor-check evidence, upstream `Retry-After` handling, and randomized retry timing to reduce false alerts and avoid synchronized request bursts.
+- Rebuilt Stock activity as a durable, searchable history with region, change-type, date, product/SKU, and notification-outcome filters, configurable retention, pagination, and CSV or JSON export.
+- Added an activity evidence drawer showing the confirmation policy, observation count, first-observed and confirmed times, notification outcome, and direct links to the product and UniFi Store.
+- Added optional secondary recovery copies to a separate absolute directory or mounted share, with validated SQLite or passphrase-encrypted export formats, automatic retention, and same-filesystem warnings.
+- Added non-destructive restore tests for primary and secondary backups and kept primary backups successful when an unavailable secondary destination fails.
+- Added one-click installation diagnostics for database integrity, directory access, encryption-key readability, restore readiness, free space, delivery health, store connectivity, and access security.
+- Added a privacy-redacted support bundle, a persistent owner-attention banner for operational issues and reconnects, and richer recovery status throughout Operations and Data settings.
+- Added schema-v7 migration and verified fresh installs plus automatic, backup-protected upgrades from V1.5, V1.6, and V1.7.
+- Added release-candidate publication support so prerelease tags create GitHub prereleases without replacing the stable `latest` container tag.
+
 ## V1.7.0 — Watch intelligence and alert control
 
 - Added a Watchlist-page importer for pasted UniFi Store links, product SKUs/slugs, and TXT, CSV, or JSON files, with regional catalog matching, duplicate and already-watched detection, review-before-add selection, and non-destructive bulk import.

@@ -3,7 +3,7 @@ set -eu
 VERSION=${1:-}
 CONFIRM=${2:-}
 test -n "$VERSION" || { echo 'Usage: update-mac-linux.sh VERSION --backup-confirmed' >&2; exit 2; }
-printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$' || { echo 'Version must be a release version such as 1.7.0.' >&2; exit 2; }
+printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$' || { echo 'Version must be a release version such as 1.8.0.' >&2; exit 2; }
 test "$CONFIRM" = '--backup-confirmed' || { echo 'Use Prepare safe update in GearBeacon first, then add --backup-confirmed.' >&2; exit 2; }
 case "$(uname -s)" in Darwin) PLATFORM=macos; INSTALL=/usr/local/lib/gearbeacon; SERVICE=com.gearbeacon.server ;; Linux) PLATFORM=linux; INSTALL=/opt/gearbeacon; SERVICE=gearbeacon ;; *) echo 'Unsupported platform.' >&2; exit 2 ;; esac
 case "$(uname -m)" in arm64|aarch64) ARCH=arm64 ;; *) ARCH=x64 ;; esac

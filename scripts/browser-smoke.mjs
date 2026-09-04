@@ -11,8 +11,8 @@ const testRoot = await mkdtemp(join(tmpdir(), 'gearbeacon-browser-smoke-'));
 const chromeProfile = await mkdtemp(join(tmpdir(), 'gearbeacon-chrome-'));
 const port = 9200 + (process.pid % 500);
 const baseUrl = `http://127.0.0.1:${port}`;
-const setupToken = 'v17-browser-setup-token';
-const password = 'V1.7 browser owner password';
+const setupToken = 'v18-browser-setup-token';
+const password = 'V1.8 browser owner password';
 const serverOutput = [];
 let server = null;
 let chrome = null;
@@ -267,12 +267,29 @@ try {
   assert(activityRow.meta.includes('Sold out → In stock') && activityRow.meta.includes('$299.00') && activityRow.meta.includes('Back after') && activityRow.metaWhiteSpace === 'nowrap', `Compact activity transition details are incomplete: ${JSON.stringify(activityRow)}`);
   assert(activityRow.alert === 'No channel' && /no server notification channel was configured/i.test(activityRow.alertTitle), `Activity server-alert outcome is incomplete: ${JSON.stringify(activityRow)}`);
   assert(/U7 Pro XGS activity details/i.test(activityRow.aria) && activityRow.timeTitle && !/^\d{4}-\d{2}-\d{2}T/.test(activityRow.timeTitle), `Activity accessibility or exact-time details are incomplete: ${JSON.stringify(activityRow)}`);
+  await evaluate(`(() => {
+    document.getElementById('activitySearch').value='U7 Pro';
+    document.getElementById('activityType').value='restock';
+    document.getElementById('activityDelivery').value='not-sent';
+    document.getElementById('activityFilters').requestSubmit();
+  })()`);
+  await waitForBrowser("app.activity.loaded && app.activity.count === 1 && document.querySelectorAll('#activityList .event').length === 1 && document.getElementById('activityResultCount').textContent === '1 matching event'", 'Searchable activity filters did not return the expected event');
   await evaluate("document.querySelector('#activityList .event time').click()");
-  await waitForBrowser("!document.getElementById('productDialog').classList.contains('hidden') && document.getElementById('productDialogTitle').textContent === 'U7 Pro XGS'", 'Whole-row activity navigation did not open product details');
-  await evaluate("document.getElementById('closeProductDialog').click()");
+  await waitForBrowser("!document.getElementById('activityDialog').classList.contains('hidden') && document.getElementById('activityDialogTitle').textContent === 'U7 Pro XGS' && document.getElementById('activityDialogBody').textContent.includes('1 of 1')", 'Whole-row activity navigation did not open confirmation evidence');
+  const activityEvidence = await evaluate("({ text:document.getElementById('activityDialogBody').textContent, productButton:Boolean(document.querySelector('#activityDialogBody [data-activity-product=\"u7-pro-xgs\"]')) })");
+  assert(/Monitor evidence/.test(activityEvidence.text) && /Server notification/.test(activityEvidence.text) && /No channel/.test(activityEvidence.text) && activityEvidence.productButton, `Activity evidence drawer is incomplete: ${JSON.stringify(activityEvidence)}`);
   await cdp.send('Emulation.setDeviceMetricsOverride', { width:390, height:844, screenWidth:390, screenHeight:844, deviceScaleFactor:1, mobile:false });
-  const compactActivity = await evaluate("(() => { const row=document.querySelector('#activityList .event'); return { height:row.getBoundingClientRect().height, overflow:document.documentElement.scrollWidth <= window.innerWidth + 1, alertLabel:getComputedStyle(row.querySelector('.event-alert-label')).display, timeColumn:row.querySelector('time').getBoundingClientRect().top - row.getBoundingClientRect().top }; })()");
-  assert(compactActivity?.height === 64 && compactActivity.overflow && compactActivity.alertLabel === 'none' && compactActivity.timeColumn < 32, `Mobile activity row did not remain compact: ${JSON.stringify(compactActivity)}`);
+  const responsiveEvidence = await evaluate("(() => { const panel=document.querySelector('#activityDialog .product-dialog-panel').getBoundingClientRect(); return { width:panel.width, overflow:document.documentElement.scrollWidth <= window.innerWidth + 1, columns:getComputedStyle(document.querySelector('.activity-evidence')).gridTemplateColumns.split(' ').length }; })()");
+  assert(responsiveEvidence?.width === 390 && responsiveEvidence.overflow && responsiveEvidence.columns === 1, `Activity evidence drawer is not responsive at 390px: ${JSON.stringify(responsiveEvidence)}`);
+  await cdp.send('Emulation.clearDeviceMetricsOverride');
+  await evaluate("document.querySelector('#activityDialogBody [data-activity-product]').click()");
+  await waitForBrowser("document.getElementById('activityDialog').classList.contains('hidden') && !document.getElementById('productDialog').classList.contains('hidden') && document.getElementById('productDialogTitle').textContent === 'U7 Pro XGS'", 'Activity evidence did not open the associated product details');
+  await evaluate("document.getElementById('closeProductDialog').click()");
+  await evaluate("document.getElementById('clearActivityFilters').click()");
+  await waitForBrowser("app.activity.loaded && document.getElementById('activitySearch').value === '' && document.getElementById('activityType').value === 'all'", 'Activity filters did not clear');
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width:390, height:844, screenWidth:390, screenHeight:844, deviceScaleFactor:1, mobile:false });
+  const compactActivity = await evaluate("(() => { const row=document.querySelector('#activityList .event'); return { height:row.getBoundingClientRect().height, overflow:document.documentElement.scrollWidth <= window.innerWidth + 1, alertLabel:getComputedStyle(row.querySelector('.event-alert-label')).display, timeColumn:row.querySelector('time').getBoundingClientRect().top - row.getBoundingClientRect().top, filterColumns:getComputedStyle(document.getElementById('activityFilters')).gridTemplateColumns.split(' ').length }; })()");
+  assert(compactActivity?.height === 64 && compactActivity.overflow && compactActivity.alertLabel === 'none' && compactActivity.timeColumn < 32 && compactActivity.filterColumns === 1, `Mobile activity feed or filters did not remain compact: ${JSON.stringify(compactActivity)}`);
   await cdp.send('Emulation.clearDeviceMetricsOverride');
 
   await evaluate("document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabNotifications').click()");
@@ -302,16 +319,26 @@ try {
   await waitForBrowser("!document.getElementById('productDialog').classList.contains('hidden') && document.getElementById('productDialogTitle').textContent === 'U7 Pro XGS' && document.getElementById('browse').classList.contains('active')", 'Authenticated email product deep link did not open the matching product');
   await evaluate("document.getElementById('closeProductDialog').click(); document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabData').click()");
   await waitForBrowser("!document.getElementById('settingsPanelData').hidden && document.getElementById('settingsPanelNotifications').hidden", 'Data settings tab failed');
+  const recoverySettings = await evaluate("({ activityRetention:document.getElementById('configEventRetention').value, secondaryDirectory:document.getElementById('configSecondaryBackupDir').value, encrypted:document.getElementById('configSecondaryEncrypted').checked, hasPrimaryTest:Boolean(document.getElementById('testPrimaryBackup')), hasSecondaryTest:Boolean(document.getElementById('testSecondaryBackup')) })");
+  assert(recoverySettings.activityRetention === '365' && recoverySettings.secondaryDirectory === '' && !recoverySettings.encrypted && recoverySettings.hasPrimaryTest && recoverySettings.hasSecondaryTest, `V1.8 recovery settings are incomplete: ${JSON.stringify(recoverySettings)}`);
   const browserBackup = await evaluate(`(async () => {
     const backup = await api('/api/data/export/encrypted', { method:'POST', body:JSON.stringify({ passphrase:'browser backup passphrase' }) });
     const preview = await api('/api/data/preview', { method:'POST', body:JSON.stringify({ backup, passphrase:'browser backup passphrase' }) });
     const restored = await api('/api/data/import', { method:'POST', body:JSON.stringify({ backup, passphrase:'browser backup passphrase' }) });
+    await refreshDataInfo();
     return { format:backup.format, historyCount:preview.regions[0].historyCount, watchCount:restored.watchCount };
   })()`);
   assert(browserBackup?.format === 'GearBeaconEncryptedBackup' && browserBackup.watchCount === 2 && browserBackup.historyCount >= 1, 'Browser backup preview/import flow failed.');
+  await waitForBrowser("!document.getElementById('testPrimaryBackup').disabled", 'Primary restore test did not become available after the safety backup');
+  await evaluate("document.getElementById('testPrimaryBackup').click()");
+  await waitForBrowser("!document.getElementById('testPrimaryBackup').disabled && /Restore test passed/.test(document.getElementById('backupTestResult').textContent)", 'Non-destructive browser restore test did not pass');
 
   await evaluate("document.querySelector('[data-tab=\"operations\"]').click()");
   await waitForBrowser("app.operations?.summary?.state && document.getElementById('operationsSummary').textContent.trim().length > 0", 'Operations summary did not render');
+  await evaluate("document.getElementById('runDiagnostics').click()");
+  await waitForBrowser("!document.getElementById('runDiagnostics').disabled && document.querySelectorAll('#diagnosticsPanel .diagnostic-item').length >= 7", 'Installation diagnostics did not render');
+  const diagnostics = await evaluate("({ heading:document.querySelector('#diagnosticsPanel h3')?.textContent, text:document.getElementById('diagnosticsPanel').textContent, hidden:document.getElementById('diagnosticsPanel').classList.contains('hidden') })");
+  assert(!diagnostics.hidden && /Diagnostics/.test(diagnostics.heading) && /Database integrity/.test(diagnostics.text) && /United States store/.test(diagnostics.text), `Installation diagnostics are incomplete: ${JSON.stringify(diagnostics)}`);
   await cdp.send('Emulation.setDeviceMetricsOverride', { width:390, height:844, screenWidth:390, screenHeight:844, deviceScaleFactor:1, mobile:false });
   const responsive = await evaluate("({ overflow:document.documentElement.scrollWidth <= window.innerWidth + 1, width:window.innerWidth, scrollWidth:document.documentElement.scrollWidth, widest:[...document.querySelectorAll('body *')].map((element) => ({ tag:element.tagName, id:element.id, cls:element.className, right:element.getBoundingClientRect().right, width:element.getBoundingClientRect().width })).filter((item) => item.right > window.innerWidth + 1).sort((a,b) => b.right-a.right).slice(0,5) })");
   assert(responsive?.overflow && responsive.width === 390, `Responsive layout overflows a 390px viewport: ${JSON.stringify(responsive)}`);
@@ -324,7 +351,7 @@ try {
   await evaluate("document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabSecurity').click()");
   await waitForBrowser("document.querySelectorAll('#sessionList [data-revoke-session]').length >= 1", 'Authenticated session management did not render');
 
-  console.log(`BROWSER SMOKE PASSED: ${process.platform} · setup/auth · unclipped navigation · dark/light · images · search/category/load-more · stable dialog hover · watch/rules/bulk/import · compact activity details/outcomes · email settings/preview/deep-link · backup/import · operations · responsive`);
+  console.log(`BROWSER SMOKE PASSED: ${process.platform} · setup/auth · unclipped navigation · dark/light · images · search/category/load-more · stable dialog hover · watch/rules/bulk/import · compact searchable activity/evidence · email settings/preview/deep-link · backup/import · diagnostics/operations · responsive`);
 } catch (error) {
   if (serverOutput.length) process.stderr.write(`\nGearBeacon server output:\n${serverOutput.join('').slice(-12000)}\n`);
   throw error;

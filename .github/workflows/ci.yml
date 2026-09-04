@@ -32,7 +32,7 @@ jobs:
           node --check scripts/self-test.mjs
           node --check scripts/browser-smoke.mjs
           node scripts/check-web-contract.mjs
-      - name: Fresh install, V1.5 upgrade, product rules, scheduling and integration tests
+      - name: Fresh install, V1.5-V1.7 upgrades, reliability, recovery and integration tests
         run: node --no-warnings scripts/self-test.mjs
       - name: Validate shell launchers and installers
         if: runner.os != 'Windows'
@@ -161,4 +161,4 @@ jobs:
         shell: bash
         env:
           EXPECTED_BUILD_COMMIT: ${{ github.sha }}
-        run: node scripts/standalone-smoke.mjs dist/standalone/GearBeacon-v1.7.0-*/
+        run: node scripts/standalone-smoke.mjs dist/standalone/GearBeacon-v1.8.0-*/

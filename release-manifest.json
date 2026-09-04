@@ -1,11 +1,11 @@
 {
   "name": "GearBeacon",
-  "latestVersion": "1.7.0",
+  "latestVersion": "1.8.0",
   "publishedAt": "2026-09-04T00:00:00Z",
   "downloadUrl": "https://github.com/alexphillips-dev/GearBeacon/releases",
   "releasePageUrl": "https://github.com/alexphillips-dev/GearBeacon/releases",
   "minimumSchemaVersion": 4,
-  "maximumSchemaVersion": 6,
+  "maximumSchemaVersion": 7,
   "minimumNodeVersion": "22.13.0",
-  "releaseNotes": "Product detail and change history, per-product alert rules, searchable bulk-managed watchlists, paged catalog browsing, quiet hours, digests, cooldowns, delivery previews, operational alerts, a clearer Operations summary, and expanded browser and upgrade verification."
+  "releaseNotes": "Confirmed monitoring transitions, searchable retained activity with exports and evidence, secondary recovery copies, non-destructive restore tests, installation diagnostics, redacted support bundles, accessibility improvements, and expanded migration verification."
 }
