@@ -45,22 +45,49 @@ if (syntaxCheck.status !== 0) {
 rmSync(outputDir, { recursive: true, force: true });
 mkdirSync(outputDir, { recursive: true });
 const seaConfigFile = join(tmpdir(), `gearbeacon-sea-${process.pid}.json`);
-writeFileSync(seaConfigFile, JSON.stringify({
+const seaBlobFile = join(tmpdir(), `gearbeacon-sea-${process.pid}.blob`);
+// Node's built-in Mach-O injector currently produces crashing Intel macOS binaries.
+// Keep the official preparation-blob path until https://github.com/nodejs/node/issues/65479 is resolved.
+const usePostject = process.platform === 'darwin' && process.arch === 'x64';
+const seaConfig = {
   main: bundledMainFile,
   mainFormat: 'commonjs',
-  executable: process.execPath,
-  output: executable,
+  output: usePostject ? seaBlobFile : executable,
   disableExperimentalSEAWarning: true,
   useSnapshot: false,
   useCodeCache: false,
   execArgv: ['--no-warnings'],
   execArgvExtension: 'none',
-}, null, 2));
+};
+if (!usePostject) seaConfig.executable = process.execPath;
+writeFileSync(seaConfigFile, JSON.stringify(seaConfig, null, 2));
 
-const build = spawnSync(process.execPath, ['--build-sea', seaConfigFile], { cwd: root, stdio: 'inherit' });
+const buildFlag = usePostject ? '--experimental-sea-config' : '--build-sea';
+const build = spawnSync(process.execPath, [buildFlag, seaConfigFile], { cwd: root, stdio: 'inherit' });
+if (build.status !== 0) {
+  rmSync(seaBlobFile, { force: true });
+  rmSync(seaConfigFile, { force: true });
+  rmSync(bundledMainFile, { force: true });
+  throw new Error(`Node SEA build failed with exit code ${build.status}.`);
+}
+
+if (usePostject) {
+  cpSync(process.execPath, executable);
+  chmodSync(executable, 0o755);
+  const unsigned = spawnSync('codesign', ['--remove-signature', executable], { stdio: 'inherit' });
+  if (unsigned.status !== 0) throw new Error('Could not remove the Node signature before macOS x64 SEA injection.');
+  const injection = spawnSync('npx', [
+    '--yes', 'postject@1.0.0-alpha.6', executable, 'NODE_SEA_BLOB', seaBlobFile,
+    '--sentinel-fuse', 'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2',
+    '--macho-segment-name', 'NODE_SEA', '--overwrite',
+  ], { cwd: root, stdio: 'inherit' });
+  if (injection.status !== 0) throw new Error(`macOS x64 SEA injection failed with exit code ${injection.status}.`);
+}
+
+rmSync(seaBlobFile, { force: true });
 rmSync(seaConfigFile, { force: true });
 rmSync(bundledMainFile, { force: true });
-if (build.status !== 0 || !existsSync(executable)) throw new Error(`Node SEA build failed with exit code ${build.status}.`);
+if (!existsSync(executable)) throw new Error('Node SEA build did not create an executable.');
 if (process.platform === 'darwin') {
   const signing = spawnSync('codesign', ['--sign', '-', '--force', executable], { stdio:'inherit' });
   if (signing.status !== 0) throw new Error('macOS ad-hoc signing failed.');
