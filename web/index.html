@@ -6,11 +6,27 @@
   <meta name="theme-color" content="#090b0c" />
   <title>GearBeacon</title>
   <link rel="icon" type="image/png" href="/assets/icon.png" />
-  <script>try{document.documentElement.dataset.theme=localStorage.getItem('gearbeacon.theme')==='light'?'light':'dark'}catch{}</script>
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <main class="shell">
+  <section id="authGate" class="auth-shell hidden" aria-labelledby="authTitle">
+    <div class="auth-card">
+      <img class="auth-icon" src="/assets/icon.png" alt="" width="58" height="58" />
+      <span class="settings-kicker">Private self-hosted monitor</span>
+      <h1 id="authTitle">GearBeacon owner access</h1>
+      <p id="authDescription">Sign in to your private GearBeacon instance.</p>
+      <form id="authForm">
+        <label id="setupTokenField" class="field hidden"><span>One-time setup token</span><input id="setupToken" type="password" autocomplete="one-time-code" /></label>
+        <label class="field"><span id="passwordLabel">Owner password</span><input id="authPassword" type="password" minlength="12" autocomplete="current-password" required /></label>
+        <label id="confirmPasswordField" class="field hidden"><span>Confirm owner password</span><input id="authPasswordConfirm" type="password" minlength="12" autocomplete="new-password" /></label>
+        <button id="authSubmit" class="primary" type="submit">Sign in</button>
+      </form>
+      <div id="authError" class="settings-result error hidden"></div>
+      <p class="auth-help">The setup token is printed once in the GearBeacon server or container logs. No GearBeacon cloud account is used.</p>
+    </div>
+  </section>
+
+  <main id="appShell" class="shell hidden">
     <header class="topbar">
       <div class="brand-wrap">
         <img class="brand-icon" src="/assets/icon.png" alt="" width="46" height="46" />
@@ -20,9 +36,11 @@
         </div>
       </div>
       <div class="top-actions">
+        <label id="regionPickerWrap" class="region-picker hidden"><span>Store region</span><select id="regionPicker" aria-label="Store region"></select></label>
         <button id="themeBtn" class="icon-button" type="button" title="Switch to light mode" aria-label="Switch to light mode"><span id="themeIcon" aria-hidden="true">☀</span></button>
         <button id="notifyBtn" class="ghost">Enable browser alerts</button>
         <button id="checkBtn" class="primary">Check now</button>
+        <button id="logoutBtn" class="ghost hidden">Sign out</button>
       </div>
     </header>
 
@@ -93,16 +111,16 @@
 
     <section id="settings" class="page">
       <div class="section-heading">
-        <div><h2>Settings</h2><p>Version, update checks, and upgrade-safe data management.</p></div>
+        <div><h2>Settings</h2><p>Private access, notifications, updates, and upgrade-safe data management.</p></div>
       </div>
 
       <div class="settings-grid">
         <article class="settings-card">
           <div class="settings-card-head">
-            <div><span class="settings-kicker">Application</span><h3>GearBeacon <span id="settingsVersion">V1.4.0</span></h3></div>
+            <div><span class="settings-kicker">Application</span><h3>GearBeacon <span id="settingsVersion">V1.5.0</span></h3></div>
             <span id="schemaBadge" class="settings-badge">SQLite</span>
           </div>
-          <p>Your watched products now live in a persistent SQLite database outside the GearBeacon application folder.</p>
+          <p>Your watched products live in a persistent SQLite database outside the GearBeacon application folder.</p>
           <dl class="settings-details">
             <div><dt>Storage</dt><dd id="storageEngine">SQLite</dd></div>
             <div><dt>Schema</dt><dd id="schemaVersion">—</dd></div>
@@ -118,7 +136,7 @@
         <article class="settings-card">
           <div class="settings-card-head">
             <div><span class="settings-kicker">Alerts</span><h3>Notifications</h3></div>
-            <span id="pushBadge" class="settings-badge">0 push devices</span>
+            <span id="channelBadge" class="settings-badge">Browser only</span>
           </div>
           <p>Choose which monitored events can trigger server-side alerts. Restocks stay enabled by default; other alert types are opt-in.</p>
           <div class="notification-options">
@@ -139,24 +157,55 @@
             <div><span class="settings-kicker">Data safety</span><h3>Backups & transfer</h3></div>
             <span id="backupBadge" class="settings-badge">0 backups</span>
           </div>
-          <p>GearBeacon automatically creates a safety backup when an installed version changes before database migrations are applied. It keeps the latest five database backups.</p>
+          <p>GearBeacon validates SQLite before and after every backup, creates pre-update and pre-import safety copies, and can export passphrase-encrypted transfer files.</p>
           <dl class="settings-details">
             <div><dt>Latest backup</dt><dd id="latestBackup">None yet</dd></div>
             <div><dt>Watchlist</dt><dd id="settingsWatchCount">0 products</dd></div>
           </dl>
           <div class="settings-actions wrap">
             <button id="backupBtn">Create backup now</button>
-            <button id="exportBtn">Export GearBeacon data</button>
+            <button id="exportBtn">Export encrypted data</button>
+            <button id="exportPlainBtn">Export plain JSON</button>
             <button id="importBtn">Import GearBeacon data</button>
             <input id="importFile" type="file" accept=".json,.gearbeacon.json,application/json" hidden />
           </div>
           <div class="settings-note">Importing replaces this monitor's current watchlist/data after first creating a safety backup.</div>
         </article>
+
+        <article class="settings-card">
+          <div class="settings-card-head">
+            <div><span class="settings-kicker">Private access</span><h3>Owner security</h3></div>
+            <span id="accessBadge" class="settings-badge">Local</span>
+          </div>
+          <p id="accessDescription">GearBeacon is available only on this computer.</p>
+          <dl class="settings-details">
+            <div><dt>Access mode</dt><dd id="accessMode">—</dd></div>
+            <div><dt>Authentication</dt><dd id="authenticationState">—</dd></div>
+            <div><dt>Active sessions</dt><dd id="sessionCount">—</dd></div>
+          </dl>
+          <form id="passwordForm" class="settings-form">
+            <label id="currentPasswordField" class="field"><span>Current password</span><input id="currentPassword" type="password" autocomplete="current-password" /></label>
+            <label class="field"><span>New password</span><input id="newPassword" type="password" minlength="12" autocomplete="new-password" required /></label>
+            <label class="field"><span>Confirm new password</span><input id="newPasswordConfirm" type="password" minlength="12" autocomplete="new-password" required /></label>
+            <button class="primary" type="submit">Update owner password</button>
+          </form>
+          <div id="securityResult" class="settings-result hidden"></div>
+          <div id="sessionList" class="session-list"></div>
+        </article>
+
+        <article class="settings-card">
+          <div class="settings-card-head">
+            <div><span class="settings-kicker">Privacy</span><h3>Outbound connections</h3></div>
+            <span class="settings-badge">No telemetry</span>
+          </div>
+          <p>GearBeacon has no public account service, hosted database, analytics, or telemetry. This list shows every server-side outbound integration.</p>
+          <div id="outboundList" class="outbound-list"></div>
+        </article>
       </div>
     </section>
 
     <footer>
-      <span>GearBeacon V1.4 · Production-ready alerts</span>
+      <span>GearBeacon V1.5 · Private self-hosted monitoring</span>
       <span id="notifyStatus"></span>
     </footer>
   </main>

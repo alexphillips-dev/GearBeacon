@@ -1,8 +1,8 @@
 .git
 .github
-mobile/node_modules
 backend/node_modules
 *.zip
 *.sha256.txt
+GearBeacon-v*
 data/*
 !data/.gitkeep

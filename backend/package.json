@@ -1,8 +1,8 @@
 {
   "name": "gearbeacon-backend",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "private": true,
-  "description": "GearBeacon stock monitor with notifications, release integration, and deployment health monitoring",
+  "description": "Private self-hosted Ubiquiti product monitor with a browser dashboard and server-side notifications",
   "license": "Apache-2.0",
   "scripts": {
     "build": "tsc -p tsconfig.json",

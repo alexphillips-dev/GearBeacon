@@ -3,16 +3,37 @@ services:
     build: .
     restart: unless-stopped
     ports:
-      - "8787:8787"
+      # Loopback-only host publishing is the safe default. Use a private VPN or
+      # authenticated HTTPS reverse proxy for access from other devices.
+      - "127.0.0.1:8787:8787"
     environment:
       PORT: "8787"
-      REGION: "us"
+      REGIONS: "${REGIONS:-us}"
       POLL_SECONDS: "60"
-      GEARBEACON_DEPLOYMENT: "cloud"
+      GEARBEACON_ACCESS_MODE: "private"
+      GEARBEACON_BIND_HOST: "0.0.0.0"
       GEARBEACON_DATA_DIR: "/data"
-      # GEARBEACON_PUBLIC_BASE_URL: "https://gearbeacon.example.com"
-      # NTFY_TOPIC: ""
-      # DISCORD_WEBHOOK_URL: ""
+      GEARBEACON_SETUP_TOKEN: "${GEARBEACON_SETUP_TOKEN:-}"
+      GEARBEACON_OWNER_PASSWORD: "${GEARBEACON_OWNER_PASSWORD:-}"
+      GEARBEACON_PUBLIC_BASE_URL: "${GEARBEACON_PUBLIC_BASE_URL:-}"
+      GEARBEACON_COOKIE_SECURE: "${GEARBEACON_COOKIE_SECURE:-0}"
+      GEARBEACON_BACKUP_INTERVAL_HOURS: "${GEARBEACON_BACKUP_INTERVAL_HOURS:-24}"
+      GEARBEACON_BACKUP_RETENTION: "${GEARBEACON_BACKUP_RETENTION:-10}"
+      NTFY_TOPIC: "${NTFY_TOPIC:-}"
+      NTFY_BASE_URL: "${NTFY_BASE_URL:-https://ntfy.sh}"
+      NTFY_TOKEN: "${NTFY_TOKEN:-}"
+      DISCORD_WEBHOOK_URL: "${DISCORD_WEBHOOK_URL:-}"
+      GOTIFY_BASE_URL: "${GOTIFY_BASE_URL:-}"
+      GOTIFY_TOKEN: "${GOTIFY_TOKEN:-}"
+      GEARBEACON_WEBHOOK_URL: "${GEARBEACON_WEBHOOK_URL:-}"
+      GEARBEACON_WEBHOOK_TOKEN: "${GEARBEACON_WEBHOOK_TOKEN:-}"
+      SMTP_HOST: "${SMTP_HOST:-}"
+      SMTP_PORT: "${SMTP_PORT:-587}"
+      SMTP_SECURE: "${SMTP_SECURE:-0}"
+      SMTP_USER: "${SMTP_USER:-}"
+      SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
+      SMTP_FROM: "${SMTP_FROM:-}"
+      SMTP_TO: "${SMTP_TO:-}"
     volumes:
       - gearbeacon-data:/data
 
