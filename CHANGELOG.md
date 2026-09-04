@@ -2,6 +2,7 @@
 
 ## V1.7.0 — Watch intelligence and alert control
 
+- Added a Watchlist-page importer for pasted UniFi Store links, product SKUs/slugs, and TXT, CSV, or JSON files, with regional catalog matching, duplicate and already-watched detection, review-before-add selection, and non-destructive bulk import.
 - Enriched the Stock activity feed with exact before/after transitions, price movement, prior-state duration, region context, exact detection times, and server-alert outcomes while preserving the compact 64-pixel row height across desktop and mobile.
 - Fixed the product-detail backdrop changing to an opaque gray or light button background when hovered.
 - Fixed the main navigation tabs lifting into and being clipped by their scroll container on hover.

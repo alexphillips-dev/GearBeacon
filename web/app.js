@@ -46,6 +46,8 @@ const app = {
   browseRenderKey: '',
   lastFocusedProduct: null,
   currentProductDetails: null,
+  watchImportPreview: null,
+  watchImportLastFocus: null,
   latestEventId: null,
 };
 
@@ -440,6 +442,126 @@ function renderProducts(force = false) {
   $('browseTitle').textContent = app.browseCategory === 'All' ? 'All products' : app.browseCategory;
   $('browseCount').textContent = filtered.length > visible.length ? `Showing ${visible.length} of ${filtered.length} products` : `${filtered.length} product${filtered.length === 1 ? '' : 's'}`;
   $('browseLoadMore').classList.toggle('hidden', visible.length >= filtered.length);
+}
+
+function setWatchImportError(message = '') {
+  $('watchImportError').textContent = message;
+  $('watchImportError').classList.toggle('hidden', !message);
+}
+
+function updateWatchImportSelection() {
+  const selected = [...$('watchImportResults').querySelectorAll('[data-import-slug]:checked')];
+  const count = selected.length;
+  $('watchImportSelection').textContent = `${count} product${count === 1 ? '' : 's'} selected`;
+  $('confirmWatchImport').textContent = count ? `Add ${count} product${count === 1 ? '' : 's'}` : 'Add products';
+  $('confirmWatchImport').disabled = count === 0;
+}
+
+function renderWatchImportPreview(preview) {
+  app.watchImportPreview = preview;
+  const reviewCount = Number(preview.summary.regionMismatch || 0) + Number(preview.summary.unrecognized || 0) + Number(preview.summary.duplicates || 0);
+  $('watchImportSummary').innerHTML = [
+    ['Matched', preview.summary.matched],
+    ['Ready', preview.summary.addable],
+    ['Already watched', preview.summary.alreadyWatched],
+    ['Needs review', reviewCount],
+  ].map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('');
+  const marker = { already:'✓', duplicate:'=', 'region-mismatch':'↗', unrecognized:'?' };
+  $('watchImportResults').innerHTML = preview.items.length ? preview.items.map((item) => {
+    const selectable = item.status === 'addable';
+    const title = item.name || item.input;
+    const details = item.slug ? `${item.slug} · ${item.detail}` : item.detail;
+    return `<div class="watch-import-result ${escapeHtml(item.status)}" title="Source: ${escapeHtml(item.input)}">
+      ${selectable ? `<input type="checkbox" data-import-slug="${escapeHtml(item.slug)}" aria-label="Add ${escapeHtml(title)}" checked />` : `<span class="watch-import-result-marker" aria-hidden="true">${escapeHtml(marker[item.status] || '·')}</span>`}
+      <div class="watch-import-result-copy"><strong>${escapeHtml(title)}</strong><small>${escapeHtml(details)}</small></div>
+      <span class="watch-import-result-status">${escapeHtml(item.label)}</span>
+    </div>`;
+  }).join('') : '<div class="watch-import-empty">No import entries were found.</div>';
+  $('watchImportRegion').textContent = `${preview.regionLabel} Store`;
+  $('watchImportPreview').classList.remove('hidden');
+  updateWatchImportSelection();
+}
+
+function clearWatchImport(clearInput = true) {
+  app.watchImportPreview = null;
+  $('watchImportPreview').classList.add('hidden');
+  $('watchImportSummary').innerHTML = '';
+  $('watchImportResults').innerHTML = '';
+  if (clearInput) {
+    $('watchImportInput').value = '';
+    $('watchImportInput').dataset.fileName = '';
+    $('watchImportFileName').textContent = 'No file selected';
+    $('watchImportFile').value = '';
+  }
+  setWatchImportError();
+  updateWatchImportSelection();
+}
+
+function openWatchImport() {
+  app.watchImportLastFocus = document.activeElement;
+  const regionName = $('regionPicker').selectedOptions?.[0]?.textContent || String(app.currentRegion || 'Current').toUpperCase();
+  $('watchImportRegion').textContent = `${regionName} Store`;
+  $('watchImportDialog').classList.remove('hidden');
+  document.body.classList.add('dialog-open');
+  $('watchImportInput').focus();
+}
+
+function closeWatchImport() {
+  $('watchImportDialog').classList.add('hidden');
+  if ($('productDialog').classList.contains('hidden')) document.body.classList.remove('dialog-open');
+  app.watchImportLastFocus?.focus?.();
+}
+
+async function previewWatchImport() {
+  const button = $('previewWatchImport');
+  button.disabled = true;
+  button.textContent = 'Matching…';
+  setWatchImportError();
+  try {
+    const preview = await api('/api/watch/import/preview', {
+      method:'POST',
+      body:JSON.stringify({ content:$('watchImportInput').value, fileName:$('watchImportInput').dataset.fileName || '' }),
+    });
+    renderWatchImportPreview(preview);
+  } catch (err) {
+    app.watchImportPreview = null;
+    $('watchImportPreview').classList.add('hidden');
+    setWatchImportError(err.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Preview import';
+  }
+}
+
+async function loadWatchImportFile(file) {
+  if (!file) return;
+  try {
+    if (file.size > 200 * 1024) throw new Error('Watchlist imports must be 200 KB or smaller.');
+    $('watchImportInput').value = await file.text();
+    $('watchImportInput').dataset.fileName = file.name;
+    $('watchImportFileName').textContent = file.name;
+    await previewWatchImport();
+  } catch (err) { setWatchImportError(err.message); }
+  finally { $('watchImportFile').value = ''; }
+}
+
+async function confirmWatchImport() {
+  const slugs = [...$('watchImportResults').querySelectorAll('[data-import-slug]:checked')].map((input) => input.dataset.importSlug);
+  if (!slugs.length) return;
+  const button = $('confirmWatchImport');
+  button.disabled = true;
+  button.textContent = 'Adding…';
+  setWatchImportError();
+  try {
+    const result = await api('/api/watch/import', { method:'POST', body:JSON.stringify({ slugs }) });
+    await refresh();
+    clearWatchImport(true);
+    closeWatchImport();
+    toast(`${result.added} product${result.added === 1 ? '' : 's'} added to the watchlist`);
+  } catch (err) {
+    setWatchImportError(err.message);
+    updateWatchImportSelection();
+  }
 }
 
 function historyChart(history) {
@@ -1360,9 +1482,29 @@ $('bulkPause').addEventListener('click', () => bulkWatchAction('pause'));
 $('bulkResume').addEventListener('click', () => bulkWatchAction('resume'));
 $('bulkRemove').addEventListener('click', () => bulkWatchAction('remove'));
 $('bulkClear').addEventListener('click', () => { app.selectedWatch.clear(); renderProducts(true); });
+$('openWatchImport').addEventListener('click', openWatchImport);
+$('closeWatchImport').addEventListener('click', closeWatchImport);
+$('watchImportBackdrop').addEventListener('click', closeWatchImport);
+$('chooseWatchImportFile').addEventListener('click', () => $('watchImportFile').click());
+$('watchImportFile').addEventListener('change', () => loadWatchImportFile($('watchImportFile').files?.[0]));
+$('previewWatchImport').addEventListener('click', previewWatchImport);
+$('clearWatchImport').addEventListener('click', () => { clearWatchImport(true); $('watchImportInput').focus(); });
+$('confirmWatchImport').addEventListener('click', confirmWatchImport);
+$('watchImportResults').addEventListener('change', updateWatchImportSelection);
+$('watchImportInput').addEventListener('input', () => {
+  $('watchImportInput').dataset.fileName = '';
+  $('watchImportFileName').textContent = 'No file selected';
+  app.watchImportPreview = null;
+  $('watchImportPreview').classList.add('hidden');
+  setWatchImportError();
+});
 $('closeProductDialog').addEventListener('click', closeProductDialog);
 $('productDialogBackdrop').addEventListener('click', closeProductDialog);
-document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !$('productDialog').classList.contains('hidden')) closeProductDialog(); });
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  if (!$('watchImportDialog').classList.contains('hidden')) closeWatchImport();
+  else if (!$('productDialog').classList.contains('hidden')) closeProductDialog();
+});
 $('checkBtn').addEventListener('click', async () => {
   $('checkBtn').disabled = true;
   $('checkBtn').textContent = 'Checking…';
@@ -1428,6 +1570,7 @@ $('regionPicker').addEventListener('change', async () => {
   app.currentRegion = $('regionPicker').value;
   app.latestEventId = null;
   app.selectedWatch.clear(); app.browseVisibleCount = 48; app.watchRenderKey = ''; app.browseRenderKey = '';
+  clearWatchImport(true);
   localStorage.setItem('gearbeacon.region', app.currentRegion);
   await refresh();
   toast(`Switched to ${$('regionPicker').selectedOptions[0].textContent}`);

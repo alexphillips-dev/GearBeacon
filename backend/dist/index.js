@@ -2323,6 +2323,195 @@ function productForApi(product) {
     const watch = watched ? db.prepare('SELECT created_at FROM watchlist WHERE region=? AND slug=?').get(currentRegion(), product.slug) : null;
     return { ...product, watched, watchedAt: watch?.created_at || null, watchRule: watched ? watchRule(product.slug) : null };
 }
+const WATCH_IMPORT_FIELD_ORDER = ['url', 'producturl', 'storeurl', 'slug', 'sku', 'product', 'model', 'modelnumber', 'identifier', 'name'];
+const WATCH_IMPORT_FIELDS = new Set(WATCH_IMPORT_FIELD_ORDER);
+const WATCH_IMPORT_CONTAINERS = new Set(['watchlist', 'products', 'items', 'entries']);
+function watchImportKey(value) {
+    return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+function watchImportError(message) {
+    const err = new Error(message);
+    err.statusCode = 400;
+    throw err;
+}
+function collectWatchImportJson(value, output, parentKey = 'items', depth = 0) {
+    if (depth > 8 || value == null)
+        return;
+    if (typeof value === 'string' || typeof value === 'number') {
+        if (depth <= 1 || WATCH_IMPORT_FIELDS.has(watchImportKey(parentKey)) || WATCH_IMPORT_CONTAINERS.has(watchImportKey(parentKey)))
+            output.push(String(value));
+        return;
+    }
+    if (Array.isArray(value)) {
+        value.forEach((item) => collectWatchImportJson(item, output, parentKey, depth + 1));
+        return;
+    }
+    if (typeof value !== 'object')
+        return;
+    const entries = Object.entries(value);
+    const containers = entries.filter(([key]) => WATCH_IMPORT_CONTAINERS.has(watchImportKey(key)));
+    if (containers.length) {
+        for (const [key, item] of containers)
+            collectWatchImportJson(item, output, key, depth + 1);
+        return;
+    }
+    for (const wanted of WATCH_IMPORT_FIELD_ORDER) {
+        const entry = entries.find(([key, item]) => watchImportKey(key) === wanted && item != null && (typeof item !== 'string' || item.trim()));
+        if (entry) {
+            collectWatchImportJson(entry[1], output, entry[0], depth + 1);
+            return;
+        }
+    }
+}
+function parseWatchImportCsv(text) {
+    const rows = [[]];
+    let cell = '';
+    let quoted = false;
+    for (let index = 0; index < text.length; index += 1) {
+        const character = text[index];
+        if (character === '"') {
+            if (quoted && text[index + 1] === '"') {
+                cell += '"';
+                index += 1;
+            }
+            else
+                quoted = !quoted;
+        }
+        else if (character === ',' && !quoted) {
+            rows.at(-1).push(cell);
+            cell = '';
+        }
+        else if ((character === '\n' || character === '\r') && !quoted) {
+            if (character === '\r' && text[index + 1] === '\n')
+                index += 1;
+            rows.at(-1).push(cell);
+            cell = '';
+            rows.push([]);
+        }
+        else
+            cell += character;
+    }
+    rows.at(-1).push(cell);
+    const populated = rows.filter((row) => row.some((value) => String(value).trim()));
+    if (!populated.length)
+        return [];
+    const importColumns = populated[0].map((value, index) => ({ index, key: watchImportKey(value) }))
+        .filter((item) => WATCH_IMPORT_FIELDS.has(item.key))
+        .sort((a, b) => WATCH_IMPORT_FIELD_ORDER.indexOf(a.key) - WATCH_IMPORT_FIELD_ORDER.indexOf(b.key));
+    const values = importColumns.length
+        ? populated.slice(1).map((row) => importColumns.map((item) => row[item.index]).find((value) => String(value ?? '').trim()))
+        : populated.flat();
+    return values;
+}
+function parseWatchImportContent(content, fileName = '') {
+    const text = String(content || '').replace(/^\uFEFF/, '').trim();
+    if (!text)
+        watchImportError('Paste at least one Store link, product SKU, or slug.');
+    if (Buffer.byteLength(text) > 200 * 1024)
+        watchImportError('Watchlist imports must be 200 KB or smaller.');
+    let references = [];
+    const looksJson = /^\s*[\[{]/.test(text) || /\.json$/i.test(String(fileName));
+    if (looksJson) {
+        const parsed = safeJsonParse(text, null);
+        if (parsed == null)
+            watchImportError('The selected JSON file is not valid JSON.');
+        collectWatchImportJson(parsed, references);
+    }
+    else if (/\.csv$/i.test(String(fileName)) || text.includes(',')) {
+        references = parseWatchImportCsv(text);
+    }
+    else {
+        references = text.split(/[\r\n;\t]+/);
+    }
+    references = references.map((value) => String(value ?? '').trim()).filter(Boolean);
+    const ignoredHeaders = new Set([...WATCH_IMPORT_FIELDS, ...WATCH_IMPORT_CONTAINERS]);
+    references = references.filter((value) => !ignoredHeaders.has(watchImportKey(value)));
+    if (!references.length)
+        watchImportError('No product links, SKUs, or slugs were found in that import.');
+    if (references.length > 1000)
+        watchImportError('A watchlist import can contain at most 1,000 entries.');
+    return references.map((value) => value.slice(0, 500));
+}
+function normalizedWatchImportIdentifier(value) {
+    return String(value || '').trim().toLowerCase()
+        .replace(/^(?:slug|sku|product|model|identifier)\s*[:=]\s*/i, '')
+        .replace(/^['"]|['"]$/g, '')
+        .replace(/[_\s]+/g, '-')
+        .replace(/[^a-z0-9-]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '');
+}
+function watchImportReference(value) {
+    const input = String(value || '').trim();
+    let candidate = input;
+    let sourceRegion = null;
+    let invalidUrl = false;
+    const urlCandidate = /^(?:https?:\/\/|store\.ui\.com\/)/i.test(input) ? (/^https?:\/\//i.test(input) ? input : `https://${input}`) : null;
+    if (urlCandidate) {
+        try {
+            const url = new URL(urlCandidate);
+            if (url.hostname.toLowerCase() !== 'store.ui.com')
+                invalidUrl = true;
+            const segments = url.pathname.split('/').map((part) => decodeURIComponent(part)).filter(Boolean);
+            if (REGIONS[String(segments[0] || '').toLowerCase()])
+                sourceRegion = String(segments[0]).toLowerCase();
+            const productIndex = segments.lastIndexOf('products');
+            candidate = productIndex >= 0 && segments[productIndex + 1] ? segments[productIndex + 1] : '';
+        }
+        catch {
+            invalidUrl = true;
+            candidate = '';
+        }
+    }
+    return { input, identifier: normalizedWatchImportIdentifier(candidate), sourceRegion, invalidUrl };
+}
+function previewWatchImport(content, fileName = '') {
+    const region = currentRegion();
+    const references = parseWatchImportContent(content, fileName);
+    const products = Object.values(state.products);
+    const bySlug = new Map(products.map((product) => [String(product.slug).toLowerCase(), product]));
+    const byName = new Map(products.map((product) => [normalizedWatchImportIdentifier(product.name), product]));
+    const slugPrefixes = products.map((product) => String(product.slug).toLowerCase()).sort((a, b) => b.length - a.length);
+    const seenProducts = new Set();
+    const items = references.map((value, index) => {
+        const reference = watchImportReference(value);
+        let product = bySlug.get(reference.identifier) || byName.get(reference.identifier) || null;
+        if (!product && reference.identifier) {
+            const prefix = slugPrefixes.find((slug) => reference.identifier.startsWith(`${slug}-`));
+            if (prefix)
+                product = bySlug.get(prefix) || null;
+        }
+        const base = { id: index + 1, input: reference.input, identifier: reference.identifier || null, sourceRegion: reference.sourceRegion, destinationRegion: region };
+        if (reference.invalidUrl)
+            return { ...base, status: 'unrecognized', label: 'Unsupported URL', detail: 'Only links from store.ui.com can be imported.' };
+        if (!product)
+            return { ...base, status: 'unrecognized', label: 'Not in catalog', detail: `No matching product is currently listed in the ${REGIONS[region].label} catalog. It may be discontinued or use a different identifier.` };
+        const productData = { slug: product.slug, name: product.name, category: product.category, price: product.price || null, imageUrl: product.imageUrl || null };
+        if (reference.sourceRegion && reference.sourceRegion !== region)
+            return { ...base, ...productData, status: 'region-mismatch', label: 'Other region', detail: `This link is for ${REGIONS[reference.sourceRegion].label}. Switch GearBeacon to that Store region to import it.` };
+        if (seenProducts.has(product.slug))
+            return { ...base, ...productData, status: 'duplicate', label: 'Duplicate', detail: 'This product appears more than once in the import and will only be considered once.' };
+        seenProducts.add(product.slug);
+        if (state.watchlist.includes(product.slug))
+            return { ...base, ...productData, status: 'already', label: 'Already watched', detail: 'Already on this watchlist. Its existing alert rules will be preserved.' };
+        return { ...base, ...productData, status: 'addable', label: 'Ready', detail: `${product.category}${product.price ? ` · ${product.price}` : ''} · Add to ${REGIONS[region].label}.` };
+    });
+    const count = (status) => items.filter((item) => item.status === status).length;
+    return {
+        region,
+        regionLabel: REGIONS[region].label,
+        items,
+        summary: {
+            submitted: items.length,
+            matched: items.filter((item) => item.slug).length,
+            addable: count('addable'),
+            alreadyWatched: count('already'),
+            duplicates: count('duplicate'),
+            regionMismatch: count('region-mismatch'),
+            unrecognized: count('unrecognized'),
+        },
+    };
+}
 function productDetailsForApi(slug) {
     const product = state.products[slug];
     if (!product)
@@ -3458,6 +3647,53 @@ async function handleRegionApi(req, res, url) {
             watched: true,
         });
         return sendJson(res, 200, { products: items, count: items.length });
+    }
+    if (req.method === 'POST' && url.pathname === '/api/watch/import/preview') {
+        const body = await readJsonBody(req, 256 * 1024);
+        return sendJson(res, 200, previewWatchImport(body?.content, body?.fileName));
+    }
+    if (req.method === 'POST' && url.pathname === '/api/watch/import') {
+        const body = await readJsonBody(req, 256 * 1024);
+        if (!Array.isArray(body?.slugs))
+            return sendJson(res, 400, { error: 'slugs must be an array.' });
+        if (body.slugs.length > 1000)
+            return sendJson(res, 400, { error: 'A watchlist import can add at most 1,000 products.' });
+        const slugs = [...new Set(body.slugs.map((value) => String(value || '').trim()).filter(Boolean))];
+        if (!slugs.length)
+            return sendJson(res, 400, { error: 'Select at least one matched product to import.' });
+        const hasProduct = (slug) => Object.hasOwn(state.products, slug);
+        const notFound = slugs.filter((slug) => !hasProduct(slug));
+        const alreadyWatched = slugs.filter((slug) => hasProduct(slug) && state.watchlist.includes(slug));
+        const additions = slugs.filter((slug) => hasProduct(slug) && !state.watchlist.includes(slug));
+        if (additions.length) {
+            const insert = db.prepare('INSERT INTO watchlist(region,slug,created_at) VALUES(?,?,?) ON CONFLICT(region,slug) DO NOTHING');
+            const createdAt = isoNow();
+            db.exec('BEGIN IMMEDIATE');
+            try {
+                for (const slug of additions)
+                    insert.run(currentRegion(), slug, createdAt);
+                db.exec('COMMIT');
+            }
+            catch (err) {
+                try {
+                    db.exec('ROLLBACK');
+                }
+                catch { }
+                throw err;
+            }
+            state.watchlist.push(...additions);
+            saveStateSoon();
+            writeAppLog('info', 'watchlist', `Imported ${additions.length} product${additions.length === 1 ? '' : 's'} into the ${REGIONS[currentRegion()].label} watchlist.`, { slugs: additions });
+        }
+        return sendJson(res, 200, {
+            ok: true,
+            region: currentRegion(),
+            added: additions.length,
+            alreadyWatched,
+            notFound,
+            products: additions.map((slug) => productForApi(state.products[slug])),
+            watchlist: state.watchlist,
+        });
     }
     if (req.method === 'POST' && url.pathname === '/api/watch') {
         const body = await readJsonBody(req);

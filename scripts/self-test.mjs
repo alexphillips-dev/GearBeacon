@@ -220,6 +220,28 @@ try {
   const watchedAtBeforeRestart = initialDetails.product.watchedAt;
   const initialRules = await request('/api/watch/u7-pro-xgs/rules?region=us');
   if (!initialRules.rule?.enabled || initialRules.rule.restock !== null || !initialRules.globalPreferences) throw new Error('Default per-product rules are incomplete.');
+  const jsonImportPreview = await request('/api/watch/import/preview?region=us', {
+    method:'POST',
+    body:JSON.stringify({
+      fileName:'watchlist.json',
+      content:JSON.stringify({ products:[{ url:'https://store.ui.com/us/en/category/all-cloud-gateways/products/udm-se' }, { sku:'U7-Pro-XGS-B-US' }] }),
+    }),
+  });
+  if (jsonImportPreview.summary.addable !== 1 || jsonImportPreview.summary.alreadyWatched !== 1 || !jsonImportPreview.items.some((item) => item.slug === 'u7-pro-xgs')) throw new Error(`JSON watchlist import matching failed: ${JSON.stringify(jsonImportPreview)}`);
+  const csvImportPreview = await request('/api/watch/import/preview?region=us', {
+    method:'POST',
+    body:JSON.stringify({
+      fileName:'watchlist.csv',
+      content:'product_url,sku\n"https://store.ui.com/us/en/category/all-cloud-gateways/products/udm-se",\n,u7-pro-xgs\n"https://store.ui.com/us/en/category/all-cloud-gateways/products/udm-se",\n"https://store.ui.com/ca/en/category/network-storage/products/unas-pro",\n,retired-product',
+    }),
+  });
+  if (csvImportPreview.region !== 'us' || csvImportPreview.summary.addable !== 1 || csvImportPreview.summary.alreadyWatched !== 1 || csvImportPreview.summary.duplicates !== 1 || csvImportPreview.summary.regionMismatch !== 1 || csvImportPreview.summary.unrecognized !== 1) throw new Error(`CSV watchlist import preview failed: ${JSON.stringify(csvImportPreview)}`);
+  const importedWatch = await request('/api/watch/import?region=us', { method:'POST', body:JSON.stringify({ slugs:['udm-se', 'u7-pro-xgs', 'retired-product', '__proto__'] }) });
+  if (importedWatch.added !== 1 || !importedWatch.alreadyWatched.includes('u7-pro-xgs') || !importedWatch.notFound.includes('retired-product') || !importedWatch.notFound.includes('__proto__') || !importedWatch.products.some((product) => product.slug === 'udm-se' && product.watched)) throw new Error('Confirmed watchlist import did not add only valid new products.');
+  const rulesAfterImport = await request('/api/watch/u7-pro-xgs/rules?region=us');
+  if (JSON.stringify(rulesAfterImport.rule) !== JSON.stringify(initialRules.rule)) throw new Error('Watchlist import changed an existing product alert rule.');
+  await request('/api/watch/udm-se?region=us', { method:'DELETE' });
+  if ((await request('/api/watchlist?region=us')).count !== 2) throw new Error('Watchlist import test cleanup failed.');
   const paused = await request('/api/watch/bulk?region=us', { method:'POST', body:JSON.stringify({ action:'pause', slugs:['u7-pro-xgs', 'uvc-ai-turret'], minutes:60 }) });
   if (paused.affected !== 2 || !paused.pausedUntil || !paused.products.every((product) => product.watchRule?.pausedUntil)) throw new Error('Bulk watchlist pause failed.');
   const resumed = await request('/api/watch/bulk?region=us', { method:'POST', body:JSON.stringify({ action:'resume', slugs:['u7-pro-xgs', 'uvc-ai-turret'] }) });
@@ -262,7 +284,12 @@ try {
     await delay(200);
   }
   if (!retried) throw new Error('Failed webhook delivery did not enter exponential retry state.');
-  const retryingActivity = (await request('/api/events?limit=20&region=us')).events.find((event) => event.id === restockEvent.id);
+  let retryingActivity = null;
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    retryingActivity = (await request('/api/events?limit=20&region=us')).events.find((event) => event.id === restockEvent.id);
+    if (retryingActivity?.serverAlert?.state === 'retrying') break;
+    await delay(100);
+  }
   if (retryingActivity?.serverAlert?.state !== 'retrying' || retryingActivity.serverAlert.label !== 'Retrying' || !/another delivery attempt/i.test(retryingActivity.serverAlert.detail || '')) throw new Error(`Activity feed did not reflect the live server retry outcome: ${JSON.stringify(retryingActivity?.serverAlert)}`);
   const groupedDelivery = await request('/api/notifications/log?limit=100');
   if (!groupedDelivery.notifications.some((row) => row.status === 'sent' && /grouped 2/.test(row.detail || ''))) throw new Error('Notification grouping did not combine nearby events.');
@@ -440,7 +467,7 @@ try {
   const proxyStatus = await fetchJson('/api/status', { headers:{ Cookie:proxyCookie, Origin:'https://gearbeacon.test', 'X-Forwarded-Proto':'https', 'X-Forwarded-Host':'gearbeacon.test' } }, 200);
   if (proxyStatus.response.headers.get('strict-transport-security') == null || proxyStatus.response.headers.get('access-control-allow-origin') !== 'https://gearbeacon.test') throw new Error('Proxy-mode HTTPS security headers or origin policy failed.');
 
-  console.log('\nSELF-TEST PASSED: V1.7 product history/rules + compact activity detail/server-alert outcomes + scheduling + rich multipart email/preview/image safety + guided configuration + encrypted credentials + notification mocks/HMAC/retry queue + operations + safe binds/auth/CSRF + V1.5 migration + backups/restore + updates all work.');
+  console.log('\nSELF-TEST PASSED: V1.7 watchlist TXT/CSV/JSON preview/import + product history/rules + compact activity detail/server-alert outcomes + scheduling + rich multipart email/preview/image safety + guided configuration + encrypted credentials + notification mocks/HMAC/retry queue + operations + safe binds/auth/CSRF + V1.5 migration + backups/restore + updates all work.');
 } finally {
   await stopServer();
   await new Promise((resolve) => smtpServer.close(resolve));

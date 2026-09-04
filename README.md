@@ -12,6 +12,7 @@ There is no GearBeacon cloud account, hosted database, public registration, subs
 
 - Monitors the United States, Canada, Europe, and United Kingdom UniFi Stores from one private installation.
 - Keeps separate watchlists, product state, activity, and health for every enabled region.
+- Imports watchlists from pasted UniFi Store links, product SKUs/slugs, or TXT, CSV, and JSON files with a regional match-and-confirm review before anything is added.
 - Detects restocks, sellouts, price changes, status changes, and newly listed products.
 - Shows a focused product view with current availability, store details, first/last-seen times, price history, and recent changes.
 - Supports per-product alert overrides, price-drop and target-price rules, immediate restocks, and temporary or indefinite pauses.
@@ -219,7 +220,7 @@ Only liveness, readiness, and authentication bootstrap routes work without an ow
 - `/healthz`, `/readyz`, `/api/health` — process and monitor health
 - `/api/auth/*`, `/api/onboarding/complete` — owner access and setup
 - `/api/config`, `/api/config/validate` — sanitized configuration and validation
-- `/api/products`, `/api/products/:slug`, `/api/watchlist`, `/api/watch/*`, `/api/events`, `/api/check` — regional monitor data, details, history, and per-product rules
+- `/api/products`, `/api/products/:slug`, `/api/watchlist`, `/api/watch/*`, `/api/watch/import`, `/api/watch/import/preview`, `/api/events`, `/api/check` — regional monitor data, watchlist importing, details, history, and per-product rules
 - `/api/notifications/*` — preferences, scheduling preview, individual tests, queue retry, and delivery history
 - `/api/operations`, `/api/logs` — private operational view and filtered log export
 - `/api/data/*` — integrity, backup, export, preview, and import
