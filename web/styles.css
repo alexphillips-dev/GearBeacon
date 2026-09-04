@@ -271,7 +271,7 @@ button.ghost { background: transparent; }
 .store-sku { color:var(--muted2); font-size:10px; margin-top:5px; text-transform:uppercase; letter-spacing:.045em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .store-price-row { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:14px; }
 .store-price-row strong { font-size:14px; }
-.stock-label { font-size:10px; color:var(--store-muted); white-space:nowrap; }
+.stock-label { font-size:13px; line-height:1.2; font-weight:650; color:var(--store-muted); white-space:nowrap; }
 .stock-label.in { color:var(--good); }
 .stock-label.out { color:var(--bad); }
 .stock-label.soon { color:var(--warn); }
@@ -522,7 +522,7 @@ button.watch-import-backdrop:hover { border:0; background:rgba(0,0,0,.64); trans
   .store-card-body { padding:13px 12px 15px; }
   .store-product-link h3 { font-size:13px; }
   .store-price-row { align-items:flex-start; flex-direction:column; gap:2px; margin-top:10px; }
-  .stock-label { font-size:9px; }
+  .stock-label { font-size:12px; }
   .store-watch { font-size:10px; padding:8px 6px; }
   .settings-actions { flex-direction:column; }
   .settings-actions button { width:100%; }
