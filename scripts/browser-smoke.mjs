@@ -176,6 +176,16 @@ try {
 
   await evaluate("openProductDialog('u7-pro-xgs')");
   await waitForBrowser("!document.getElementById('productDialog').classList.contains('hidden') && document.getElementById('productRuleForm')", 'Product details or rule editor did not open');
+  const dialogHoverPoints = await evaluate("(() => { const panel=document.querySelector('.product-dialog-panel').getBoundingClientRect(); return { panelX:window.innerWidth-20, backdropX:Math.max(4,Math.floor(panel.left/2)), y:Math.min(window.innerHeight-20,220) }; })()");
+  for (const theme of ['dark', 'light']) {
+    await evaluate(`applyTheme(${JSON.stringify(theme)})`);
+    await cdp.send('Input.dispatchMouseEvent', { type:'mouseMoved', x:dialogHoverPoints.panelX, y:dialogHoverPoints.y });
+    const normalBackdrop = await evaluate("getComputedStyle(document.getElementById('productDialogBackdrop')).backgroundColor");
+    await cdp.send('Input.dispatchMouseEvent', { type:'mouseMoved', x:dialogHoverPoints.backdropX, y:dialogHoverPoints.y });
+    const hoveredBackdrop = await evaluate("getComputedStyle(document.getElementById('productDialogBackdrop')).backgroundColor");
+    assert(await evaluate("document.getElementById('productDialogBackdrop').matches(':hover')"), `Pointer did not reach the product dialog backdrop in ${theme} mode.`);
+    assert(hoveredBackdrop === normalBackdrop && hoveredBackdrop === 'rgba(0, 0, 0, 0.58)', `Product dialog backdrop changed on hover in ${theme} mode: ${normalBackdrop} -> ${hoveredBackdrop}`);
+  }
   await evaluate(`(() => { const form=document.getElementById('productRuleForm'); form.elements.targetPrice.value='250'; form.elements.immediateRestock.checked=true; form.requestSubmit(); })()`);
   await waitForBrowser("app.products.find((product) => product.slug === 'u7-pro-xgs')?.watchRule?.targetPrice === 250", 'Product-specific alert rule did not save');
   await evaluate("document.getElementById('closeProductDialog').click(); toggleWatch('uvc-ai-turret')");
@@ -240,7 +250,7 @@ try {
   await evaluate("document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabSecurity').click()");
   await waitForBrowser("document.querySelectorAll('#sessionList [data-revoke-session]').length >= 1", 'Authenticated session management did not render');
 
-  console.log(`BROWSER SMOKE PASSED: ${process.platform} · setup/auth · dark/light · images · search/category/load-more · watch/rules/bulk · email settings/preview/deep-link · backup/import · operations · responsive`);
+  console.log(`BROWSER SMOKE PASSED: ${process.platform} · setup/auth · dark/light · images · search/category/load-more · stable dialog hover · watch/rules/bulk · email settings/preview/deep-link · backup/import · operations · responsive`);
 } catch (error) {
   if (serverOutput.length) process.stderr.write(`\nGearBeacon server output:\n${serverOutput.join('').slice(-12000)}\n`);
   throw error;

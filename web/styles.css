@@ -382,6 +382,7 @@ footer { margin-top:28px; padding-top:18px; border-top:1px solid var(--border); 
 .dialog-open { overflow:hidden; }
 .product-dialog { position:fixed; inset:0; z-index:120; display:flex; justify-content:flex-end; }
 .product-dialog-backdrop { position:absolute; inset:0; width:100%; height:100%; border:0; border-radius:0; background:rgba(0,0,0,.58); backdrop-filter:blur(5px); transform:none !important; }
+button.product-dialog-backdrop:hover { border:0; background:rgba(0,0,0,.58); transform:none !important; }
 .product-dialog-panel { position:relative; width:min(720px,94vw); height:100%; overflow:auto; background:var(--bg); border-left:1px solid var(--border); box-shadow:var(--shadow); padding:24px; }
 .product-dialog-head { position:sticky; top:-24px; z-index:4; display:flex; align-items:flex-start; justify-content:space-between; gap:14px; margin:-24px -24px 18px; padding:20px 24px 16px; background:color-mix(in srgb,var(--bg) 92%,transparent); backdrop-filter:blur(14px); border-bottom:1px solid var(--border); }
 .product-dialog-head h2 { margin:4px 0 0; font-size:24px; }.product-dialog-head .icon-button { font-size:25px; }
