@@ -11,29 +11,140 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  platform-test:
+    name: ${{ matrix.os }} install and launcher tests
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.16.0'
+      - name: Verify versions and compile
+        run: |
+          node scripts/check-versions.mjs
+          npx --yes -p typescript@5.8.3 tsc -p backend/tsconfig.json
+          node --check web/app.js
+          node --check scripts/self-test.mjs
+          node scripts/check-web-contract.mjs
+      - name: Fresh install, V1.5 upgrade, integration and notification mock tests
+        run: node --no-warnings scripts/self-test.mjs
+      - name: Validate shell launchers and installers
+        if: runner.os != 'Windows'
+        run: sh -n run-mac-linux.sh run-private-mac-linux.sh run-mock-mac-linux.sh deploy/*.sh
+      - name: Validate Windows installers
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          foreach ($file in Get-ChildItem deploy -Filter *.ps1) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count) { throw "$($file.Name): $($errors -join '; ')" }
+          }
+
+  starttls:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '22.16.0'
+      - run: npx --yes -p typescript@5.8.3 tsc -p backend/tsconfig.json
+      - name: Generate test-only certificate
+        run: openssl req -x509 -newkey rsa:2048 -nodes -subj '/CN=localhost' -keyout "$RUNNER_TEMP/starttls.key" -out "$RUNNER_TEMP/starttls.crt" -days 1
+      - name: Verify SMTP STARTTLS upgrade
+        env:
+          TEST_TLS_KEY: ${{ runner.temp }}/starttls.key
+          TEST_TLS_CERT: ${{ runner.temp }}/starttls.crt
+        run: node --no-warnings scripts/starttls-test.mjs
 
-      - name: Verify version consistency
-        run: node scripts/check-versions.mjs
+  docker-compose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build source image
+        run: docker compose build --build-arg VCS_REF="$GITHUB_SHA"
+      - name: Start the real Compose stack
+        env:
+          MOCK_MODE: '1'
+          GEARBEACON_SETUP_TOKEN: compose-test-token
+        run: docker compose up -d --no-build --pull never
+      - name: Wait for health and test setup gate
+        run: |
+          for attempt in $(seq 1 60); do curl --fail --silent http://127.0.0.1:8787/healthz && break; sleep 1; done
+          curl --fail --silent http://127.0.0.1:8787/healthz
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8787/api/status)" = '428'
+          docker compose ps
+      - name: Container logs on failure
+        if: failure()
+        run: docker compose logs
+      - if: always()
+        run: docker compose down --volumes
 
-      - name: Compile backend
-        run: npx --yes -p typescript@5.8.3 tsc -p backend/tsconfig.json
+  container-platform-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            name: amd64
+          - platform: linux/arm64
+            name: arm64
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Build ${{ matrix.name }} image
+        run: docker buildx build --platform '${{ matrix.platform }}' --load --build-arg VCS_REF="$GITHUB_SHA" -t 'gearbeacon:${{ matrix.name }}' .
+      - name: Run ${{ matrix.name }} image
+        run: |
+          docker run -d --name 'gearbeacon-${{ matrix.name }}' --platform '${{ matrix.platform }}' -e MOCK_MODE=1 -e GEARBEACON_SETUP_TOKEN=container-test-token 'gearbeacon:${{ matrix.name }}'
+          for attempt in $(seq 1 90); do docker exec 'gearbeacon-${{ matrix.name }}' node -e "fetch('http://127.0.0.1:8787/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" && break; sleep 1; done
+          test "$(docker inspect --format='{{.State.Running}}' 'gearbeacon-${{ matrix.name }}')" = true
+      - if: failure()
+        run: docker logs 'gearbeacon-${{ matrix.name }}'
+      - if: always()
+        run: docker rm -f 'gearbeacon-${{ matrix.name }}' || true
 
-      - name: Check browser JavaScript
-        run: node --check web/app.js
-
-      - name: Run GearBeacon self-test
-        run: node --no-warnings scripts/self-test.mjs
-
-      - name: Build Docker image
-        run: docker build -t gearbeacon:test .
+  standalone:
+    name: Standalone ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: Linux x64
+          - os: ubuntu-24.04-arm
+            name: Linux ARM64
+          - os: windows-latest
+            name: Windows x64
+          - os: macos-latest
+            name: macOS ARM64
+          - os: macos-26-intel
+            name: macOS x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '26.x'
+      - run: npx --yes -p typescript@5.8.3 tsc -p backend/tsconfig.json
+      - name: Build standalone package
+        env:
+          GEARBEACON_BUILD_COMMIT: ${{ github.sha }}
+        run: node scripts/build-standalone.mjs
+      - name: Smoke-test standalone package
+        shell: bash
+        env:
+          EXPECTED_BUILD_COMMIT: ${{ github.sha }}
+        run: node scripts/standalone-smoke.mjs dist/standalone/GearBeacon-v1.6.0-*/

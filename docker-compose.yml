@@ -1,5 +1,7 @@
 services:
   gearbeacon:
+    image: "ghcr.io/alexphillips-dev/gearbeacon:${GEARBEACON_IMAGE_TAG:-latest}"
+    pull_policy: missing
     build: .
     restart: unless-stopped
     ports:
@@ -8,11 +10,13 @@ services:
       - "127.0.0.1:8787:8787"
     environment:
       PORT: "8787"
+      MOCK_MODE: "${MOCK_MODE:-0}"
       REGIONS: "${REGIONS:-us}"
       POLL_SECONDS: "60"
       GEARBEACON_ACCESS_MODE: "private"
       GEARBEACON_BIND_HOST: "0.0.0.0"
       GEARBEACON_DATA_DIR: "/data"
+      GEARBEACON_IMAGE: "ghcr.io/alexphillips-dev/gearbeacon:${GEARBEACON_IMAGE_TAG:-latest}"
       GEARBEACON_SETUP_TOKEN: "${GEARBEACON_SETUP_TOKEN:-}"
       GEARBEACON_OWNER_PASSWORD: "${GEARBEACON_OWNER_PASSWORD:-}"
       GEARBEACON_PUBLIC_BASE_URL: "${GEARBEACON_PUBLIC_BASE_URL:-}"
@@ -34,6 +38,11 @@ services:
       SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
       SMTP_FROM: "${SMTP_FROM:-}"
       SMTP_TO: "${SMTP_TO:-}"
+      SMTP_STARTTLS: "${SMTP_STARTTLS:-1}"
+      SMTP_REJECT_UNAUTHORIZED: "${SMTP_REJECT_UNAUTHORIZED:-1}"
+      GEARBEACON_WEBHOOK_HMAC_SECRET: "${GEARBEACON_WEBHOOK_HMAC_SECRET:-}"
+      GEARBEACON_NOTIFICATION_MAX_ATTEMPTS: "${GEARBEACON_NOTIFICATION_MAX_ATTEMPTS:-5}"
+      GEARBEACON_NOTIFICATION_GROUP_SECONDS: "${GEARBEACON_NOTIFICATION_GROUP_SECONDS:-0}"
     volumes:
       - gearbeacon-data:/data
 

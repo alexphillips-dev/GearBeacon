@@ -5,8 +5,14 @@ GearBeacon is a private, browser-based monitor that runs on your own Windows,
 macOS, Linux, NAS, home server, or Docker host. It has no public account or
 hosted GearBeacon database.
 
-Requirements
-------------
+Easiest install
+---------------
+Download the checksummed standalone package for Windows x64, macOS x64/ARM64,
+or Linux x64/ARM64. It does not require Node.js. Run the executable directly or use
+the included service installer. Uninstall preserves data by default.
+
+Source requirements
+-------------------
 Node.js 22.13 or newer, or Docker.
 
 One-computer launch
@@ -40,9 +46,11 @@ owner setup token. SQLite data persists in the gearbeacon-data volume.
 
 Data safety
 -----------
-Settings includes validated backups, encrypted export, restore preview/import,
-update checks, notification preferences, owner sessions, and outbound-connection
-visibility. Credentials and sessions are never included in application exports.
+The first-run browser wizard configures owner security, regions, private access,
+notification channels, and validated backup retention. Operations shows regional
+health, queued delivery failures, backup integrity, storage, logs, security
+warnings, and exact build information. Integration credentials are encrypted
+with a local key outside SQLite and excluded from application exports.
 
 Automated verification
 ----------------------

@@ -1,6 +1,6 @@
 {
   "name": "gearbeacon-backend",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "private": true,
   "description": "Private self-hosted Ubiquiti product monitor with a browser dashboard and server-side notifications",
   "license": "Apache-2.0",

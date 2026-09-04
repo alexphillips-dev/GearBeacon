@@ -4,314 +4,229 @@
 
 **Know the second it's back.**
 
-GearBeacon is a private, self-hosted Ubiquiti and UniFi Store inventory monitor. It provides one browser dashboard, one SQLite database, and one central polling service that you control on Windows, macOS, Linux, a home server, NAS, or Docker host.
+GearBeacon is a private, self-hosted Ubiquiti and UniFi Store inventory monitor. One installation provides a browser dashboard, regional watchlists, reliable notifications, and an upgrade-safe SQLite database on a Windows PC, Mac, Linux server, NAS, or Docker host.
 
-GearBeacon has no hosted account system, public multi-user service, subscription, analytics, or telemetry. It is an independent project and is not affiliated with or endorsed by Ubiquiti Inc.
+There is no GearBeacon cloud account, hosted database, public registration, subscription, analytics, or telemetry. GearBeacon is independent and is not affiliated with or endorsed by Ubiquiti Inc.
 
-## Highlights
+## What it does
 
-- Browse the United States, Canada, Europe, and United Kingdom UniFi Store catalogs.
-- Monitor multiple configured regions from one private instance.
-- Build separate persistent watchlists for each region.
-- Detect restocks, sellouts, price changes, status changes, and new products.
-- Send browser, ntfy, Discord, Gotify, email, or generic webhook notifications.
-- Protect remote dashboards and API requests with single-owner authentication.
-- Store only scrypt password hashes and SHA-256 session-token hashes.
-- Reject cross-origin requests and require CSRF tokens for authenticated changes.
-- Keep upgrade-safe SQLite data with validated scheduled and on-demand backups.
-- Export passphrase-encrypted backup files and preview them before restoring.
-- Reject suspicious or incomplete catalog responses rather than creating false events.
-- Run directly with Node.js or in an amd64/arm64 Docker container.
+- Monitors the United States, Canada, Europe, and United Kingdom UniFi Stores from one private installation.
+- Keeps separate watchlists, product state, activity, and health for every enabled region.
+- Detects restocks, sellouts, price changes, status changes, and newly listed products.
+- Delivers browser, ntfy, Discord, Gotify, SMTP email, or generic webhook alerts.
+- Queues delivery durably, retries failures with exponential backoff, and can group nearby events.
+- Signs generic webhooks with HMAC-SHA256 and supports optional bearer authentication.
+- Configures stores, access, backups, and notification integrations in the browser.
+- Encrypts saved notification credentials using a generated installation key stored outside SQLite with restricted permissions.
+- Protects private and reverse-proxy installations with a single owner password, secure sessions, CSRF checks, origin checks, and security headers.
+- Validates catalogs to avoid false stock events when an upstream response is partial.
+- Creates validated scheduled, manual, pre-import, and pre-update SQLite backups.
+- Exports passphrase-encrypted transfer files and previews them before restoring.
+- Shows region health, delivery failures, backup integrity, storage, security warnings, logs, and exact build information in Operations.
+- Detects updates but never silently downloads or installs one.
 
-## Deployment model
+## Choose an installation
 
-GearBeacon is intentionally a single-owner application. Everyone who signs in to an instance sees that instance's shared regional watchlists and history. There are no public registrations, separate user accounts, or external GearBeacon database.
+### Standalone package — easiest
 
-```text
-UniFi Store regions
-        │
-        ▼
-Private GearBeacon instance
-        │
-        ├── catalog validation and stock comparison
-        ├── regional watchlists and SQLite history
-        ├── owner authentication and encrypted exports
-        ├── browser dashboard
-        └── optional self-hosted notification services
-```
+Download the package for your operating system from [GitHub Releases](https://github.com/alexphillips-dev/GearBeacon/releases). It contains its own Node runtime; Node.js does not need to be installed.
 
-The default direct launch listens only on `127.0.0.1`. GearBeacon refuses an unauthenticated non-loopback bind unless the emergency insecure override is explicitly enabled.
+- **Windows x64:** run `GearBeacon.exe` directly, or run `install-windows-service.ps1` from an elevated PowerShell window for automatic startup.
+- **macOS Intel or Apple Silicon:** run `./gearbeacon`, or use `sudo ./install-macos-service.sh` for a LaunchDaemon.
+- **Linux x64 or ARM64:** run `./gearbeacon`, or use `sudo ./install-linux-service.sh` for a hardened systemd service.
 
-## Requirements
+The uninstallers preserve GearBeacon data by default. Their explicit `-RemoveData` or `--remove-data` option is required to delete it. Release packages are currently unsigned; signing and macOS notarization can be added after project certificates are available. Verify the adjacent SHA-256 checksum before installing.
 
-- Node.js 22.13 or newer for direct Windows, macOS, or Linux operation
-- A modern web browser
-- Docker Engine and Docker Compose for container operation
+### Source checkout
 
-No package installation or external application database is required. The backend uses Node's built-in SQLite implementation.
+Requires Node.js 22.13 or newer. No `npm install` is required because the application uses Node's built-in SQLite implementation.
 
-## Quick start
-
-### Local computer
-
-Windows:
+Windows local-only launch:
 
 ```text
 run-windows.bat
 ```
 
-macOS or Linux:
+macOS or Linux local-only launch:
 
 ```bash
 chmod +x run-mac-linux.sh
 ./run-mac-linux.sh
 ```
 
-Open `http://localhost:8787`. Local mode listens only on the same computer and does not require a password unless you create one in Settings.
+Open `http://localhost:8787`.
 
-### Offline demonstration
+Use `run-private-windows.bat` or `./run-private-mac-linux.sh` for a trusted LAN or private VPN server. GearBeacon prints a one-time setup token for authenticated first start.
 
-Mock mode never contacts the UniFi Store:
-
-```text
-run-mock-windows.bat
-```
+### Docker Compose
 
 ```bash
-./run-mock-mac-linux.sh
-```
-
-### Private LAN or VPN server
-
-Use the private launcher:
-
-```text
-run-private-windows.bat
-```
-
-```bash
-./run-private-mac-linux.sh
-```
-
-On first start, GearBeacon prints a random one-time setup token. Open the server address in a browser, enter that token, and create an owner password of at least 12 characters. The token stops working as soon as setup finishes.
-
-Allow TCP port `8787` through the host firewall only for the private network that should reach GearBeacon. A private VPN such as Tailscale or WireGuard is preferable for access away from home. Use HTTPS when traffic crosses an untrusted network.
-
-## Docker
-
-Build and start the included Compose deployment:
-
-```bash
-docker compose up -d --build
+docker compose up -d
 docker compose logs gearbeacon
 ```
 
-The logs contain the one-time owner setup token. Open `http://localhost:8787` and complete setup. Compose publishes `127.0.0.1:8787` by default and persists data in the `gearbeacon-data` volume.
+Compose first uses the published multi-platform image and can build the included Dockerfile when an image is unavailable. It publishes only `127.0.0.1:8787` on the host by default and persists `/data` in the `gearbeacon-data` volume. Images support `linux/amd64` and `linux/arm64` and run as an unprivileged user.
 
-Tagged releases also publish multi-platform images to GitHub Container Registry:
+To build the checkout explicitly:
 
 ```bash
-docker pull ghcr.io/alexphillips-dev/gearbeacon:latest
-docker run -d \
-  --name gearbeacon \
-  --restart unless-stopped \
-  -p 127.0.0.1:8787:8787 \
-  -v gearbeacon-data:/data \
-  -e GEARBEACON_ACCESS_MODE=private \
-  -e GEARBEACON_BIND_HOST=0.0.0.0 \
-  ghcr.io/alexphillips-dev/gearbeacon:latest
-docker logs gearbeacon
+docker compose build
+docker compose up -d --no-build --pull never
 ```
 
-The image runs as the unprivileged `node` user and supports `linux/amd64` and `linux/arm64`.
+## Guided first run
+
+On a new installation, the browser wizard walks through:
+
+1. Creating the private owner password.
+2. Selecting UniFi Store regions and the access mode.
+3. Adding optional notification channels.
+4. Choosing backup interval and retention, then testing the store and notifications.
+5. Reviewing the final URL, security state, and any restart requirement.
+
+In authenticated modes, enter the one-time token printed by the process or container before the wizard. A region, bind-address, or access-mode change is saved safely but requires one restart because it changes process-level listeners. Operational settings take effect immediately.
 
 ## Access modes
 
-| Mode | Default bind | Authentication | Intended use |
+| Mode | Default bind | Owner password | Use |
 |---|---|---|---|
 | `local` | `127.0.0.1` | Optional | One computer |
-| `private` | `0.0.0.0` | Required | Trusted LAN, private VPN, container, or server |
+| `private` | `0.0.0.0` | Required | Trusted LAN, private VPN, server, or container |
 | `proxy` | `127.0.0.1` | Required | HTTPS reverse proxy on the same host |
 
-For reverse-proxy deployments, set `GEARBEACON_ACCESS_MODE=proxy`, configure `GEARBEACON_PUBLIC_BASE_URL` with the HTTPS URL, and forward the original `Host`, `X-Forwarded-Host`, `X-Forwarded-Proto`, and `X-Forwarded-For` headers. Set `GEARBEACON_BIND_HOST=0.0.0.0` only when the proxy reaches GearBeacon over an isolated container network rather than the host loopback interface.
+GearBeacon refuses an unauthenticated `local` server on a non-loopback address. Do not publish it directly to the unrestricted internet. Prefer WireGuard, Tailscale, or another private VPN. If routed access is necessary, terminate HTTPS at a maintained reverse proxy and restrict firewall sources.
 
-Owner security includes:
+Proxy mode accepts `X-Forwarded-Host`, `X-Forwarded-Proto`, and `X-Forwarded-For` only when explicitly enabled. Set an HTTPS public URL so session cookies are `Secure`; forwarded HTTPS responses also receive HSTS.
 
-- one-time setup token or initial password/password-file provisioning;
-- scrypt password hashing with a unique random salt;
-- cryptographically random browser sessions whose raw tokens are never stored;
-- `HttpOnly`, `SameSite=Strict`, and HTTPS `Secure` cookies;
-- CSRF validation for every authenticated state-changing request;
-- same-origin CORS by default with an explicit origin allowlist option;
-- sign-in throttling, session visibility, individual revocation, and password rotation;
-- security response headers and a restrictive Content Security Policy.
+See [deployment guidance](deploy/README.md) for service installation, Caddy/Nginx examples, recovery, updates, and rollback.
 
-## Multiple regions
-
-Use a comma-separated region list:
-
-```text
-REGIONS=us,ca,eu,uk
-```
-
-The dashboard displays a region selector when more than one is configured. Each region has its own products, watchlist, events, monitor health, retry state, and polling context. Notification preferences are instance-wide.
-
-## Persistent data and backups
+## Data and backup safety
 
 Default data locations:
 
-- Windows: `%LOCALAPPDATA%\GearBeacon\gearbeacon.sqlite3`
-- macOS: `~/Library/Application Support/GearBeacon/gearbeacon.sqlite3`
-- Linux: `${XDG_DATA_HOME:-~/.local/share}/GearBeacon/gearbeacon.sqlite3`
-- Docker: `/data/gearbeacon.sqlite3` in the mounted volume
+- Windows source/portable: `%LOCALAPPDATA%\GearBeacon`
+- Windows service: `%ProgramData%\GearBeacon`
+- macOS portable: `~/Library/Application Support/GearBeacon`
+- macOS service: `/Library/Application Support/GearBeacon`
+- Linux portable: `${XDG_DATA_HOME:-~/.local/share}/GearBeacon`
+- Linux service: `/var/lib/gearbeacon`
+- Docker: `/data` in the named volume
 
-Mock mode uses a separate `gearbeacon.mock.sqlite3` database.
+The data directory contains the SQLite database, validated backup files, and `secrets.key`. Keep the key with the installation when restoring the database if it contains saved notification credentials. Losing the key does not lose watchlists or history, but encrypted integration secrets must be entered again.
 
-Data safeguards include:
-
-- transactional schema migrations;
-- a validated safety backup before application-version migrations;
-- a validated safety backup before every import;
-- scheduled backups every 24 hours by default;
-- configurable retention, defaulting to ten database backups;
-- SQLite integrity checks before and after backup creation;
-- encrypted AES-256-GCM exports using a scrypt-derived key;
-- restore preview showing regional watchlist, product, and event counts;
-- an optional plain JSON export for controlled migration workflows;
-- one-time import support for older GearBeacon JSON state.
-
-Owner credentials and sessions are never included in exported application data.
+Backups use `PRAGMA integrity_check`, a consistent SQLite `VACUUM INTO` snapshot, and a second integrity check. GearBeacon automatically makes a validated backup before a schema upgrade or import. Encrypted exports use AES-256-GCM with a scrypt-derived key; owner credentials, sessions, and local integration secrets are excluded.
 
 ## Notifications
 
-Browser notifications work while the dashboard is open. For always-on delivery, configure one or more server-side channels:
+Channel configuration and individual test buttons are in Settings. A channel can be configured but independently disabled. Restock alerts for watched products are enabled by default; sellout, price, status, and new-product alerts are opt-in.
 
-- `ntfy`, including a private self-hosted ntfy server and bearer token;
-- Discord webhook;
-- Gotify;
-- SMTP email with implicit TLS or STARTTLS;
-- a generic JSON webhook with an optional bearer token.
+Normal events are written to a persistent SQLite queue before delivery. Failed attempts use exponential backoff up to the configured limit. Operations shows pending/delivered/failed counts, failure reasons, and an owner-controlled retry action. The optional grouping window combines nearby events for the same region and channel.
 
-Restocks are enabled by default for watched products. Sellout, price-change, status-change, and new-product notifications are opt-in. Delivery attempts are recorded in the SQLite notification log.
+SMTP port 465 uses implicit TLS. Other SMTP ports require STARTTLS by default, and credentials are never sent on an unencrypted connection. Certificate validation is enabled by default.
 
-The generic webhook receives:
+Generic webhooks receive JSON and, when a signing secret is configured, these headers:
 
-```json
-{
-  "source": "GearBeacon",
-  "version": "1.5.0",
-  "title": "U7 Pro XGS is back in stock",
-  "message": "$299.00 · United States · detected now",
-  "event": {},
-  "sentAt": "2026-09-04T00:00:00.000Z"
-}
+```text
+X-GearBeacon-Timestamp: <unix timestamp>
+X-GearBeacon-Signature: sha256=<HMAC of timestamp + "." + exact body>
 ```
 
-## Monitoring reliability
+Verify the HMAC against the raw request body and reject stale timestamps at the receiver.
 
-The first successful observation establishes a baseline and does not send alerts for products that were already available. Later checks compare exact product state and preserve products missing from a partial response.
+## Operations and updates
 
-Reliability controls include catalog-size sanity checks, partial-category degradation reporting, exponential retry backoff capped at 15 minutes, stale-monitor detection, duplicate-check prevention, startup baselines, and independent health state per region.
+The Operations page includes every region's last/next check, product and watch counts, catalog errors, notification queue outcomes, backup history and integrity, database/free-space sizes, security warnings, filtered downloadable logs, runtime architecture, commit, and container image information.
 
-Health endpoints:
+**Check for updates** reads GitHub Releases (or a configured manifest) and shows notes and download links. **Prepare safe update** flushes current state, creates and validates a pre-update backup, and displays the platform command. GearBeacon never performs an unattended update.
 
-- `GET /healthz` confirms that the process is alive and intentionally exposes no private state.
-- `GET /readyz` confirms that configured regional monitors are current.
-- `GET /api/health` returns authenticated detailed monitor health.
+Standalone helpers require an explicit backup confirmation flag and validate the release SHA-256 file. Docker updates keep the named data volume. To roll back, stop GearBeacon, restore the validated pre-update SQLite backup, and reinstall or select the previous application/image version.
 
-## Configuration
+## Environment configuration
 
-Copy `.env.example` as a reference and provide variables through the shell, service manager, or container environment.
+Browser-saved settings are intended for most owners. Environment values seed new installations and remain useful for automation.
 
 | Variable | Default | Purpose |
 |---|---:|---|
-| `PORT` | `8787` | Dashboard and API port |
-| `REGIONS` | `us` | Comma-separated `us`, `ca`, `eu`, and/or `uk` |
-| `POLL_SECONDS` | `60` | Polling cadence; minimum 30 seconds |
+| `PORT` | `8787` | Dashboard/API port |
+| `REGIONS` | `us` | Comma-separated `us`, `ca`, `eu`, `uk` |
+| `POLL_SECONDS` | `60` | Poll interval; minimum 30 seconds |
 | `GEARBEACON_ACCESS_MODE` | `local` | `local`, `private`, or `proxy` |
-| `GEARBEACON_BIND_HOST` | mode-dependent | Listening address |
-| `GEARBEACON_SETUP_TOKEN` | random | Optional fixed first-run token |
-| `GEARBEACON_OWNER_PASSWORD_FILE` | blank | Preferred initial/reset password source |
-| `GEARBEACON_OWNER_PASSWORD` | blank | Optional initial password environment value |
-| `GEARBEACON_RESET_OWNER_PASSWORD` | `0` | Reset from configured password once, then disable |
-| `GEARBEACON_SESSION_HOURS` | `168` | Owner session lifetime |
-| `GEARBEACON_PUBLIC_BASE_URL` | blank | Canonical HTTPS URL and notification link |
-| `GEARBEACON_ALLOWED_ORIGINS` | same origin | Extra comma-separated browser origins |
-| `GEARBEACON_COOKIE_SECURE` | HTTPS URL detection | Force HTTPS-only session cookies |
+| `GEARBEACON_BIND_HOST` | mode default | Listening address |
+| `GEARBEACON_SETUP_TOKEN` | random | Optional fixed one-time token |
+| `GEARBEACON_OWNER_PASSWORD_FILE` | blank | Initial/recovery password file |
+| `GEARBEACON_OWNER_PASSWORD` | blank | Initial/recovery password value |
+| `GEARBEACON_RESET_OWNER_PASSWORD` | `0` | Apply configured recovery password and revoke sessions |
+| `GEARBEACON_PUBLIC_BASE_URL` | blank | Canonical URL and notification link |
+| `GEARBEACON_ALLOWED_ORIGINS` | same origin | Extra browser origins |
+| `GEARBEACON_COOKIE_SECURE` | URL detection | Force `Secure` cookies |
 | `GEARBEACON_DATA_DIR` | OS data folder | Persistent data override |
-| `GEARBEACON_BACKUP_INTERVAL_HOURS` | `24` | Scheduled backup interval; `0` disables |
-| `GEARBEACON_BACKUP_RETENTION` | `10` | Number of database backups retained |
-| `NTFY_BASE_URL` | `https://ntfy.sh` | Hosted or self-hosted ntfy base URL |
-| `NTFY_TOPIC` | blank | ntfy topic |
-| `NTFY_TOKEN` | blank | Optional ntfy bearer token |
-| `DISCORD_WEBHOOK_URL` | blank | Discord notification webhook |
-| `GOTIFY_BASE_URL` / `GOTIFY_TOKEN` | blank | Gotify server and application token |
-| `GEARBEACON_WEBHOOK_URL` | blank | Generic JSON notification webhook |
-| `GEARBEACON_WEBHOOK_TOKEN` | blank | Optional generic webhook bearer token |
-| `SMTP_HOST` / `SMTP_PORT` | blank / `587` | SMTP notification server |
-| `SMTP_SECURE` | auto for port 465 | Use implicit TLS; port 587 upgrades with STARTTLS when offered |
-| `SMTP_USER` / `SMTP_PASSWORD` | blank | Optional SMTP credentials; never sent without TLS |
-| `SMTP_FROM` / `SMTP_TO` | blank | Sender and comma-separated recipients |
-| `GEARBEACON_GITHUB_RELEASE_API` | project releases | Manual update-check source; blank disables |
-| `GEARBEACON_UPDATE_MANIFEST_URL` | blank | Custom update manifest/API override |
-| `GEARBEACON_MIN_CATALOG_RATIO` | `0.55` | Reject unexpectedly small catalogs |
-| `GEARBEACON_STALE_AFTER_SECONDS` | at least 180 | Monitor stale threshold |
-| `MOCK_MODE` | `0` | Offline demonstration catalog |
+| `GEARBEACON_BACKUP_INTERVAL_HOURS` | `24` | `0` disables scheduled backups |
+| `GEARBEACON_BACKUP_RETENTION` | `10` | Database backups to retain |
+| `GEARBEACON_NOTIFICATION_MAX_ATTEMPTS` | `5` | Delivery attempt limit |
+| `GEARBEACON_NOTIFICATION_GROUP_SECONDS` | `0` | Optional event grouping window |
+| `NTFY_BASE_URL` / `NTFY_TOPIC` / `NTFY_TOKEN` | blank | ntfy integration |
+| `DISCORD_WEBHOOK_URL` | blank | Discord webhook |
+| `GOTIFY_BASE_URL` / `GOTIFY_TOKEN` | blank | Gotify integration |
+| `GEARBEACON_WEBHOOK_URL` | blank | Generic webhook |
+| `GEARBEACON_WEBHOOK_TOKEN` | blank | Optional bearer token |
+| `GEARBEACON_WEBHOOK_HMAC_SECRET` | blank | Optional signing secret |
+| `SMTP_HOST` / `SMTP_PORT` | blank / `587` | SMTP server |
+| `SMTP_SECURE` | port-based | Implicit TLS |
+| `SMTP_STARTTLS` | `1` | Require STARTTLS when not using implicit TLS |
+| `SMTP_REJECT_UNAUTHORIZED` | `1` | Validate SMTP certificate |
+| `SMTP_USER` / `SMTP_PASSWORD` | blank | SMTP credentials |
+| `SMTP_FROM` / `SMTP_TO` | blank | Sender and recipients |
+| `GEARBEACON_BUILD_COMMIT` / `GEARBEACON_IMAGE` | blank | Build provenance shown in Operations |
+| `GEARBEACON_GITHUB_RELEASE_API` | project releases | Manual update source; blank disables |
+| `GEARBEACON_UPDATE_MANIFEST_URL` | blank | Custom update channel |
+| `GEARBEACON_MIN_CATALOG_RATIO` | `0.55` | Partial-catalog rejection threshold |
+| `GEARBEACON_STALE_AFTER_SECONDS` | at least `180` | Stale monitor threshold |
+| `MOCK_MODE` | `0` | Offline demonstration catalog/database |
 
-See [deployment guidance](deploy/README.md) for Windows, macOS, Linux, Docker, LAN/VPN, and reverse-proxy examples.
+See [.env.example](.env.example) for a copyable template.
 
-## API
+## API and health
 
-Only `/healthz`, `/readyz`, `/api/auth/status`, `/api/auth/setup`, and `/api/auth/login` are reachable before authentication. All catalog, watchlist, history, notification, update, and data-management routes require the owner session in authenticated modes.
+Only liveness, readiness, and authentication bootstrap routes work without an owner session in authenticated modes. State-changing authenticated requests also require the session's `X-CSRF-Token`.
 
-State-changing authenticated API requests require the session's `X-CSRF-Token`. Region-aware routes accept `?region=us`, `?region=ca`, `?region=eu`, or `?region=uk` when configured.
-
-Main route groups:
-
-- `/api/auth/*` — setup, login, logout, password, and sessions
-- `/api/status`, `/api/health` — monitor and privacy state
-- `/api/products`, `/api/watchlist`, `/api/watch/*`, `/api/events`, `/api/check`
-- `/api/notifications/*` — preferences, test, and delivery log
-- `/api/data/*` — database information, backup, export, preview, and import
-- `/api/update/check` — owner-initiated release check
+- `/healthz`, `/readyz`, `/api/health` — process and monitor health
+- `/api/auth/*`, `/api/onboarding/complete` — owner access and setup
+- `/api/config`, `/api/config/validate` — sanitized configuration and validation
+- `/api/products`, `/api/watchlist`, `/api/watch/*`, `/api/events`, `/api/check` — regional monitor data
+- `/api/notifications/*` — preferences, individual tests, queue retry, and delivery history
+- `/api/operations`, `/api/logs` — private operational view and filtered log export
+- `/api/data/*` — integrity, backup, export, preview, and import
+- `/api/update/check`, `/api/update/prepare` — manual release information and validated preparation
 
 ## Development and verification
-
-From the repository root:
 
 ```bash
 node scripts/check-versions.mjs
 npx --yes -p typescript@5.8.3 tsc -p backend/tsconfig.json
 node --check web/app.js
+node scripts/check-web-contract.mjs
 node --no-warnings scripts/self-test.mjs
-docker build -t gearbeacon:test .
+docker compose build
 ```
 
-The end-to-end test uses temporary databases and verifies safe bind refusal, owner setup/login, password and session hashing, CSRF/origin defenses, multi-region isolation, stock events, SQLite integrity, validated backups, encrypted restore, restart persistence, migration backups, and update fallback behavior.
+CI exercises fresh installs and database upgrades on Windows, macOS, and Linux; browser configuration; integration-secret encryption; every notification mock; webhook signing; SMTP STARTTLS; authentication, CSRF, origin, secure-cookie, and forwarded-header behavior; launcher syntax; real Docker Compose startup; amd64/arm64 containers; and native standalone packages. CodeQL and Trivy scan source and container images.
 
-CI runs for pushes and pull requests targeting `dev` or `main`. Tagged releases produce a ZIP, SHA-256 checksum, and multi-platform GHCR image.
+Tagged releases produce checksummed standalone packages for Windows x64, macOS x64/ARM64, and Linux x64/ARM64, plus amd64/arm64 GHCR images. Standalone builds use Node's single-executable application tooling.
 
-## Project structure
+## Project layout
 
 | Path | Purpose |
 |---|---|
-| `backend/src/` | TypeScript server, authentication, monitoring, persistence, and notifications |
-| `backend/dist/` | Compiled backend used by launchers and containers |
-| `web/` | Browser dashboard and static assets |
-| `scripts/` | Version consistency and end-to-end verification |
-| `deploy/` | Self-hosting and security guidance |
-| `.github/workflows/` | CI and release automation |
+| `backend/src` / `backend/dist` | Server source and compiled CommonJS application |
+| `web` | Browser dashboard and assets |
+| `deploy` | Service installers, uninstallers, updaters, and hosting guidance |
+| `scripts` | Version, integration, STARTTLS, packaging, and smoke tests |
+| `.github/workflows` | Cross-platform CI, security scans, and releases |
 
-Release history is in [CHANGELOG.md](CHANGELOG.md).
+Release-specific history belongs in [CHANGELOG.md](CHANGELOG.md), keeping this README current and readable.
 
-## Store integration and trademarks
+## License and trademarks
 
-GearBeacon follows publicly reachable data used by the UniFi Store frontend. It does not bypass authentication, rate limits, or anti-bot controls. This is not a guaranteed public API, so catalog responses are validated before they become inventory events.
+Copyright 2026 alexphillips-dev. GearBeacon is licensed under the [Apache License 2.0](LICENSE); see [NOTICE](NOTICE).
 
-GearBeacon is not affiliated with or endorsed by Ubiquiti Inc. Ubiquiti and UniFi are trademarks of their respective owner. The Apache License does not grant permission to use project or third-party trademarks beyond the rights stated in that license.
-
-## License
-
-Copyright 2026 alexphillips-dev.
-
-GearBeacon is licensed under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for attribution and project notices.
+Ubiquiti and UniFi are trademarks of their respective owner. The license does not grant permission to use GearBeacon or third-party trademarks beyond applicable law.

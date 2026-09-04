@@ -1,4 +1,4 @@
-// GearBeacon V1.5 backend
+// GearBeacon V1.6 backend
 // Private, owner-operated stock monitoring for local and self-hosted installs.
 // @ts-nocheck
 
@@ -13,8 +13,8 @@ const { AsyncLocalStorage } = require('node:async_hooks');
 const { URL } = require('node:url');
 const { DatabaseSync } = require('node:sqlite');
 
-const APP_VERSION = '1.5.0';
-const DATABASE_SCHEMA_VERSION = 4;
+const APP_VERSION = '1.6.0';
+const DATABASE_SCHEMA_VERSION = 5;
 const STORE_BASE = 'https://store.ui.com';
 const REGIONS = {
   us: { label: 'United States', path: 'us/en', currency: 'USD' },
@@ -51,49 +51,61 @@ const requestedRegions = String(process.env.REGIONS || process.env.REGION || 'us
   .split(',').map((value) => value.trim().toLowerCase()).filter(Boolean);
 const ACTIVE_REGIONS = [...new Set(requestedRegions.filter((value) => REGIONS[value]))];
 if (!ACTIVE_REGIONS.length) ACTIVE_REGIONS.push('us');
-const DEFAULT_REGION = ACTIVE_REGIONS[0];
+let DEFAULT_REGION = ACTIVE_REGIONS[0];
 const regionContext = new AsyncLocalStorage();
 function currentRegion() { return regionContext.getStore() || DEFAULT_REGION; }
 
 const PORT = Number(process.env.PORT || 8787);
-const POLL_SECONDS = Math.max(30, Number(process.env.POLL_SECONDS || 60));
-const NTFY_TOPIC = String(process.env.NTFY_TOPIC || '').trim();
-const NTFY_BASE_URL = String(process.env.NTFY_BASE_URL || 'https://ntfy.sh').trim().replace(/\/$/, '');
-const NTFY_TOKEN = String(process.env.NTFY_TOKEN || '').trim();
-const DISCORD_WEBHOOK_URL = String(process.env.DISCORD_WEBHOOK_URL || '').trim();
-const GENERIC_WEBHOOK_URL = String(process.env.GEARBEACON_WEBHOOK_URL || '').trim();
-const GENERIC_WEBHOOK_TOKEN = String(process.env.GEARBEACON_WEBHOOK_TOKEN || '').trim();
-const GOTIFY_BASE_URL = String(process.env.GOTIFY_BASE_URL || '').trim().replace(/\/$/, '');
-const GOTIFY_TOKEN = String(process.env.GOTIFY_TOKEN || '').trim();
-const SMTP_HOST = String(process.env.SMTP_HOST || '').trim();
-const SMTP_PORT = Math.max(1, Number(process.env.SMTP_PORT || 587));
-const SMTP_SECURE = ['1', 'true', 'yes'].includes(String(process.env.SMTP_SECURE || '').toLowerCase()) || SMTP_PORT === 465;
-const SMTP_USER = String(process.env.SMTP_USER || '');
-const SMTP_PASSWORD = String(process.env.SMTP_PASSWORD || '');
-const SMTP_FROM = String(process.env.SMTP_FROM || '').trim();
-const SMTP_TO = String(process.env.SMTP_TO || '').split(',').map((value) => value.trim()).filter(Boolean);
+let POLL_SECONDS = Math.max(30, Number(process.env.POLL_SECONDS || 60));
+let NTFY_TOPIC = String(process.env.NTFY_TOPIC || '').trim();
+let NTFY_BASE_URL = String(process.env.NTFY_BASE_URL || 'https://ntfy.sh').trim().replace(/\/$/, '');
+let NTFY_TOKEN = String(process.env.NTFY_TOKEN || '').trim();
+let DISCORD_WEBHOOK_URL = String(process.env.DISCORD_WEBHOOK_URL || '').trim();
+let GENERIC_WEBHOOK_URL = String(process.env.GEARBEACON_WEBHOOK_URL || '').trim();
+let GENERIC_WEBHOOK_TOKEN = String(process.env.GEARBEACON_WEBHOOK_TOKEN || '').trim();
+let GENERIC_WEBHOOK_HMAC_SECRET = String(process.env.GEARBEACON_WEBHOOK_HMAC_SECRET || '').trim();
+let GOTIFY_BASE_URL = String(process.env.GOTIFY_BASE_URL || '').trim().replace(/\/$/, '');
+let GOTIFY_TOKEN = String(process.env.GOTIFY_TOKEN || '').trim();
+let SMTP_HOST = String(process.env.SMTP_HOST || '').trim();
+let SMTP_PORT = Math.max(1, Number(process.env.SMTP_PORT || 587));
+let SMTP_SECURE = ['1', 'true', 'yes'].includes(String(process.env.SMTP_SECURE || '').toLowerCase()) || SMTP_PORT === 465;
+let SMTP_STARTTLS = !['0', 'false', 'no'].includes(String(process.env.SMTP_STARTTLS || '1').toLowerCase());
+let SMTP_REJECT_UNAUTHORIZED = !['0', 'false', 'no'].includes(String(process.env.SMTP_REJECT_UNAUTHORIZED || '1').toLowerCase());
+let SMTP_USER = String(process.env.SMTP_USER || '');
+let SMTP_PASSWORD = String(process.env.SMTP_PASSWORD || '');
+let SMTP_FROM = String(process.env.SMTP_FROM || '').trim();
+let SMTP_TO = String(process.env.SMTP_TO || '').split(',').map((value) => value.trim()).filter(Boolean);
 const MOCK_MODE = ['1', 'true', 'yes'].includes(String(process.env.MOCK_MODE || '').toLowerCase());
 const UPDATE_MANIFEST_URL = String(process.env.GEARBEACON_UPDATE_MANIFEST_URL || '').trim();
 const GITHUB_RELEASE_API = String(process.env.GEARBEACON_GITHUB_RELEASE_API !== undefined ? process.env.GEARBEACON_GITHUB_RELEASE_API : 'https://api.github.com/repos/alexphillips-dev/GearBeacon/releases/latest').trim();
-const PUBLIC_BASE_URL = String(process.env.GEARBEACON_PUBLIC_BASE_URL || '').trim().replace(/\/$/, '');
+let PUBLIC_BASE_URL = String(process.env.GEARBEACON_PUBLIC_BASE_URL || '').trim().replace(/\/$/, '');
 const MIN_CATALOG_RATIO = Math.min(0.95, Math.max(0.1, Number(process.env.GEARBEACON_MIN_CATALOG_RATIO || 0.55)));
 const STALE_AFTER_SECONDS = Math.max(POLL_SECONDS * 3, Number(process.env.GEARBEACON_STALE_AFTER_SECONDS || 180));
-const BACKUP_RETENTION = Math.max(1, Math.min(100, Number(process.env.GEARBEACON_BACKUP_RETENTION || 10)));
-const BACKUP_INTERVAL_HOURS = Math.max(0, Number(process.env.GEARBEACON_BACKUP_INTERVAL_HOURS || 24));
+let BACKUP_RETENTION = Math.max(1, Math.min(100, Number(process.env.GEARBEACON_BACKUP_RETENTION || 10)));
+let BACKUP_INTERVAL_HOURS = Math.max(0, Number(process.env.GEARBEACON_BACKUP_INTERVAL_HOURS || 24));
 const rawAccessMode = String(process.env.GEARBEACON_ACCESS_MODE || 'local').trim().toLowerCase();
 if (!['local', 'private', 'proxy'].includes(rawAccessMode)) throw new Error('GEARBEACON_ACCESS_MODE must be local, private, or proxy.');
-const ACCESS_MODE = rawAccessMode;
-const BIND_HOST = String(process.env.GEARBEACON_BIND_HOST || (ACCESS_MODE === 'private' ? '0.0.0.0' : '127.0.0.1')).trim();
+let ACCESS_MODE = rawAccessMode;
+let BIND_HOST = String(process.env.GEARBEACON_BIND_HOST || (ACCESS_MODE === 'private' ? '0.0.0.0' : '127.0.0.1')).trim();
 const ALLOW_INSECURE_REMOTE = ['1', 'true', 'yes'].includes(String(process.env.GEARBEACON_ALLOW_INSECURE_REMOTE || '').toLowerCase());
-const COOKIE_SECURE = ['1', 'true', 'yes'].includes(String(process.env.GEARBEACON_COOKIE_SECURE || '').toLowerCase())
+let COOKIE_SECURE = ['1', 'true', 'yes'].includes(String(process.env.GEARBEACON_COOKIE_SECURE || '').toLowerCase())
   || PUBLIC_BASE_URL.toLowerCase().startsWith('https://');
 const SESSION_HOURS = Math.max(1, Math.min(24 * 90, Number(process.env.GEARBEACON_SESSION_HOURS || 168)));
-const ALLOWED_ORIGINS = String(process.env.GEARBEACON_ALLOWED_ORIGINS || '').split(',').map((value) => value.trim()).filter(Boolean);
+let ALLOWED_ORIGINS = String(process.env.GEARBEACON_ALLOWED_ORIGINS || '').split(',').map((value) => value.trim()).filter(Boolean);
 
-const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
+let NOTIFICATION_MAX_ATTEMPTS = Math.max(1, Math.min(10, Number(process.env.GEARBEACON_NOTIFICATION_MAX_ATTEMPTS || 5)));
+let NOTIFICATION_GROUP_SECONDS = Math.max(0, Math.min(3600, Number(process.env.GEARBEACON_NOTIFICATION_GROUP_SECONDS || 0)));
+const CHANNEL_NAMES = ['ntfy', 'discord', 'gotify', 'webhook', 'email'];
+let CHANNEL_ENABLED = Object.fromEntries(CHANNEL_NAMES.map((name) => [name, true]));
+
+let runningAsSea = false;
+try { runningAsSea = Boolean(require('node:sea').isSea()); } catch {}
+const PROJECT_ROOT = runningAsSea ? path.dirname(process.execPath) : path.resolve(__dirname, '..', '..');
 const WEB_DIR = path.join(PROJECT_ROOT, 'web');
 const LEGACY_DATA_DIR = path.join(PROJECT_ROOT, 'data');
 const RELEASE_MANIFEST_FILE = path.join(PROJECT_ROOT, 'release-manifest.json');
+const BUILD_INFO_FILE = path.join(PROJECT_ROOT, 'build-info.json');
+const BUILD_INFO = fs.existsSync(BUILD_INFO_FILE) ? safeJsonParse(fs.readFileSync(BUILD_INFO_FILE, 'utf8'), {}) : {};
 
 function defaultUserDataDir() {
   if (process.env.GEARBEACON_DATA_DIR) return path.resolve(process.env.GEARBEACON_DATA_DIR);
@@ -107,8 +119,10 @@ function defaultUserDataDir() {
 const USER_DATA_DIR = defaultUserDataDir();
 const BACKUP_DIR = path.join(USER_DATA_DIR, 'backups');
 const DB_FILE = path.join(USER_DATA_DIR, MOCK_MODE ? 'gearbeacon.mock.sqlite3' : 'gearbeacon.sqlite3');
-fs.mkdirSync(USER_DATA_DIR, { recursive: true });
-fs.mkdirSync(BACKUP_DIR, { recursive: true });
+const SECRET_KEY_FILE = path.join(USER_DATA_DIR, 'secrets.key');
+fs.mkdirSync(USER_DATA_DIR, { recursive: true, mode: 0o700 });
+fs.mkdirSync(BACKUP_DIR, { recursive: true, mode: 0o700 });
+try { if (process.platform !== 'win32') { fs.chmodSync(USER_DATA_DIR, 0o700); fs.chmodSync(BACKUP_DIR, 0o700); } } catch {}
 
 const HEADERS = {
   'User-Agent': `GearBeacon/${APP_VERSION} (+local stock monitor; contact via project owner)`,
@@ -232,20 +246,27 @@ function databaseIntegrity(file = DB_FILE) {
 
 function createDatabaseBackup(reason = 'manual') {
   if (!fs.existsSync(DB_FILE)) return null;
-  const sourceIntegrity = databaseIntegrity();
-  if (!sourceIntegrity.ok) throw new Error(`Database integrity check failed: ${sourceIntegrity.messages.join('; ')}`);
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const filename = `${safeFilePart(reason)}-${stamp}.sqlite3`;
-  const destination = path.join(BACKUP_DIR, filename);
-  db.exec('PRAGMA wal_checkpoint(FULL)');
-  db.exec(`VACUUM INTO '${sqliteQuote(destination)}'`);
-  const backupIntegrity = databaseIntegrity(destination);
-  if (!backupIntegrity.ok) {
-    try { fs.unlinkSync(destination); } catch {}
-    throw new Error(`Backup validation failed: ${backupIntegrity.messages.join('; ')}`);
+  try {
+    const sourceIntegrity = databaseIntegrity();
+    if (!sourceIntegrity.ok) throw new Error(`Database integrity check failed: ${sourceIntegrity.messages.join('; ')}`);
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `${safeFilePart(reason)}-${stamp}.sqlite3`;
+    const destination = path.join(BACKUP_DIR, filename);
+    db.exec('PRAGMA wal_checkpoint(FULL)');
+    db.exec(`VACUUM INTO '${sqliteQuote(destination)}'`);
+    const backupIntegrity = databaseIntegrity(destination);
+    if (!backupIntegrity.ok) {
+      try { fs.unlinkSync(destination); } catch {}
+      throw new Error(`Backup validation failed: ${backupIntegrity.messages.join('; ')}`);
+    }
+    trimBackups();
+    const size = fs.statSync(destination).size;
+    if (tableExists('backup_log')) db.prepare('INSERT INTO backup_log(filename,reason,status,size,detail,created_at) VALUES(?,?,?,?,?,?)').run(filename, reason, 'validated', size, null, isoNow());
+    return { filename, path: destination, size, createdAt: isoNow(), reason, validated: true };
+  } catch (err) {
+    if (tableExists('backup_log')) db.prepare('INSERT INTO backup_log(filename,reason,status,size,detail,created_at) VALUES(?,?,?,?,?,?)').run(null, reason, 'failed', null, String(err?.message || err).slice(0, 1000), isoNow());
+    throw err;
   }
-  trimBackups();
-  return { filename, path: destination, createdAt: isoNow(), reason, validated: true };
 }
 
 const MIGRATIONS = [
@@ -339,6 +360,47 @@ const MIGRATIONS = [
       DROP TABLE IF EXISTS push_tokens;
     `,
   },
+  {
+    version: 5,
+    name: 'guided-setup-operations-and-reliable-delivery',
+    sql: `
+      CREATE TABLE IF NOT EXISTS notification_queue (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT NOT NULL,
+        region TEXT NOT NULL,
+        channel TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        max_attempts INTEGER NOT NULL DEFAULT 5,
+        next_attempt_at TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(event_id, channel)
+      );
+      CREATE INDEX IF NOT EXISTS idx_notification_queue_due ON notification_queue(status,next_attempt_at);
+      CREATE TABLE IF NOT EXISTS app_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        level TEXT NOT NULL,
+        source TEXT NOT NULL,
+        message TEXT NOT NULL,
+        detail_json TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_app_log_created ON app_log(created_at);
+      CREATE TABLE IF NOT EXISTS backup_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        filename TEXT,
+        reason TEXT NOT NULL,
+        status TEXT NOT NULL,
+        size INTEGER,
+        detail TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_backup_log_created ON backup_log(created_at);
+    `,
+  },
 ];
 
 function runMigrations() {
@@ -362,6 +424,236 @@ function runMigrations() {
     }
   }
   if (current !== DATABASE_SCHEMA_VERSION) throw new Error(`Unexpected GearBeacon schema version ${current}; expected ${DATABASE_SCHEMA_VERSION}.`);
+}
+
+function writeAppLog(level, source, message, detail = null) {
+  const normalizedLevel = ['debug', 'info', 'warn', 'error'].includes(level) ? level : 'info';
+  const text = String(message || '').slice(0, 2000);
+  try {
+    if (tableExists('app_log')) {
+      db.prepare('INSERT INTO app_log(level,source,message,detail_json,created_at) VALUES(?,?,?,?,?)')
+        .run(normalizedLevel, String(source || 'app').slice(0, 80), text, detail ? JSON.stringify(detail).slice(0, 10000) : null, isoNow());
+      db.prepare('DELETE FROM app_log WHERE id NOT IN (SELECT id FROM app_log ORDER BY id DESC LIMIT 5000)').run();
+    }
+  } catch {}
+}
+
+function secretKey() {
+  try {
+    if (fs.existsSync(SECRET_KEY_FILE)) {
+      const stat = fs.lstatSync(SECRET_KEY_FILE);
+      if (stat.isSymbolicLink() || !stat.isFile()) throw new Error('Secret key path is not a regular file.');
+      const key = Buffer.from(fs.readFileSync(SECRET_KEY_FILE, 'utf8').trim(), 'base64');
+      if (key.length !== 32) throw new Error('Secret key file is invalid.');
+      try { fs.chmodSync(SECRET_KEY_FILE, 0o600); } catch {}
+      return key;
+    }
+    const key = crypto.randomBytes(32);
+    fs.writeFileSync(SECRET_KEY_FILE, key.toString('base64'), { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+    return key;
+  } catch (err) {
+    throw new Error(`Unable to load the local notification encryption key: ${err?.message || err}`);
+  }
+}
+
+function encryptLocalSecrets(value) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', secretKey(), iv);
+  cipher.setAAD(Buffer.from('GearBeacon:notification-secrets:v1'));
+  const encrypted = Buffer.concat([cipher.update(JSON.stringify(value), 'utf8'), cipher.final()]);
+  return `v1:${iv.toString('base64')}:${cipher.getAuthTag().toString('base64')}:${encrypted.toString('base64')}`;
+}
+
+function decryptLocalSecrets(value) {
+  if (!value) return {};
+  try {
+    const [version, ivText, tagText, dataText] = String(value).split(':');
+    if (version !== 'v1') throw new Error('unsupported secret format');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', secretKey(), Buffer.from(ivText, 'base64'));
+    decipher.setAAD(Buffer.from('GearBeacon:notification-secrets:v1'));
+    decipher.setAuthTag(Buffer.from(tagText, 'base64'));
+    return JSON.parse(Buffer.concat([decipher.update(Buffer.from(dataText, 'base64')), decipher.final()]).toString('utf8'));
+  } catch (err) {
+    throw new Error(`Stored notification credentials could not be decrypted: ${err?.message || err}`);
+  }
+}
+
+const DEFAULT_APP_CONFIG = Object.freeze({
+  regions: [...ACTIVE_REGIONS],
+  pollSeconds: POLL_SECONDS,
+  accessMode: ACCESS_MODE,
+  bindHost: BIND_HOST,
+  publicBaseUrl: PUBLIC_BASE_URL,
+  cookieSecure: COOKIE_SECURE,
+  allowedOrigins: [...ALLOWED_ORIGINS],
+  backupIntervalHours: BACKUP_INTERVAL_HOURS,
+  backupRetention: BACKUP_RETENTION,
+  notificationMaxAttempts: NOTIFICATION_MAX_ATTEMPTS,
+  notificationGroupSeconds: NOTIFICATION_GROUP_SECONDS,
+  channelEnabled: { ...CHANNEL_ENABLED },
+  ntfyBaseUrl: NTFY_BASE_URL,
+  ntfyTopic: NTFY_TOPIC,
+  gotifyBaseUrl: GOTIFY_BASE_URL,
+  smtpHost: SMTP_HOST,
+  smtpPort: SMTP_PORT,
+  smtpSecure: SMTP_SECURE,
+  smtpStarttls: SMTP_STARTTLS,
+  smtpRejectUnauthorized: SMTP_REJECT_UNAUTHORIZED,
+  smtpUser: SMTP_USER,
+  smtpFrom: SMTP_FROM,
+  smtpTo: [...SMTP_TO],
+});
+
+function validHttpUrl(value, { httpsOnly = false, allowEmpty = true } = {}) {
+  if (!value && allowEmpty) return '';
+  let parsed;
+  try { parsed = new URL(String(value)); } catch { throw new Error(`Invalid URL: ${value}`); }
+  if (!['http:', 'https:'].includes(parsed.protocol) || (httpsOnly && parsed.protocol !== 'https:')) throw new Error(`URL must use ${httpsOnly ? 'HTTPS' : 'HTTP or HTTPS'}.`);
+  if (parsed.username || parsed.password) throw new Error('URLs must not contain embedded credentials.');
+  return parsed.toString().replace(/\/$/, '');
+}
+
+function normalizeAppConfig(input, base = DEFAULT_APP_CONFIG) {
+  const body = input && typeof input === 'object' ? input : {};
+  const regions = Array.isArray(body.regions) ? [...new Set(body.regions.map((x) => String(x).toLowerCase()).filter((x) => REGIONS[x]))] : [...base.regions];
+  if (!regions.length) throw new Error('Select at least one supported store region.');
+  const pollSeconds = Number(body.pollSeconds ?? base.pollSeconds);
+  if (!Number.isFinite(pollSeconds) || pollSeconds < 30 || pollSeconds > 86400) throw new Error('Polling interval must be between 30 and 86400 seconds.');
+  const accessMode = String(body.accessMode ?? base.accessMode).toLowerCase();
+  if (!['local', 'private', 'proxy'].includes(accessMode)) throw new Error('Access mode must be local, private, or proxy.');
+  const bindHost = String(body.bindHost ?? base.bindHost).trim();
+  const bindNameValid = bindHost === 'localhost' || /^(?=.{1,253}$)(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)(?:\.(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?))*$/.test(bindHost);
+  if (!bindHost || (!net.isIP(bindHost.replace(/^\[|\]$/g, '')) && !bindNameValid)) throw new Error('Bind host must be a valid IP address or hostname.');
+  if (accessMode === 'local' && !isLoopbackHost(bindHost)) throw new Error('Local mode must bind to a loopback address. Choose private or proxy mode for remote access.');
+  const publicBaseUrl = validHttpUrl(String(body.publicBaseUrl ?? base.publicBaseUrl).trim());
+  if (accessMode === 'proxy' && !publicBaseUrl.startsWith('https://')) throw new Error('Proxy mode requires an HTTPS public URL.');
+  const backupIntervalHours = Number(body.backupIntervalHours ?? base.backupIntervalHours);
+  if (!Number.isFinite(backupIntervalHours) || backupIntervalHours < 0 || backupIntervalHours > 720) throw new Error('Backup interval must be between 0 and 720 hours.');
+  const backupRetention = Number(body.backupRetention ?? base.backupRetention);
+  if (!Number.isInteger(backupRetention) || backupRetention < 1 || backupRetention > 100) throw new Error('Backup retention must be between 1 and 100.');
+  const notificationMaxAttempts = Number(body.notificationMaxAttempts ?? base.notificationMaxAttempts);
+  if (!Number.isInteger(notificationMaxAttempts) || notificationMaxAttempts < 1 || notificationMaxAttempts > 10) throw new Error('Notification attempts must be between 1 and 10.');
+  const notificationGroupSeconds = Number(body.notificationGroupSeconds ?? base.notificationGroupSeconds);
+  if (!Number.isFinite(notificationGroupSeconds) || notificationGroupSeconds < 0 || notificationGroupSeconds > 3600) throw new Error('Notification grouping must be between 0 and 3600 seconds.');
+  const smtpPort = Number(body.smtpPort ?? base.smtpPort);
+  if (!Number.isInteger(smtpPort) || smtpPort < 1 || smtpPort > 65535) throw new Error('SMTP port must be between 1 and 65535.');
+  const smtpTo = Array.isArray(body.smtpTo) ? body.smtpTo.map(String).map((x) => x.trim()).filter(Boolean) : String(body.smtpTo ?? base.smtpTo.join(',')).split(',').map((x) => x.trim()).filter(Boolean);
+  for (const address of smtpTo) smtpAddress(address);
+  if (body.smtpFrom ?? base.smtpFrom) smtpAddress(body.smtpFrom ?? base.smtpFrom);
+  const allowedOrigins = Array.isArray(body.allowedOrigins) ? body.allowedOrigins.map(String).map((x) => x.trim()).filter(Boolean).map((x) => new URL(validHttpUrl(x)).origin) : [...base.allowedOrigins];
+  const channelEnabled = { ...base.channelEnabled };
+  for (const name of CHANNEL_NAMES) if (typeof body.channelEnabled?.[name] === 'boolean') channelEnabled[name] = body.channelEnabled[name];
+  return {
+    regions,
+    pollSeconds: Math.round(pollSeconds),
+    accessMode,
+    bindHost,
+    publicBaseUrl,
+    cookieSecure: Boolean(body.cookieSecure ?? base.cookieSecure),
+    allowedOrigins,
+    backupIntervalHours,
+    backupRetention,
+    notificationMaxAttempts,
+    notificationGroupSeconds,
+    channelEnabled,
+    ntfyBaseUrl: validHttpUrl(String(body.ntfyBaseUrl ?? base.ntfyBaseUrl).trim()),
+    ntfyTopic: String(body.ntfyTopic ?? base.ntfyTopic).trim().slice(0, 256),
+    gotifyBaseUrl: validHttpUrl(String(body.gotifyBaseUrl ?? base.gotifyBaseUrl).trim()),
+    smtpHost: String(body.smtpHost ?? base.smtpHost).trim().slice(0, 253),
+    smtpPort,
+    smtpSecure: Boolean(body.smtpSecure ?? base.smtpSecure),
+    smtpStarttls: Boolean(body.smtpStarttls ?? base.smtpStarttls),
+    smtpRejectUnauthorized: Boolean(body.smtpRejectUnauthorized ?? base.smtpRejectUnauthorized),
+    smtpUser: String(body.smtpUser ?? base.smtpUser).slice(0, 320),
+    smtpFrom: String(body.smtpFrom ?? base.smtpFrom).trim().slice(0, 320),
+    smtpTo,
+  };
+}
+
+function storedAppConfig() {
+  return normalizeAppConfig(safeJsonParse(getSetting('app_config', ''), {}), DEFAULT_APP_CONFIG);
+}
+
+function storedSecrets() {
+  return decryptLocalSecrets(getSetting('encrypted_notification_secrets', ''));
+}
+
+function applyAppConfig(config, secrets, { startup = false } = {}) {
+  POLL_SECONDS = config.pollSeconds;
+  PUBLIC_BASE_URL = config.publicBaseUrl;
+  COOKIE_SECURE = config.cookieSecure || PUBLIC_BASE_URL.startsWith('https://');
+  ALLOWED_ORIGINS = [...config.allowedOrigins];
+  BACKUP_INTERVAL_HOURS = config.backupIntervalHours;
+  BACKUP_RETENTION = config.backupRetention;
+  NOTIFICATION_MAX_ATTEMPTS = config.notificationMaxAttempts;
+  NOTIFICATION_GROUP_SECONDS = config.notificationGroupSeconds;
+  CHANNEL_ENABLED = { ...config.channelEnabled };
+  NTFY_BASE_URL = config.ntfyBaseUrl || 'https://ntfy.sh';
+  NTFY_TOPIC = config.ntfyTopic;
+  GOTIFY_BASE_URL = config.gotifyBaseUrl;
+  SMTP_HOST = config.smtpHost;
+  SMTP_PORT = config.smtpPort;
+  SMTP_SECURE = config.smtpSecure;
+  SMTP_STARTTLS = config.smtpStarttls;
+  SMTP_REJECT_UNAUTHORIZED = config.smtpRejectUnauthorized;
+  SMTP_USER = config.smtpUser;
+  SMTP_FROM = config.smtpFrom;
+  SMTP_TO = [...config.smtpTo];
+  NTFY_TOKEN = String(secrets.ntfyToken ?? NTFY_TOKEN);
+  DISCORD_WEBHOOK_URL = String(secrets.discordWebhookUrl ?? DISCORD_WEBHOOK_URL);
+  GOTIFY_TOKEN = String(secrets.gotifyToken ?? GOTIFY_TOKEN);
+  GENERIC_WEBHOOK_URL = String(secrets.webhookUrl ?? GENERIC_WEBHOOK_URL);
+  GENERIC_WEBHOOK_TOKEN = String(secrets.webhookToken ?? GENERIC_WEBHOOK_TOKEN);
+  GENERIC_WEBHOOK_HMAC_SECRET = String(secrets.webhookHmacSecret ?? GENERIC_WEBHOOK_HMAC_SECRET);
+  SMTP_PASSWORD = String(secrets.smtpPassword ?? SMTP_PASSWORD);
+  if (startup) {
+    ACCESS_MODE = config.accessMode;
+    BIND_HOST = config.bindHost;
+    ACTIVE_REGIONS.splice(0, ACTIVE_REGIONS.length, ...config.regions);
+    DEFAULT_REGION = ACTIVE_REGIONS[0];
+  }
+}
+
+function secretStatus(secrets = storedSecrets()) {
+  return {
+    ntfyToken: Boolean(secrets.ntfyToken || NTFY_TOKEN),
+    discordWebhookUrl: Boolean(secrets.discordWebhookUrl || DISCORD_WEBHOOK_URL),
+    gotifyToken: Boolean(secrets.gotifyToken || GOTIFY_TOKEN),
+    webhookUrl: Boolean(secrets.webhookUrl || GENERIC_WEBHOOK_URL),
+    webhookToken: Boolean(secrets.webhookToken || GENERIC_WEBHOOK_TOKEN),
+    webhookHmacSecret: Boolean(secrets.webhookHmacSecret || GENERIC_WEBHOOK_HMAC_SECRET),
+    smtpPassword: Boolean(secrets.smtpPassword || SMTP_PASSWORD),
+  };
+}
+
+function saveBrowserConfig(input) {
+  const current = storedAppConfig();
+  const next = normalizeAppConfig(input, current);
+  const currentSecrets = storedSecrets();
+  const nextSecrets = { ...currentSecrets };
+  const incomingSecrets = input?.secrets && typeof input.secrets === 'object' ? input.secrets : {};
+  for (const key of ['ntfyToken', 'discordWebhookUrl', 'gotifyToken', 'webhookUrl', 'webhookToken', 'webhookHmacSecret', 'smtpPassword']) {
+    if (incomingSecrets[key] === null || incomingSecrets[key] === undefined) continue;
+    const value = String(incomingSecrets[key]).trim();
+    if (['discordWebhookUrl', 'webhookUrl'].includes(key) && value) validHttpUrl(value);
+    nextSecrets[key] = value;
+  }
+  const encryptedSecrets = encryptLocalSecrets(nextSecrets);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    setSetting('app_config', JSON.stringify(next));
+    setSetting('encrypted_notification_secrets', encryptedSecrets);
+    db.exec('COMMIT');
+  } catch (err) {
+    try { db.exec('ROLLBACK'); } catch {}
+    throw err;
+  }
+  const restartRequired = next.accessMode !== ACCESS_MODE || next.bindHost !== BIND_HOST || JSON.stringify(next.regions) !== JSON.stringify(ACTIVE_REGIONS);
+  applyAppConfig(next, nextSecrets);
+  scheduleBackups();
+  for (const region of ACTIVE_REGIONS) if (monitors?.[region]) regionContext.run(region, scheduleMonitor);
+  writeAppLog('info', 'configuration', 'Owner saved application configuration.', { restartRequired });
+  return { config: next, secretsConfigured: secretStatus(nextSecrets), restartRequired };
 }
 
 function findLegacyStateFile(region = currentRegion()) {
@@ -454,12 +746,27 @@ function persistState(nextState, region = currentRegion()) {
 
 const previousAppVersion = dbExistedAtStartup ? getMeta('last_app_version') : null;
 const previousSchemaVersion = dbExistedAtStartup ? schemaVersion() : 0;
+let startupSafetyBackup = null;
 if (dbExistedAtStartup && ((previousAppVersion && previousAppVersion !== APP_VERSION) || (previousSchemaVersion > 0 && previousSchemaVersion < DATABASE_SCHEMA_VERSION))) {
   const sourceVersion = previousAppVersion || `schema-${previousSchemaVersion}`;
-  const backup = createDatabaseBackup(`pre-update-${sourceVersion}-to-${APP_VERSION}`);
-  if (backup) console.log(`[data] safety backup created before version migration: ${backup.filename}`);
+  startupSafetyBackup = createDatabaseBackup(`pre-update-${sourceVersion}-to-${APP_VERSION}`);
+  if (startupSafetyBackup) console.log(`[data] safety backup created before version migration: ${startupSafetyBackup.filename}`);
 }
 runMigrations();
+if (startupSafetyBackup && tableExists('backup_log')) {
+  const logged = db.prepare('SELECT id FROM backup_log WHERE filename=? LIMIT 1').get(startupSafetyBackup.filename);
+  if (!logged) db.prepare('INSERT INTO backup_log(filename,reason,status,size,detail,created_at) VALUES(?,?,?,?,?,?)')
+    .run(startupSafetyBackup.filename, startupSafetyBackup.reason, 'validated', startupSafetyBackup.size, 'Created before schema migration.', startupSafetyBackup.createdAt);
+}
+if (previousSchemaVersion > 0 && previousSchemaVersion < 5 && getSetting('onboarding_complete') == null) {
+  setSetting('onboarding_complete', '1');
+}
+try {
+  applyAppConfig(storedAppConfig(), storedSecrets(), { startup: true });
+} catch (err) {
+  console.error('[configuration] saved settings could not be applied:', err?.message || err);
+  writeAppLog('error', 'configuration', 'Saved configuration could not be applied; environment defaults are active.', { error: err?.message || String(err) });
+}
 for (const region of ACTIVE_REGIONS) importLegacyStateIfNeeded(region);
 setMeta('last_app_version', APP_VERSION);
 setMeta('last_started_at', isoNow());
@@ -824,6 +1131,11 @@ async function postJson(url, body, headers = {}) {
 function notificationCopy(event) {
   const regionKey = event.region || currentRegion();
   const region = REGIONS[regionKey]?.label || String(regionKey).toUpperCase();
+  if (event.type === 'digest') return {
+    title: `${event.events?.length || 0} GearBeacon stock updates`,
+    body: `${(event.events || []).slice(0, 8).map((item) => `${item.name}: ${item.status || item.type}`).join(' · ')}${event.events?.length > 8 ? ' · more…' : ''} · ${region}`,
+    ntfyTags: 'package,bell',
+  };
   if (event.type === 'sold_out') return {
     title: `${event.name} sold out`,
     body: `${event.price ? `${event.price} · ` : ''}${region}`,
@@ -908,14 +1220,26 @@ async function sendDiscord(event) {
 async function sendGenericWebhook(event) {
   if (!GENERIC_WEBHOOK_URL) return null;
   const copy = notificationCopy(event);
-  await postJson(GENERIC_WEBHOOK_URL, {
+  const payload = {
     source: 'GearBeacon',
     version: APP_VERSION,
     title: copy.title,
     message: copy.body,
     event,
     sentAt: isoNow(),
-  }, GENERIC_WEBHOOK_TOKEN ? { Authorization: `Bearer ${GENERIC_WEBHOOK_TOKEN}` } : {});
+  };
+  const body = JSON.stringify(payload);
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(GENERIC_WEBHOOK_TOKEN ? { Authorization: `Bearer ${GENERIC_WEBHOOK_TOKEN}` } : {}),
+    ...(GENERIC_WEBHOOK_HMAC_SECRET ? {
+      'X-GearBeacon-Timestamp': timestamp,
+      'X-GearBeacon-Signature': `sha256=${crypto.createHmac('sha256', GENERIC_WEBHOOK_HMAC_SECRET).update(`${timestamp}.${body}`).digest('hex')}`,
+    } : {}),
+  };
+  const response = await fetchWithTimeout(GENERIC_WEBHOOK_URL, { method: 'POST', headers, body }, 10000);
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
   return true;
 }
 
@@ -987,8 +1311,9 @@ async function smtpResponse(reader, expectedCodes) {
 }
 
 async function connectSmtp() {
-  const options = { host: SMTP_HOST, port: SMTP_PORT, servername: SMTP_HOST, rejectUnauthorized: true };
+  const options = { host: SMTP_HOST, port: SMTP_PORT, servername: SMTP_HOST, rejectUnauthorized: SMTP_REJECT_UNAUTHORIZED };
   let socket;
+  try {
   if (SMTP_SECURE) {
     socket = tls.connect(options);
     await new Promise((resolve, reject) => { socket.once('secureConnect', resolve); socket.once('error', reject); });
@@ -1005,10 +1330,12 @@ async function connectSmtp() {
     return await smtpResponse(reader, codes);
   };
   let ehlo = await command(`EHLO ${os.hostname().replace(/[^a-zA-Z0-9.-]/g, '-') || 'gearbeacon'}`, [250]);
-  if (!SMTP_SECURE && ehlo.some((line) => /STARTTLS/i.test(line))) {
+  const offersStartTls = ehlo.some((line) => /STARTTLS/i.test(line));
+  if (!SMTP_SECURE && SMTP_STARTTLS && !offersStartTls) throw new Error('SMTP server does not offer STARTTLS. Disable STARTTLS only for a trusted local relay.');
+  if (!SMTP_SECURE && SMTP_STARTTLS && offersStartTls) {
     await command('STARTTLS', [220]);
     reader.detach();
-    socket = tls.connect({ socket, servername: SMTP_HOST, rejectUnauthorized: true });
+    socket = tls.connect({ socket, servername: SMTP_HOST, rejectUnauthorized: SMTP_REJECT_UNAUTHORIZED });
     await new Promise((resolve, reject) => { socket.once('secureConnect', resolve); socket.once('error', reject); });
     socket.setTimeout(12000, () => socket.destroy(new Error('SMTP connection timed out.')));
     reader = smtpReader(socket);
@@ -1020,6 +1347,10 @@ async function connectSmtp() {
     await command(`AUTH PLAIN ${auth}`, [235]);
   }
   return { socket, reader, command };
+  } catch (err) {
+    try { socket?.destroy(); } catch {}
+    throw err;
+  }
 }
 
 async function sendSmtp(event) {
@@ -1051,33 +1382,54 @@ async function sendSmtp(event) {
   return true;
 }
 
-async function sendAlert(event) {
+function channelConfigured(channel) {
+  if (!CHANNEL_ENABLED[channel]) return false;
+  if (channel === 'ntfy') return Boolean(NTFY_TOPIC);
+  if (channel === 'discord') return Boolean(DISCORD_WEBHOOK_URL);
+  if (channel === 'webhook') return Boolean(GENERIC_WEBHOOK_URL);
+  if (channel === 'gotify') return Boolean(GOTIFY_BASE_URL && GOTIFY_TOKEN);
+  if (channel === 'email') return smtpConfigured();
+  return false;
+}
+
+async function sendChannel(channel, event) {
+  if (!channelConfigured(channel)) return null;
+  if (channel === 'ntfy') return await sendNtfy(event);
+  if (channel === 'discord') return await sendDiscord(event);
+  if (channel === 'webhook') return await sendGenericWebhook(event);
+  if (channel === 'gotify') return await sendGotify(event);
+  if (channel === 'email') return await sendSmtp(event);
+  throw new Error(`Unknown notification channel: ${channel}`);
+}
+
+async function sendAlert(event, selectedChannel = null) {
   const outcomes = [];
-  if (NTFY_TOPIC) {
-    try { await sendNtfy(event); outcomes.push({ channel: 'ntfy', ok: true }); logNotification(event.id, 'ntfy', 'sent'); }
-    catch (err) { const message = err?.message || String(err); outcomes.push({ channel: 'ntfy', ok: false, error: message }); logNotification(event.id, 'ntfy', 'failed', message); console.error('[alert:ntfy]', message); }
+  const channels = selectedChannel ? [selectedChannel] : CHANNEL_NAMES.filter(channelConfigured);
+  for (const channel of channels) {
+    if (!CHANNEL_NAMES.includes(channel)) {
+      outcomes.push({ channel, ok: false, error: 'Unknown notification channel.' });
+      continue;
+    }
+    if (!channelConfigured(channel)) {
+      outcomes.push({ channel, ok: false, error: 'Channel is disabled or incomplete.' });
+      continue;
+    }
+    try {
+      await sendChannel(channel, event);
+      outcomes.push({ channel, ok: true });
+      logNotification(event.id, channel, 'sent');
+    } catch (err) {
+      const message = err?.message || String(err);
+      outcomes.push({ channel, ok: false, error: message });
+      logNotification(event.id, channel, 'failed', message);
+      console.error(`[alert:${channel}]`, message);
+    }
   }
-  if (DISCORD_WEBHOOK_URL) {
-    try { await sendDiscord(event); outcomes.push({ channel: 'discord', ok: true }); logNotification(event.id, 'discord', 'sent'); }
-    catch (err) { const message = err?.message || String(err); outcomes.push({ channel: 'discord', ok: false, error: message }); logNotification(event.id, 'discord', 'failed', message); console.error('[alert:discord]', message); }
-  }
-  if (GENERIC_WEBHOOK_URL) {
-    try { await sendGenericWebhook(event); outcomes.push({ channel: 'webhook', ok: true }); logNotification(event.id, 'webhook', 'sent'); }
-    catch (err) { const message = err?.message || String(err); outcomes.push({ channel: 'webhook', ok: false, error: message }); logNotification(event.id, 'webhook', 'failed', message); console.error('[alert:webhook]', message); }
-  }
-  if (GOTIFY_BASE_URL && GOTIFY_TOKEN) {
-    try { await sendGotify(event); outcomes.push({ channel: 'gotify', ok: true }); logNotification(event.id, 'gotify', 'sent'); }
-    catch (err) { const message = err?.message || String(err); outcomes.push({ channel: 'gotify', ok: false, error: message }); logNotification(event.id, 'gotify', 'failed', message); console.error('[alert:gotify]', message); }
-  }
-  if (smtpConfigured()) {
-    try { await sendSmtp(event); outcomes.push({ channel: 'email', ok: true }); logNotification(event.id, 'email', 'sent'); }
-    catch (err) { const message = err?.message || String(err); outcomes.push({ channel: 'email', ok: false, error: message }); logNotification(event.id, 'email', 'failed', message); console.error('[alert:email]', message); }
-  }
-  if (outcomes.some((item) => item.ok)) monitor.lastAlertAt = isoNow();
+  if (outcomes.some((item) => item.ok) && monitors[event.region]) monitors[event.region].lastAlertAt = isoNow();
   return outcomes;
 }
 
-async function sendTestNotification() {
+function testEvent() {
   const event = {
     id: `test-${Date.now()}`,
     type: 'test',
@@ -1093,10 +1445,91 @@ async function sendTestNotification() {
     region: currentRegion(),
     detectedAt: isoNow(),
   };
-  const outcomes = await sendAlert(event);
-  const configured = (NTFY_TOPIC ? 1 : 0) + (DISCORD_WEBHOOK_URL ? 1 : 0)
-    + (GENERIC_WEBHOOK_URL ? 1 : 0) + (GOTIFY_BASE_URL && GOTIFY_TOKEN ? 1 : 0) + (smtpConfigured() ? 1 : 0);
+  return event;
+}
+
+async function sendTestNotification(selectedChannel = null) {
+  const outcomes = await sendAlert(testEvent(), selectedChannel);
+  const configured = CHANNEL_NAMES.filter(channelConfigured).length;
   return { ok: outcomes.some((item) => item.ok), configuredChannels: configured, outcomes };
+}
+
+function enqueueAlert(event) {
+  const channels = CHANNEL_NAMES.filter(channelConfigured);
+  const now = isoNow();
+  const nextAttemptAt = new Date(Date.now() + NOTIFICATION_GROUP_SECONDS * 1000).toISOString();
+  const insert = db.prepare(`INSERT INTO notification_queue(event_id,region,channel,payload_json,attempts,max_attempts,next_attempt_at,status,last_error,created_at,updated_at)
+    VALUES(?,?,?,?,0,?,?,'pending',NULL,?,?) ON CONFLICT(event_id,channel) DO NOTHING`);
+  for (const channel of channels) insert.run(event.id, event.region || currentRegion(), channel, JSON.stringify(event), NOTIFICATION_MAX_ATTEMPTS, nextAttemptAt, now, now);
+  if (channels.length) writeAppLog('info', 'notifications', `Queued ${channels.length} notification delivery job(s).`, { eventId: event.id, region: event.region, channels });
+  return channels.length;
+}
+
+function notificationQueueSummary() {
+  const rows = db.prepare('SELECT status,COUNT(*) AS count FROM notification_queue GROUP BY status').all();
+  const summary = { pending: 0, processing: 0, sent: 0, failed: 0, cancelled: 0 };
+  for (const row of rows) summary[row.status] = Number(row.count);
+  const recentFailures = db.prepare("SELECT id,event_id,region,channel,attempts,max_attempts,last_error,updated_at FROM notification_queue WHERE status='failed' ORDER BY updated_at DESC LIMIT 20").all();
+  return { ...summary, recentFailures };
+}
+
+function retryDelaySeconds(attempts) {
+  return Math.min(30 * 60, 30 * (2 ** Math.max(0, attempts - 1)));
+}
+
+let notificationWorkerRunning = false;
+async function processNotificationQueue() {
+  if (notificationWorkerRunning) return;
+  notificationWorkerRunning = true;
+  try {
+    db.prepare("UPDATE notification_queue SET status='pending',updated_at=? WHERE status='processing' AND updated_at<?")
+      .run(isoNow(), new Date(Date.now() - 5 * 60 * 1000).toISOString());
+    const due = db.prepare("SELECT * FROM notification_queue WHERE status='pending' AND next_attempt_at<=? ORDER BY id LIMIT 50").all(isoNow());
+    const groups = new Map();
+    for (const row of due) {
+      const key = NOTIFICATION_GROUP_SECONDS > 0 ? `${row.channel}:${row.region}` : String(row.id);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(row);
+    }
+    for (const rows of groups.values()) {
+      const ids = rows.map((row) => row.id);
+      const marks = ids.map(() => '?').join(',');
+      if (!channelConfigured(rows[0].channel)) {
+        db.prepare(`UPDATE notification_queue SET status='cancelled',last_error='Channel disabled or no longer configured.',updated_at=? WHERE id IN (${marks})`).run(isoNow(), ...ids);
+        continue;
+      }
+      db.prepare(`UPDATE notification_queue SET status='processing',updated_at=? WHERE id IN (${marks})`).run(isoNow(), ...ids);
+      const events = rows.map((row) => safeJsonParse(row.payload_json, {}));
+      const event = events.length > 1 ? { id: `digest-${rows[0].id}`, type: 'digest', events, region: rows[0].region, detectedAt: isoNow(), url: PUBLIC_BASE_URL || null } : events[0];
+      try {
+        await regionContext.run(rows[0].region, () => sendChannel(rows[0].channel, event));
+        db.prepare(`UPDATE notification_queue SET status='sent',attempts=attempts+1,last_error=NULL,updated_at=? WHERE id IN (${marks})`).run(isoNow(), ...ids);
+        for (const row of rows) logNotification(row.event_id, row.channel, 'sent', `attempt ${row.attempts + 1}${events.length > 1 ? `; grouped ${events.length}` : ''}`);
+        if (monitors[rows[0].region]) monitors[rows[0].region].lastAlertAt = isoNow();
+      } catch (err) {
+        const message = String(err?.message || err).slice(0, 1000);
+        for (const row of rows) {
+          const attempts = Number(row.attempts) + 1;
+          const failed = attempts >= Number(row.max_attempts);
+          db.prepare('UPDATE notification_queue SET status=?,attempts=?,next_attempt_at=?,last_error=?,updated_at=? WHERE id=?')
+            .run(failed ? 'failed' : 'pending', attempts, new Date(Date.now() + retryDelaySeconds(attempts) * 1000).toISOString(), message, isoNow(), row.id);
+          logNotification(row.event_id, row.channel, failed ? 'failed' : 'retrying', `${message}; attempt ${attempts}/${row.max_attempts}`);
+        }
+        writeAppLog('warn', 'notifications', `Notification delivery failed for ${rows[0].channel}.`, { error: message, jobs: ids });
+      }
+    }
+    db.prepare("DELETE FROM notification_queue WHERE status='sent' AND updated_at<?").run(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString());
+  } finally {
+    notificationWorkerRunning = false;
+  }
+}
+
+let notificationWorkerTimer = null;
+function scheduleNotificationWorker() {
+  if (notificationWorkerTimer) clearInterval(notificationWorkerTimer);
+  notificationWorkerTimer = setInterval(() => processNotificationQueue().catch((err) => writeAppLog('error', 'notifications', 'Queue worker failed.', { error: err?.message || String(err) })), 10000);
+  notificationWorkerTimer.unref();
+  processNotificationQueue().catch(() => {});
 }
 
 function recordEvent(event) {
@@ -1170,8 +1603,9 @@ async function checkStore(reason = 'timer') {
     monitor.catalogHealth = monitor.partialErrors.length ? 'degraded' : 'healthy';
     saveStateSoon();
 
-    for (const event of notifications) await sendAlert(event);
+    for (const event of notifications) enqueueAlert(event);
     console.log(`[monitor] success: ${monitor.productCount} products, ${notifications.length} notification event(s)`);
+    writeAppLog('info', 'monitor', `Store check succeeded for ${currentRegion()}.`, { reason, products: monitor.productCount, notificationEvents: notifications.length, catalogHealth: monitor.catalogHealth });
     return { ok: true, products: monitor.productCount, notifications: notifications.length, catalogHealth: monitor.catalogHealth };
   } catch (err) {
     monitor.consecutiveFailures += 1;
@@ -1179,6 +1613,7 @@ async function checkStore(reason = 'timer') {
     const lastSuccessAge = monitor.lastSuccessAt ? (Date.now() - new Date(monitor.lastSuccessAt).getTime()) / 1000 : Infinity;
     monitor.catalogHealth = lastSuccessAge > STALE_AFTER_SECONDS ? 'stale' : 'error';
     console.error('[monitor] failed:', monitor.lastError);
+    writeAppLog('error', 'monitor', `Store check failed for ${currentRegion()}.`, { reason, error: monitor.lastError, consecutiveFailures: monitor.consecutiveFailures });
     return { ok: false, error: monitor.lastError, consecutiveFailures: monitor.consecutiveFailures };
   } finally {
     monitor.checking = false;
@@ -1228,9 +1663,10 @@ function scheduleBackups() {
     try {
       for (const region of ACTIVE_REGIONS) flushState(region);
       const backup = createDatabaseBackup('scheduled');
-      if (backup) console.log(`[data] scheduled backup created: ${backup.filename}`);
+      if (backup) { console.log(`[data] scheduled backup created: ${backup.filename}`); writeAppLog('info', 'backups', 'Scheduled backup created and validated.', { filename: backup.filename, size: backup.size }); }
     } catch (err) {
       console.error('[data] scheduled backup failed:', err?.message || err);
+      writeAppLog('error', 'backups', 'Scheduled backup failed.', { error: err?.message || String(err) });
     } finally {
       scheduleBackups();
     }
@@ -1239,6 +1675,8 @@ function scheduleBackups() {
 }
 
 function dataInfo() {
+  let databaseSize = 0;
+  try { databaseSize = fs.statSync(DB_FILE).size; } catch {}
   return {
     persistent: true,
     engine: 'SQLite',
@@ -1248,8 +1686,76 @@ function dataInfo() {
     schemaVersion: schemaVersion(),
     expectedSchemaVersion: DATABASE_SCHEMA_VERSION,
     integrity: databaseIntegrity(),
+    databaseSize,
+    freeSpace: typeof fs.statfsSync === 'function' ? (() => { try { const stat = fs.statfsSync(USER_DATA_DIR); return Number(stat.bavail) * Number(stat.bsize); } catch { return null; } })() : null,
     backup: backupSummary(),
     legacySource: getMeta('legacy_source'),
+  };
+}
+
+function securityWarnings() {
+  const warnings = [];
+  if (ACCESS_MODE === 'local' && !isLoopbackHost(BIND_HOST)) warnings.push({ severity: 'high', code: 'local-remote', message: 'Local mode is exposed beyond loopback without owner authentication.' });
+  if (ACCESS_MODE !== 'local' && !ownerCredential()) warnings.push({ severity: 'high', code: 'owner-setup', message: 'Owner password setup is incomplete.' });
+  if (ACCESS_MODE === 'private' && !COOKIE_SECURE && !PUBLIC_BASE_URL.startsWith('https://')) warnings.push({ severity: 'medium', code: 'plain-http', message: 'Remote access is using HTTP. Prefer a private VPN or authenticated HTTPS reverse proxy.' });
+  if (ACCESS_MODE === 'proxy' && !PUBLIC_BASE_URL.startsWith('https://')) warnings.push({ severity: 'high', code: 'proxy-url', message: 'Proxy mode should use an HTTPS public URL.' });
+  if (!SMTP_REJECT_UNAUTHORIZED && smtpConfigured()) warnings.push({ severity: 'medium', code: 'smtp-certificates', message: 'SMTP certificate verification is disabled.' });
+  if (setupRequired()) warnings.push({ severity: 'high', code: 'setup-token', message: 'Complete owner setup and remove any configured setup token.' });
+  return warnings;
+}
+
+function appConfigurationForApi() {
+  const config = storedAppConfig();
+  return {
+    config,
+    secretsConfigured: secretStatus(),
+    availableRegions: Object.entries(REGIONS).map(([key, value]) => ({ key, label: value.label, currency: value.currency })),
+    runtime: { regions: [...ACTIVE_REGIONS], accessMode: ACCESS_MODE, bindHost: BIND_HOST },
+    restartPending: config.accessMode !== ACCESS_MODE || config.bindHost !== BIND_HOST || JSON.stringify(config.regions) !== JSON.stringify(ACTIVE_REGIONS),
+  };
+}
+
+function operationsSummary() {
+  const backupRows = tableExists('backup_log') ? db.prepare('SELECT id,filename,reason,status,size,detail,created_at FROM backup_log ORDER BY id DESC LIMIT 30').all() : [];
+  const notificationRows = db.prepare('SELECT id,event_id,channel,status,detail,created_at FROM notification_log ORDER BY id DESC LIMIT 50').all();
+  const storage = dataInfo();
+  return {
+    generatedAt: isoNow(),
+    uptimeSeconds: Math.floor(process.uptime()),
+    runtime: {
+      version: APP_VERSION,
+      commit: String(process.env.GEARBEACON_BUILD_COMMIT || BUILD_INFO.commit || '').trim() || null,
+      image: String(process.env.GEARBEACON_IMAGE || BUILD_INFO.image || '').trim() || null,
+      node: process.version,
+      platform: `${process.platform}/${process.arch}`,
+      standalone: runningAsSea,
+    },
+    regions: ACTIVE_REGIONS.map((region) => ({ region, label: REGIONS[region].label, ...monitors[region], watchCount: states[region].watchlist.length, storedProductCount: Object.keys(states[region].products).length })),
+    notifications: { queue: notificationQueueSummary(), recent: notificationRows },
+    backups: { ...backupSummary(), history: backupRows, integrity: storage.integrity },
+    storage: { databasePath: storage.databasePath, databaseSize: storage.databaseSize, freeSpace: storage.freeSpace, userDataDir: storage.userDataDir },
+    securityWarnings: securityWarnings(),
+    onboardingComplete: getSetting('onboarding_complete', '0') === '1',
+  };
+}
+
+function updatePreparation() {
+  for (const region of ACTIVE_REGIONS) flushState(region);
+  const backup = createDatabaseBackup(`pre-update-${APP_VERSION}`);
+  const commands = {
+    win32: '.\\update-windows.ps1 -Version <new-version> -BackupConfirmed',
+    darwin: './update-mac-linux.sh <new-version> --backup-confirmed',
+    linux: './update-mac-linux.sh <new-version> --backup-confirmed',
+    docker: './update-docker.sh <new-version> --backup-confirmed',
+  };
+  writeAppLog('info', 'updates', 'Owner prepared a validated pre-update backup.', { backup: backup?.filename });
+  return {
+    ok: true,
+    backup,
+    command: commands[process.platform] || null,
+    dockerCommand: commands.docker,
+    warning: 'GearBeacon will never install an update silently. Review the release notes, stop the service, and run the matching helper yourself.',
+    rollback: 'Stop GearBeacon, restore the validated pre-update SQLite file to the data directory, then reinstall the previous version.',
   };
 }
 
@@ -1401,6 +1907,9 @@ function normalizeReleasePayload(payload, source) {
     downloadUrl: payload.downloadUrl || null,
     releaseNotes: payload.releaseNotes || payload.notes || null,
     publishedAt: payload.publishedAt || null,
+    minimumSchemaVersion: Number(payload.minimumSchemaVersion || 0) || null,
+    maximumSchemaVersion: Number(payload.maximumSchemaVersion || 0) || null,
+    minimumNodeVersion: payload.minimumNodeVersion || null,
     releasePageUrl: payload.releasePageUrl || null,
     source,
   };
@@ -1463,6 +1972,11 @@ async function readUpdateManifest() {
 async function checkForUpdates() {
   const { manifest, source, warning } = await readUpdateManifest();
   const latestVersion = String(manifest.latestVersion);
+  const compatibilityWarnings = [];
+  if (Number(latestVersion.split('.')[0] || 0) > Number(APP_VERSION.split('.')[0] || 0)) compatibilityWarnings.push('This is a major-version update. Review migration and rollback notes before continuing.');
+  if (manifest.minimumSchemaVersion && schemaVersion() < manifest.minimumSchemaVersion) compatibilityWarnings.push(`The release requires database schema v${manifest.minimumSchemaVersion}; GearBeacon will create a validated backup before migration.`);
+  if (manifest.maximumSchemaVersion && schemaVersion() > manifest.maximumSchemaVersion) compatibilityWarnings.push(`This database schema is newer than the release supports. Do not downgrade without restoring a compatible backup.`);
+  if (!runningAsSea && manifest.minimumNodeVersion && compareVersions(process.versions.node, manifest.minimumNodeVersion) < 0) compatibilityWarnings.push(`Source installs require Node.js ${manifest.minimumNodeVersion} or newer for this release.`);
   return {
     currentVersion: APP_VERSION,
     latestVersion,
@@ -1473,6 +1987,7 @@ async function checkForUpdates() {
     publishedAt: manifest.publishedAt || null,
     source,
     warning,
+    compatibilityWarnings,
     checkedAt: isoNow(),
   };
 }
@@ -1657,6 +2172,7 @@ function authStatus(req) {
     authenticated: Boolean(session),
     csrfToken: session?.csrf_token || null,
     sessionExpiresAt: session?.expires_at || null,
+    onboardingComplete: getSetting('onboarding_complete', '0') === '1',
   };
 }
 
@@ -1677,11 +2193,11 @@ function outboundConnections() {
   return [
     { name: 'UniFi Store', enabled: true, required: true, destination: STORE_BASE, purpose: 'Inventory checks' },
     { name: 'GitHub Releases', enabled: Boolean(GITHUB_RELEASE_API || UPDATE_MANIFEST_URL), required: false, destination: UPDATE_MANIFEST_URL || GITHUB_RELEASE_API || null, purpose: 'Manual update checks' },
-    { name: 'ntfy', enabled: Boolean(NTFY_TOPIC), required: false, destination: NTFY_TOPIC ? NTFY_BASE_URL : null, purpose: 'Notifications' },
-    { name: 'Discord', enabled: Boolean(DISCORD_WEBHOOK_URL), required: false, destination: DISCORD_WEBHOOK_URL ? 'Configured webhook' : null, purpose: 'Notifications' },
-    { name: 'Generic webhook', enabled: Boolean(GENERIC_WEBHOOK_URL), required: false, destination: GENERIC_WEBHOOK_URL ? 'Configured webhook' : null, purpose: 'Notifications' },
-    { name: 'Gotify', enabled: Boolean(GOTIFY_BASE_URL && GOTIFY_TOKEN), required: false, destination: GOTIFY_BASE_URL || null, purpose: 'Notifications' },
-    { name: 'Email', enabled: smtpConfigured(), required: false, destination: smtpConfigured() ? SMTP_HOST : null, purpose: 'SMTP notifications' },
+    { name: 'ntfy', enabled: channelConfigured('ntfy'), required: false, destination: NTFY_TOPIC ? NTFY_BASE_URL : null, purpose: 'Notifications' },
+    { name: 'Discord', enabled: channelConfigured('discord'), required: false, destination: DISCORD_WEBHOOK_URL ? 'Configured webhook' : null, purpose: 'Notifications' },
+    { name: 'Generic webhook', enabled: channelConfigured('webhook'), required: false, destination: GENERIC_WEBHOOK_URL ? 'Configured webhook' : null, purpose: 'Notifications' },
+    { name: 'Gotify', enabled: channelConfigured('gotify'), required: false, destination: GOTIFY_BASE_URL || null, purpose: 'Notifications' },
+    { name: 'Email', enabled: channelConfigured('email'), required: false, destination: smtpConfigured() ? SMTP_HOST : null, purpose: 'SMTP notifications' },
   ];
 }
 
@@ -1698,11 +2214,13 @@ function apiStatus() {
     deployment: { mode: ACCESS_MODE, bindHost: BIND_HOST, publicBaseUrl: PUBLIC_BASE_URL || null, authenticationRequired: authenticationRequired() },
     storage: { engine: 'SQLite', schemaVersion: schemaVersion(), userDataDir: USER_DATA_DIR },
     notifications: {
-      ntfyConfigured: Boolean(NTFY_TOPIC),
-      discordConfigured: Boolean(DISCORD_WEBHOOK_URL),
-      webhookConfigured: Boolean(GENERIC_WEBHOOK_URL),
-      gotifyConfigured: Boolean(GOTIFY_BASE_URL && GOTIFY_TOKEN),
-      smtpConfigured: smtpConfigured(),
+      ntfyConfigured: channelConfigured('ntfy'),
+      discordConfigured: channelConfigured('discord'),
+      webhookConfigured: channelConfigured('webhook'),
+      gotifyConfigured: channelConfigured('gotify'),
+      smtpConfigured: channelConfigured('email'),
+      channelEnabled: { ...CHANNEL_ENABLED },
+      queue: notificationQueueSummary(),
       preferences: notificationPreferences(),
     },
     privacy: { telemetry: false, publicCloudRequired: false, outboundConnections: outboundConnections() },
@@ -1825,8 +2343,11 @@ async function readJsonBody(req, maxBytes = 1024 * 1024) {
 
 function staticFileFor(urlPath) {
   const clean = urlPath === '/' ? '/index.html' : urlPath;
-  const full = path.normalize(path.join(WEB_DIR, clean));
-  if (!full.startsWith(path.normalize(WEB_DIR))) return null;
+  let decoded;
+  try { decoded = decodeURIComponent(clean); } catch { return null; }
+  const full = path.resolve(WEB_DIR, `.${decoded}`);
+  const root = path.resolve(WEB_DIR);
+  if (full !== root && !full.startsWith(`${root}${path.sep}`)) return null;
   return full;
 }
 
@@ -1855,12 +2376,14 @@ async function handleApi(req, res, url) {
     const body = await readJsonBody(req);
     if (!setupToken || !safeEqualText(body?.setupToken || '', setupToken)) {
       recordLoginFailure(req);
+      writeAppLog('warn', 'security', 'Rejected invalid owner setup token.', { remoteAddress: requestAddress(req) });
       return sendJson(res, 401, { error: 'The setup token is invalid.' });
     }
     try { setOwnerPassword(body?.password); } catch (err) { return sendJson(res, 400, { error: err.message }); }
     setupToken = null;
     clearLoginFailures(req);
     const created = createSession(req);
+    writeAppLog('info', 'security', 'Owner password setup completed.', { remoteAddress: requestAddress(req) });
     res.gearbeaconHeaders = { ...commonResponseHeaders(res), 'Set-Cookie': sessionCookie(req, created.token, created.expiresAt) };
     return sendJson(res, 201, { ok: true, authenticated: true, csrfToken: created.csrfToken, sessionExpiresAt: created.expiresAt });
   }
@@ -1872,10 +2395,12 @@ async function handleApi(req, res, url) {
     const body = await readJsonBody(req);
     if (!verifyPassword(body?.password, ownerCredential()?.password_hash)) {
       recordLoginFailure(req);
+      writeAppLog('warn', 'security', 'Rejected owner sign-in.', { remoteAddress: requestAddress(req) });
       return sendJson(res, 401, { error: 'The owner password is incorrect.' });
     }
     clearLoginFailures(req);
     const created = createSession(req);
+    writeAppLog('info', 'security', 'Owner signed in.', { remoteAddress: requestAddress(req) });
     res.gearbeaconHeaders = { ...commonResponseHeaders(res), 'Set-Cookie': sessionCookie(req, created.token, created.expiresAt) };
     return sendJson(res, 200, { ok: true, authenticated: true, csrfToken: created.csrfToken, sessionExpiresAt: created.expiresAt });
   }
@@ -1890,6 +2415,7 @@ async function handleApi(req, res, url) {
   if (req.method === 'POST' && url.pathname === '/api/auth/logout') {
     if (session.token_hash) db.prepare('DELETE FROM sessions WHERE token_hash=?').run(session.token_hash);
     res.gearbeaconHeaders = { ...commonResponseHeaders(res), 'Set-Cookie': expiredSessionCookie(req) };
+    writeAppLog('info', 'security', 'Owner signed out.', { remoteAddress: requestAddress(req) });
     return sendJson(res, 200, { ok: true });
   }
 
@@ -1913,8 +2439,68 @@ async function handleApi(req, res, url) {
     try { setOwnerPassword(body?.newPassword); } catch (err) { return sendJson(res, 400, { error: err.message }); }
     db.exec('DELETE FROM sessions');
     const created = createSession(req);
+    writeAppLog('info', 'security', 'Owner password changed; other sessions were revoked.', { remoteAddress: requestAddress(req) });
     res.gearbeaconHeaders = { ...commonResponseHeaders(res), 'Set-Cookie': sessionCookie(req, created.token, created.expiresAt) };
     return sendJson(res, 200, { ok: true, csrfToken: created.csrfToken, sessionExpiresAt: created.expiresAt });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/config') {
+    return sendJson(res, 200, appConfigurationForApi());
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/config/validate') {
+    const body = await readJsonBody(req);
+    try {
+      const config = normalizeAppConfig(body?.config || body, storedAppConfig());
+      return sendJson(res, 200, { ok: true, config });
+    } catch (err) {
+      return sendJson(res, 400, { error: err.message });
+    }
+  }
+
+  if (req.method === 'PUT' && url.pathname === '/api/config') {
+    const body = await readJsonBody(req);
+    try {
+      return sendJson(res, 200, { ok: true, ...saveBrowserConfig(body?.config ? { ...body.config, secrets: body.secrets } : body) });
+    } catch (err) {
+      return sendJson(res, 400, { error: err.message });
+    }
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/onboarding/complete') {
+    const hasSuccessfulStoreCheck = ACTIVE_REGIONS.some((region) => Boolean(monitors[region]?.lastSuccessAt));
+    if (!hasSuccessfulStoreCheck && !MOCK_MODE) return sendJson(res, 409, { error: 'Run at least one successful store check before finishing setup.' });
+    setSetting('onboarding_complete', '1');
+    writeAppLog('info', 'onboarding', 'Guided first-run setup completed.');
+    return sendJson(res, 200, { ok: true, summary: { url: PUBLIC_BASE_URL || `http://localhost:${PORT}`, accessMode: ACCESS_MODE, regions: [...ACTIVE_REGIONS], securityWarnings: securityWarnings() } });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/operations') {
+    return sendJson(res, 200, operationsSummary());
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/logs') {
+    const level = String(url.searchParams.get('level') || '').toLowerCase();
+    const source = String(url.searchParams.get('source') || '').toLowerCase();
+    const search = String(url.searchParams.get('search') || '').toLowerCase();
+    const limit = Math.min(1000, Math.max(1, Number(url.searchParams.get('limit') || 200)));
+    let rows = db.prepare('SELECT id,level,source,message,detail_json,created_at FROM app_log ORDER BY id DESC LIMIT ?').all(limit);
+    if (level) rows = rows.filter((row) => row.level === level);
+    if (source) rows = rows.filter((row) => row.source.toLowerCase() === source);
+    if (search) rows = rows.filter((row) => `${row.message} ${row.detail_json || ''}`.toLowerCase().includes(search));
+    if (url.searchParams.get('download') === '1') return sendJsonDownload(res, { exportedAt: isoNow(), logs: rows }, `GearBeacon-Logs-${new Date().toISOString().slice(0, 10)}.json`);
+    return sendJson(res, 200, { logs: rows, count: rows.length });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/notifications/retry-failed') {
+    const result = db.prepare("UPDATE notification_queue SET status='pending',attempts=0,next_attempt_at=?,last_error=NULL,updated_at=? WHERE status='failed'").run(isoNow(), isoNow());
+    processNotificationQueue().catch(() => {});
+    return sendJson(res, 200, { ok: true, queued: Number(result.changes || 0) });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/update/prepare') {
+    try { return sendJson(res, 200, updatePreparation()); }
+    catch (err) { return sendJson(res, 500, { error: err.message }); }
   }
 
   const requestedRegion = String(url.searchParams.get('region') || DEFAULT_REGION).toLowerCase();
@@ -2045,8 +2631,11 @@ async function handleRegionApi(req, res, url) {
   }
 
   if (req.method === 'POST' && url.pathname === '/api/notifications/test') {
-    const result = await sendTestNotification();
-    if (!result.configuredChannels) return sendJson(res, 409, { error: 'No server-side notification channel is configured or registered.', ...result });
+    const body = await readJsonBody(req);
+    const channel = body?.channel ? String(body.channel).toLowerCase() : null;
+    if (channel && !CHANNEL_NAMES.includes(channel)) return sendJson(res, 400, { error: `Channel must be one of: ${CHANNEL_NAMES.join(', ')}.` });
+    const result = await sendTestNotification(channel);
+    if (!result.configuredChannels || (channel && !channelConfigured(channel))) return sendJson(res, 409, { error: channel ? `${channel} is disabled or incomplete.` : 'No server-side notification channel is configured.', ...result });
     return sendJson(res, result.ok ? 200 : 502, result.ok ? result : { error: 'All configured notification channels failed.', ...result });
   }
 
@@ -2141,11 +2730,14 @@ async function start() {
     scheduleMonitor();
   })));
   scheduleBackups();
+  scheduleNotificationWorker();
+  writeAppLog('info', 'app', `GearBeacon V${APP_VERSION} started.`, { regions: ACTIVE_REGIONS, accessMode: ACCESS_MODE, platform: `${process.platform}/${process.arch}` });
 }
 
 function shutdown(signal) {
   for (const timer of monitorTimers.values()) clearTimeout(timer);
   if (backupTimer) clearTimeout(backupTimer);
+  if (notificationWorkerTimer) clearInterval(notificationWorkerTimer);
   try { for (const region of ACTIVE_REGIONS) flushState(region); } catch (err) { console.error('[data] final save failed:', err?.message || err); }
   try { db.exec('PRAGMA wal_checkpoint(FULL)'); } catch {}
   server.close(() => {

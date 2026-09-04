@@ -1,14 +1,19 @@
 FROM node:22.16.0-bookworm-slim
+ARG VCS_REF=unknown
+ARG IMAGE_NAME=ghcr.io/alexphillips-dev/gearbeacon
 WORKDIR /app
 LABEL org.opencontainers.image.source="https://github.com/alexphillips-dev/GearBeacon" \
       org.opencontainers.image.description="Private self-hosted Ubiquiti product monitor" \
-      org.opencontainers.image.licenses="Apache-2.0"
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.revision="$VCS_REF"
 COPY --chown=node:node backend/dist ./backend/dist
 COPY --chown=node:node backend/package.json ./backend/package.json
 COPY --chown=node:node web ./web
 COPY --chown=node:node release-manifest.json ./release-manifest.json
 RUN mkdir -p /data && chown node:node /data
 ENV NODE_ENV=production \
+    GEARBEACON_BUILD_COMMIT=$VCS_REF \
+    GEARBEACON_IMAGE=$IMAGE_NAME \
     PORT=8787 \
     GEARBEACON_ACCESS_MODE=private \
     GEARBEACON_BIND_HOST=0.0.0.0 \
