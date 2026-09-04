@@ -1,4 +1,4 @@
-// GearBeacon V1.6 backend
+// GearBeacon V1.7 backend
 // Private, owner-operated stock monitoring for local and self-hosted installs.
 // @ts-nocheck
 const http = require('node:http');
@@ -11,8 +11,8 @@ const tls = require('node:tls');
 const { AsyncLocalStorage } = require('node:async_hooks');
 const { URL } = require('node:url');
 const { DatabaseSync } = require('node:sqlite');
-const APP_VERSION = '1.6.0';
-const DATABASE_SCHEMA_VERSION = 5;
+const APP_VERSION = '1.7.0';
+const DATABASE_SCHEMA_VERSION = 6;
 const STORE_BASE = 'https://store.ui.com';
 const REGIONS = {
     us: { label: 'United States', path: 'us/en', currency: 'USD' },
@@ -90,6 +90,30 @@ const SESSION_HOURS = Math.max(1, Math.min(24 * 90, Number(process.env.GEARBEACO
 let ALLOWED_ORIGINS = String(process.env.GEARBEACON_ALLOWED_ORIGINS || '').split(',').map((value) => value.trim()).filter(Boolean);
 let NOTIFICATION_MAX_ATTEMPTS = Math.max(1, Math.min(10, Number(process.env.GEARBEACON_NOTIFICATION_MAX_ATTEMPTS || 5)));
 let NOTIFICATION_GROUP_SECONDS = Math.max(0, Math.min(3600, Number(process.env.GEARBEACON_NOTIFICATION_GROUP_SECONDS || 0)));
+let HISTORY_RETENTION_DAYS = Math.max(30, Math.min(3650, Number(process.env.GEARBEACON_HISTORY_RETENTION_DAYS || 365)));
+let NOTIFICATION_TIME_ZONE = String(process.env.GEARBEACON_TIME_ZONE || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC').trim();
+let QUIET_HOURS_ENABLED = ['1', 'true', 'yes'].includes(String(process.env.GEARBEACON_QUIET_HOURS_ENABLED || '').toLowerCase());
+let QUIET_HOURS_START = String(process.env.GEARBEACON_QUIET_HOURS_START || '22:00').trim();
+let QUIET_HOURS_END = String(process.env.GEARBEACON_QUIET_HOURS_END || '07:00').trim();
+let DIGEST_ENABLED = ['1', 'true', 'yes'].includes(String(process.env.GEARBEACON_DIGEST_ENABLED || '').toLowerCase());
+let DIGEST_TIME = String(process.env.GEARBEACON_DIGEST_TIME || '09:00').trim();
+let NOTIFICATION_COOLDOWN_MINUTES = Math.max(0, Math.min(10080, Number(process.env.GEARBEACON_NOTIFICATION_COOLDOWN_MINUTES || 30)));
+try {
+    new Intl.DateTimeFormat('en-US', { timeZone: NOTIFICATION_TIME_ZONE }).format();
+}
+catch {
+    throw new Error('GEARBEACON_TIME_ZONE must be a valid IANA timezone, such as America/New_York.');
+}
+if (![QUIET_HOURS_START, QUIET_HOURS_END, DIGEST_TIME].every((value) => /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value))) {
+    throw new Error('Quiet-hours and digest environment times must use 24-hour HH:MM format.');
+}
+const operationalAlertEnabled = (name) => !['0', 'false', 'no'].includes(String(process.env[name] ?? '1').toLowerCase());
+let OPERATIONAL_ALERTS = {
+    monitorFailures: operationalAlertEnabled('GEARBEACON_ALERT_MONITOR_FAILURES'),
+    notificationFailures: operationalAlertEnabled('GEARBEACON_ALERT_NOTIFICATION_FAILURES'),
+    backupFailures: operationalAlertEnabled('GEARBEACON_ALERT_BACKUP_FAILURES'),
+    lowDiskSpace: operationalAlertEnabled('GEARBEACON_ALERT_LOW_DISK'),
+};
 const CHANNEL_NAMES = ['ntfy', 'discord', 'gotify', 'webhook', 'email'];
 let CHANNEL_ENABLED = Object.fromEntries(CHANNEL_NAMES.map((name) => [name, true]));
 let runningAsSea = false;
@@ -199,6 +223,97 @@ function updateNotificationPreferences(input) {
     }
     setSetting('notification_preferences', JSON.stringify(current));
     return current;
+}
+const DEFAULT_WATCH_RULE = Object.freeze({
+    enabled: true,
+    restock: null,
+    soldOut: null,
+    priceChange: null,
+    statusChange: null,
+    priceDropOnly: false,
+    targetPrice: null,
+    immediateRestock: false,
+    pausedUntil: null,
+});
+function priceValue(value) {
+    if (typeof value === 'number' && Number.isFinite(value))
+        return value;
+    const normalized = String(value || '').replace(/[^0-9,.-]/g, '').replace(/,/g, '');
+    const parsed = Number.parseFloat(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+function normalizeWatchRule(input, base = DEFAULT_WATCH_RULE) {
+    const value = input && typeof input === 'object' ? input : {};
+    const normalized = { ...base };
+    if (typeof value.enabled === 'boolean')
+        normalized.enabled = value.enabled;
+    for (const key of ['restock', 'soldOut', 'priceChange', 'statusChange']) {
+        if (value[key] === null || typeof value[key] === 'boolean')
+            normalized[key] = value[key];
+    }
+    if (typeof value.priceDropOnly === 'boolean')
+        normalized.priceDropOnly = value.priceDropOnly;
+    if (typeof value.immediateRestock === 'boolean')
+        normalized.immediateRestock = value.immediateRestock;
+    if (value.targetPrice === null || value.targetPrice === '')
+        normalized.targetPrice = null;
+    else if (value.targetPrice !== undefined) {
+        const target = Number(value.targetPrice);
+        if (!Number.isFinite(target) || target < 0 || target > 1000000)
+            throw new Error('Target price must be a positive number.');
+        normalized.targetPrice = Math.round(target * 100) / 100;
+    }
+    if (value.pausedUntil === null || value.pausedUntil === '')
+        normalized.pausedUntil = null;
+    else if (value.pausedUntil === 'indefinite')
+        normalized.pausedUntil = 'indefinite';
+    else if (value.pausedUntil !== undefined) {
+        const paused = new Date(value.pausedUntil);
+        if (Number.isNaN(paused.valueOf()))
+            throw new Error('Pause end must be a valid date and time.');
+        normalized.pausedUntil = paused.toISOString();
+    }
+    return normalized;
+}
+function watchRule(slug, region = currentRegion()) {
+    if (!tableExists('watch_rules'))
+        return { ...DEFAULT_WATCH_RULE };
+    const row = db.prepare('SELECT rule_json FROM watch_rules WHERE region=? AND slug=?').get(region, slug);
+    return normalizeWatchRule(safeJsonParse(row?.rule_json || '', {}));
+}
+function saveWatchRule(slug, input, region = currentRegion()) {
+    const next = normalizeWatchRule(input, watchRule(slug, region));
+    db.prepare(`INSERT INTO watch_rules(region,slug,rule_json,updated_at) VALUES(?,?,?,?)
+    ON CONFLICT(region,slug) DO UPDATE SET rule_json=excluded.rule_json,updated_at=excluded.updated_at`)
+        .run(region, slug, JSON.stringify(next), isoNow());
+    return next;
+}
+function rulePaused(rule, at = Date.now()) {
+    if (!rule.enabled || rule.pausedUntil === 'indefinite')
+        return true;
+    return Boolean(rule.pausedUntil && new Date(rule.pausedUntil).getTime() > at);
+}
+function productObservations(slug, region = currentRegion(), limit = 180) {
+    if (!tableExists('product_observations'))
+        return [];
+    return db.prepare(`SELECT observed_at AS observedAt,change_type AS changeType,status,in_stock AS inStock,price_text AS price,price_value AS priceValue
+    FROM product_observations WHERE region=? AND slug=? ORDER BY observed_at DESC,id DESC LIMIT ?`).all(region, slug, limit)
+        .map((row) => ({ ...row, inStock: Boolean(row.inStock) }));
+}
+function recordProductObservation(product, changeType = 'observed', region = currentRegion()) {
+    if (!product || !tableExists('product_observations'))
+        return;
+    const previous = db.prepare('SELECT status,in_stock,price_text FROM product_observations WHERE region=? AND slug=? ORDER BY observed_at DESC,id DESC LIMIT 1').get(region, product.slug);
+    if (previous && previous.status === product.status && Boolean(previous.in_stock) === Boolean(product.inStock) && (previous.price_text || null) === (product.price || null))
+        return;
+    db.prepare(`INSERT INTO product_observations(region,slug,observed_at,change_type,status,in_stock,price_text,price_value)
+    VALUES(?,?,?,?,?,?,?,?)`).run(region, product.slug, isoNow(), changeType, product.status || null, product.inStock ? 1 : 0, product.price || null, priceValue(product.price));
+}
+function pruneProductObservations() {
+    if (!tableExists('product_observations'))
+        return;
+    const cutoff = new Date(Date.now() - HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    db.prepare('DELETE FROM product_observations WHERE observed_at<?').run(cutoff);
 }
 function schemaVersion() {
     if (!tableExists('schema_migrations'))
@@ -407,6 +522,38 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_backup_log_created ON backup_log(created_at);
     `,
     },
+    {
+        version: 6,
+        name: 'watch-intelligence-and-scheduled-alerts',
+        sql: `
+      CREATE TABLE IF NOT EXISTS product_observations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        region TEXT NOT NULL,
+        slug TEXT NOT NULL,
+        observed_at TEXT NOT NULL,
+        change_type TEXT NOT NULL,
+        status TEXT,
+        in_stock INTEGER NOT NULL DEFAULT 0,
+        price_text TEXT,
+        price_value REAL
+      );
+      CREATE INDEX IF NOT EXISTS idx_product_observations_lookup ON product_observations(region,slug,observed_at DESC);
+      CREATE TABLE IF NOT EXISTS watch_rules (
+        region TEXT NOT NULL,
+        slug TEXT NOT NULL,
+        rule_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(region,slug)
+      );
+      CREATE TABLE IF NOT EXISTS notification_cooldowns (
+        region TEXT NOT NULL,
+        slug TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        last_notified_at TEXT NOT NULL,
+        PRIMARY KEY(region,slug,event_type)
+      );
+    `,
+    },
 ];
 function runMigrations() {
     // Bootstrap the migration ledger before querying it on a brand-new database.
@@ -504,8 +651,17 @@ const DEFAULT_APP_CONFIG = Object.freeze({
     allowedOrigins: [...ALLOWED_ORIGINS],
     backupIntervalHours: BACKUP_INTERVAL_HOURS,
     backupRetention: BACKUP_RETENTION,
+    historyRetentionDays: HISTORY_RETENTION_DAYS,
     notificationMaxAttempts: NOTIFICATION_MAX_ATTEMPTS,
     notificationGroupSeconds: NOTIFICATION_GROUP_SECONDS,
+    notificationTimeZone: NOTIFICATION_TIME_ZONE,
+    quietHoursEnabled: QUIET_HOURS_ENABLED,
+    quietHoursStart: QUIET_HOURS_START,
+    quietHoursEnd: QUIET_HOURS_END,
+    digestEnabled: DIGEST_ENABLED,
+    digestTime: DIGEST_TIME,
+    notificationCooldownMinutes: NOTIFICATION_COOLDOWN_MINUTES,
+    operationalAlerts: { ...OPERATIONAL_ALERTS },
     channelEnabled: { ...CHANNEL_ENABLED },
     ntfyBaseUrl: NTFY_BASE_URL,
     ntfyTopic: NTFY_TOPIC,
@@ -535,6 +691,22 @@ function validHttpUrl(value, { httpsOnly = false, allowEmpty = true } = {}) {
         throw new Error('URLs must not contain embedded credentials.');
     return parsed.toString().replace(/\/$/, '');
 }
+function validTimeOfDay(value, label) {
+    const text = String(value || '').trim();
+    if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(text))
+        throw new Error(`${label} must use 24-hour HH:MM format.`);
+    return text;
+}
+function validTimeZone(value) {
+    const text = String(value || '').trim();
+    try {
+        new Intl.DateTimeFormat('en-US', { timeZone: text }).format();
+    }
+    catch {
+        throw new Error('Notification timezone must be a valid IANA timezone, such as America/New_York.');
+    }
+    return text;
+}
 function normalizeAppConfig(input, base = DEFAULT_APP_CONFIG) {
     const body = input && typeof input === 'object' ? input : {};
     const regions = Array.isArray(body.regions) ? [...new Set(body.regions.map((x) => String(x).toLowerCase()).filter((x) => REGIONS[x]))] : [...base.regions];
@@ -561,12 +733,22 @@ function normalizeAppConfig(input, base = DEFAULT_APP_CONFIG) {
     const backupRetention = Number(body.backupRetention ?? base.backupRetention);
     if (!Number.isInteger(backupRetention) || backupRetention < 1 || backupRetention > 100)
         throw new Error('Backup retention must be between 1 and 100.');
+    const historyRetentionDays = Number(body.historyRetentionDays ?? base.historyRetentionDays);
+    if (!Number.isInteger(historyRetentionDays) || historyRetentionDays < 30 || historyRetentionDays > 3650)
+        throw new Error('Product history retention must be between 30 and 3650 days.');
     const notificationMaxAttempts = Number(body.notificationMaxAttempts ?? base.notificationMaxAttempts);
     if (!Number.isInteger(notificationMaxAttempts) || notificationMaxAttempts < 1 || notificationMaxAttempts > 10)
         throw new Error('Notification attempts must be between 1 and 10.');
     const notificationGroupSeconds = Number(body.notificationGroupSeconds ?? base.notificationGroupSeconds);
     if (!Number.isFinite(notificationGroupSeconds) || notificationGroupSeconds < 0 || notificationGroupSeconds > 3600)
         throw new Error('Notification grouping must be between 0 and 3600 seconds.');
+    const notificationCooldownMinutes = Number(body.notificationCooldownMinutes ?? base.notificationCooldownMinutes);
+    if (!Number.isFinite(notificationCooldownMinutes) || notificationCooldownMinutes < 0 || notificationCooldownMinutes > 10080)
+        throw new Error('Notification cooldown must be between 0 and 10080 minutes.');
+    const operationalAlerts = { ...base.operationalAlerts };
+    for (const key of Object.keys(operationalAlerts))
+        if (typeof body.operationalAlerts?.[key] === 'boolean')
+            operationalAlerts[key] = body.operationalAlerts[key];
     const smtpPort = Number(body.smtpPort ?? base.smtpPort);
     if (!Number.isInteger(smtpPort) || smtpPort < 1 || smtpPort > 65535)
         throw new Error('SMTP port must be between 1 and 65535.');
@@ -590,8 +772,17 @@ function normalizeAppConfig(input, base = DEFAULT_APP_CONFIG) {
         allowedOrigins,
         backupIntervalHours,
         backupRetention,
+        historyRetentionDays,
         notificationMaxAttempts,
         notificationGroupSeconds,
+        notificationTimeZone: validTimeZone(body.notificationTimeZone ?? base.notificationTimeZone),
+        quietHoursEnabled: Boolean(body.quietHoursEnabled ?? base.quietHoursEnabled),
+        quietHoursStart: validTimeOfDay(body.quietHoursStart ?? base.quietHoursStart, 'Quiet-hours start'),
+        quietHoursEnd: validTimeOfDay(body.quietHoursEnd ?? base.quietHoursEnd, 'Quiet-hours end'),
+        digestEnabled: Boolean(body.digestEnabled ?? base.digestEnabled),
+        digestTime: validTimeOfDay(body.digestTime ?? base.digestTime, 'Digest time'),
+        notificationCooldownMinutes,
+        operationalAlerts,
         channelEnabled,
         ntfyBaseUrl: validHttpUrl(String(body.ntfyBaseUrl ?? base.ntfyBaseUrl).trim()),
         ntfyTopic: String(body.ntfyTopic ?? base.ntfyTopic).trim().slice(0, 256),
@@ -619,8 +810,17 @@ function applyAppConfig(config, secrets, { startup = false } = {}) {
     ALLOWED_ORIGINS = [...config.allowedOrigins];
     BACKUP_INTERVAL_HOURS = config.backupIntervalHours;
     BACKUP_RETENTION = config.backupRetention;
+    HISTORY_RETENTION_DAYS = config.historyRetentionDays;
     NOTIFICATION_MAX_ATTEMPTS = config.notificationMaxAttempts;
     NOTIFICATION_GROUP_SECONDS = config.notificationGroupSeconds;
+    NOTIFICATION_TIME_ZONE = config.notificationTimeZone;
+    QUIET_HOURS_ENABLED = config.quietHoursEnabled;
+    QUIET_HOURS_START = config.quietHoursStart;
+    QUIET_HOURS_END = config.quietHoursEnd;
+    DIGEST_ENABLED = config.digestEnabled;
+    DIGEST_TIME = config.digestTime;
+    NOTIFICATION_COOLDOWN_MINUTES = config.notificationCooldownMinutes;
+    OPERATIONAL_ALERTS = { ...config.operationalAlerts };
     CHANNEL_ENABLED = { ...config.channelEnabled };
     NTFY_BASE_URL = config.ntfyBaseUrl || 'https://ntfy.sh';
     NTFY_TOPIC = config.ntfyTopic;
@@ -767,8 +967,12 @@ function loadState(region = currentRegion()) {
 function persistState(nextState, region = currentRegion()) {
     db.exec('BEGIN IMMEDIATE');
     try {
-        db.prepare('DELETE FROM watchlist WHERE region=?').run(region);
-        const addWatch = db.prepare('INSERT INTO watchlist(region,slug,created_at) VALUES(?,?,?)');
+        const wanted = new Set(nextState.watchlist || []);
+        for (const row of db.prepare('SELECT slug FROM watchlist WHERE region=?').all(region)) {
+            if (!wanted.has(row.slug))
+                db.prepare('DELETE FROM watchlist WHERE region=? AND slug=?').run(region, row.slug);
+        }
+        const addWatch = db.prepare('INSERT INTO watchlist(region,slug,created_at) VALUES(?,?,?) ON CONFLICT(region,slug) DO NOTHING');
         for (const slug of nextState.watchlist || [])
             addWatch.run(region, slug, isoNow());
         db.prepare('DELETE FROM products WHERE region=?').run(region);
@@ -820,6 +1024,10 @@ for (const region of ACTIVE_REGIONS)
 setMeta('last_app_version', APP_VERSION);
 setMeta('last_started_at', isoNow());
 const states = Object.fromEntries(ACTIVE_REGIONS.map((region) => [region, loadState(region)]));
+for (const region of ACTIVE_REGIONS) {
+    for (const product of Object.values(states[region].products))
+        recordProductObservation(product, 'migration-baseline', region);
+}
 function contextualProxy(values) {
     return new Proxy({}, {
         get(_target, property) { return values[currentRegion()][property]; },
@@ -1076,11 +1284,16 @@ function firstImage(product) {
     const unique = [...new Set(candidates)];
     const score = (url) => {
         let n = 0;
-        if (url.includes('images.svc.ui.com'))
+        let hostname = '';
+        try {
+            hostname = new URL(url).hostname.toLowerCase();
+        }
+        catch { }
+        if (hostname === 'images.svc.ui.com')
             n += 50;
-        if (url.includes('cdn.ecomm.ui.com'))
+        if (hostname === 'cdn.ecomm.ui.com')
             n += 40;
-        if (url.includes('assets.ecomm.ui.com'))
+        if (hostname === 'assets.ecomm.ui.com')
             n += 10;
         if (/\.(png|webp|avif)(?:$|\?)/i.test(url))
             n += 5;
@@ -1227,28 +1440,46 @@ function notificationCopy(event) {
             body: `Notifications are working · ${region}`,
             ntfyTags: 'white_check_mark,package',
         };
+    if (event.type === 'operational')
+        return {
+            title: `GearBeacon needs attention: ${event.name}`,
+            body: `${event.detail || 'Open Operations for details.'} · ${region}`,
+            ntfyTags: 'warning,gear',
+        };
     return {
         title: `🚨 ${event.name} is back in stock`,
         body: `${event.price ? `${event.price} · ` : ''}${region} · detected now`,
         ntfyTags: 'rotating_light,package',
     };
 }
-function shouldNotifyEvent(event, prefs = notificationPreferences()) {
-    if (event.type === 'test')
-        return true;
+function notificationDecision(event, prefs = notificationPreferences()) {
+    if (event.type === 'test' || event.type === 'operational')
+        return { allowed: true, reason: 'immediate', rule: { ...DEFAULT_WATCH_RULE } };
     if (event.type === 'new_product')
-        return Boolean(prefs.newProduct);
+        return { allowed: Boolean(prefs.newProduct), reason: prefs.newProduct ? 'enabled' : 'disabled', rule: { ...DEFAULT_WATCH_RULE } };
     if (!event.watchedAtDetection)
-        return false;
-    if (event.type === 'restock')
-        return Boolean(prefs.restock);
-    if (event.type === 'sold_out')
-        return Boolean(prefs.soldOut);
-    if (event.type === 'price_change')
-        return Boolean(prefs.priceChange);
-    if (event.type === 'status_change')
-        return Boolean(prefs.statusChange);
-    return false;
+        return { allowed: false, reason: 'not-watched', rule: { ...DEFAULT_WATCH_RULE } };
+    const rule = watchRule(event.slug, event.region || currentRegion());
+    if (rulePaused(rule))
+        return { allowed: false, reason: 'paused', rule };
+    const preferenceKey = ({ restock: 'restock', sold_out: 'soldOut', price_change: 'priceChange', status_change: 'statusChange' })[event.type];
+    if (!preferenceKey)
+        return { allowed: false, reason: 'unsupported-event', rule };
+    let enabled = rule[preferenceKey] === null ? Boolean(prefs[preferenceKey]) : Boolean(rule[preferenceKey]);
+    if (event.type === 'price_change') {
+        const current = priceValue(event.price);
+        const previous = priceValue(event.previousPrice);
+        const dropped = current !== null && previous !== null && current < previous;
+        const crossedTarget = rule.targetPrice !== null && current !== null && current <= rule.targetPrice && (previous === null || previous > rule.targetPrice);
+        if (rule.targetPrice !== null)
+            enabled = crossedTarget;
+        else if (rule.priceDropOnly)
+            enabled = enabled && dropped;
+    }
+    return { allowed: enabled, reason: enabled ? 'enabled' : 'disabled', rule };
+}
+function shouldNotifyEvent(event, prefs = notificationPreferences()) {
+    return notificationDecision(event, prefs).allowed;
 }
 function logNotification(eventId, channel, status, detail = null) {
     try {
@@ -1547,17 +1778,85 @@ async function sendTestNotification(selectedChannel = null) {
     const configured = CHANNEL_NAMES.filter(channelConfigured).length;
     return { ok: outcomes.some((item) => item.ok), configuredChannels: configured, outcomes };
 }
-function enqueueAlert(event) {
-    const channels = CHANNEL_NAMES.filter(channelConfigured);
+function zonedClock(date = new Date(), timeZone = NOTIFICATION_TIME_ZONE) {
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone, hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+        .formatToParts(date).reduce((value, part) => ({ ...value, [part.type]: part.value }), {});
+    return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour === '24' ? '00' : parts.hour}:${parts.minute}` };
+}
+function timeMinutes(value) {
+    const [hour, minute] = String(value).split(':').map(Number);
+    return hour * 60 + minute;
+}
+function quietAt(date) {
+    if (!QUIET_HOURS_ENABLED || QUIET_HOURS_START === QUIET_HOURS_END)
+        return false;
+    const minute = timeMinutes(zonedClock(date).time);
+    const start = timeMinutes(QUIET_HOURS_START);
+    const end = timeMinutes(QUIET_HOURS_END);
+    return start < end ? minute >= start && minute < end : minute >= start || minute < end;
+}
+function findNextDeliveryTime(start, predicate, maxMinutes = 3 * 24 * 60) {
+    const rounded = new Date(Math.ceil(start.getTime() / 60000) * 60000);
+    for (let minute = 0; minute <= maxMinutes; minute += 1) {
+        const candidate = new Date(rounded.getTime() + minute * 60000);
+        if (predicate(candidate))
+            return candidate;
+    }
+    return start;
+}
+function deliveryPlan(event, rule = event.slug ? watchRule(event.slug, event.region || currentRegion()) : DEFAULT_WATCH_RULE) {
+    const now = new Date();
+    if (event.type === 'restock' && rule.immediateRestock)
+        return { deliverAt: now.toISOString(), mode: 'immediate-restock', timeZone: NOTIFICATION_TIME_ZONE };
+    if (DIGEST_ENABLED && !['test', 'operational'].includes(event.type)) {
+        const deliverAt = findNextDeliveryTime(new Date(now.getTime() + 60000), (candidate) => zonedClock(candidate).time === DIGEST_TIME && !quietAt(candidate));
+        return { deliverAt: deliverAt.toISOString(), mode: 'digest', timeZone: NOTIFICATION_TIME_ZONE };
+    }
+    if (quietAt(now)) {
+        const deliverAt = findNextDeliveryTime(new Date(now.getTime() + 60000), (candidate) => !quietAt(candidate));
+        return { deliverAt: deliverAt.toISOString(), mode: 'after-quiet-hours', timeZone: NOTIFICATION_TIME_ZONE };
+    }
+    return { deliverAt: new Date(now.getTime() + NOTIFICATION_GROUP_SECONDS * 1000).toISOString(), mode: NOTIFICATION_GROUP_SECONDS ? 'grouped' : 'immediate', timeZone: NOTIFICATION_TIME_ZONE };
+}
+function cooldownAllows(event, rule) {
+    if (!NOTIFICATION_COOLDOWN_MINUTES || (event.type === 'restock' && rule.immediateRestock) || event.type === 'test')
+        return true;
+    const slug = event.slug || `operational:${event.code || event.name}`;
+    const row = db.prepare('SELECT last_notified_at FROM notification_cooldowns WHERE region=? AND slug=? AND event_type=?').get(event.region || currentRegion(), slug, event.type);
+    return !row || Date.now() - new Date(row.last_notified_at).getTime() >= NOTIFICATION_COOLDOWN_MINUTES * 60000;
+}
+function markCooldown(event) {
+    if (event.type === 'test')
+        return;
+    const slug = event.slug || `operational:${event.code || event.name}`;
+    db.prepare(`INSERT INTO notification_cooldowns(region,slug,event_type,last_notified_at) VALUES(?,?,?,?)
+    ON CONFLICT(region,slug,event_type) DO UPDATE SET last_notified_at=excluded.last_notified_at`)
+        .run(event.region || currentRegion(), slug, event.type, isoNow());
+}
+function enqueueAlert(event, options = {}) {
+    const decision = notificationDecision(event);
+    const rule = decision.rule || DEFAULT_WATCH_RULE;
+    if (!decision.allowed || !cooldownAllows(event, rule))
+        return 0;
+    const excluded = new Set(options.excludeChannels || []);
+    const channels = CHANNEL_NAMES.filter((channel) => channelConfigured(channel) && !excluded.has(channel));
     const now = isoNow();
-    const nextAttemptAt = new Date(Date.now() + NOTIFICATION_GROUP_SECONDS * 1000).toISOString();
+    const plan = deliveryPlan(event, rule);
     const insert = db.prepare(`INSERT INTO notification_queue(event_id,region,channel,payload_json,attempts,max_attempts,next_attempt_at,status,last_error,created_at,updated_at)
     VALUES(?,?,?,?,0,?,?,'pending',NULL,?,?) ON CONFLICT(event_id,channel) DO NOTHING`);
     for (const channel of channels)
-        insert.run(event.id, event.region || currentRegion(), channel, JSON.stringify(event), NOTIFICATION_MAX_ATTEMPTS, nextAttemptAt, now, now);
-    if (channels.length)
-        writeAppLog('info', 'notifications', `Queued ${channels.length} notification delivery job(s).`, { eventId: event.id, region: event.region, channels });
+        insert.run(event.id, event.region || currentRegion(), channel, JSON.stringify(event), NOTIFICATION_MAX_ATTEMPTS, plan.deliverAt, now, now);
+    if (channels.length) {
+        markCooldown(event);
+        writeAppLog('info', 'notifications', `Queued ${channels.length} notification delivery job(s).`, { eventId: event.id, region: event.region, channels, delivery: plan });
+    }
     return channels.length;
+}
+function enqueueOperationalAlert(code, name, detail, region = currentRegion(), options = {}) {
+    const preference = ({ monitor: 'monitorFailures', notifications: 'notificationFailures', backup: 'backupFailures', disk: 'lowDiskSpace' })[code];
+    if (preference && !OPERATIONAL_ALERTS[preference])
+        return 0;
+    return enqueueAlert({ id: `operational-${code}-${region}-${Date.now()}`, type: 'operational', code, slug: null, name, detail, region, detectedAt: isoNow(), watchedAtDetection: false, url: PUBLIC_BASE_URL || null }, options);
 }
 function notificationQueueSummary() {
     const rows = db.prepare('SELECT status,COUNT(*) AS count FROM notification_queue GROUP BY status').all();
@@ -1565,7 +1864,8 @@ function notificationQueueSummary() {
     for (const row of rows)
         summary[row.status] = Number(row.count);
     const recentFailures = db.prepare("SELECT id,event_id,region,channel,attempts,max_attempts,last_error,updated_at FROM notification_queue WHERE status='failed' ORDER BY updated_at DESC LIMIT 20").all();
-    return { ...summary, recentFailures };
+    const next = db.prepare("SELECT next_attempt_at FROM notification_queue WHERE status='pending' ORDER BY next_attempt_at LIMIT 1").get();
+    return { ...summary, recentFailures, nextDeliveryAt: next?.next_attempt_at || null };
 }
 function retryDelaySeconds(attempts) {
     return Math.min(30 * 60, 30 * (2 ** Math.max(0, attempts - 1)));
@@ -1581,7 +1881,7 @@ async function processNotificationQueue() {
         const due = db.prepare("SELECT * FROM notification_queue WHERE status='pending' AND next_attempt_at<=? ORDER BY id LIMIT 50").all(isoNow());
         const groups = new Map();
         for (const row of due) {
-            const key = NOTIFICATION_GROUP_SECONDS > 0 ? `${row.channel}:${row.region}` : String(row.id);
+            const key = (NOTIFICATION_GROUP_SECONDS > 0 || DIGEST_ENABLED) ? `${row.channel}:${row.region}` : String(row.id);
             if (!groups.has(key))
                 groups.set(key, []);
             groups.get(key).push(row);
@@ -1606,14 +1906,18 @@ async function processNotificationQueue() {
             }
             catch (err) {
                 const message = String(err?.message || err).slice(0, 1000);
+                let terminalFailure = false;
                 for (const row of rows) {
                     const attempts = Number(row.attempts) + 1;
                     const failed = attempts >= Number(row.max_attempts);
+                    terminalFailure ||= failed;
                     db.prepare('UPDATE notification_queue SET status=?,attempts=?,next_attempt_at=?,last_error=?,updated_at=? WHERE id=?')
                         .run(failed ? 'failed' : 'pending', attempts, new Date(Date.now() + retryDelaySeconds(attempts) * 1000).toISOString(), message, isoNow(), row.id);
                     logNotification(row.event_id, row.channel, failed ? 'failed' : 'retrying', `${message}; attempt ${attempts}/${row.max_attempts}`);
                 }
                 writeAppLog('warn', 'notifications', `Notification delivery failed for ${rows[0].channel}.`, { error: message, jobs: ids });
+                if (terminalFailure)
+                    enqueueOperationalAlert('notifications', 'Notification delivery failed', `${rows[0].channel} exhausted its retry limit.`, rows[0].region, { excludeChannels: [rows[0].channel] });
             }
         }
         db.prepare("DELETE FROM notification_queue WHERE status='sent' AND updated_at<?").run(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString());
@@ -1660,6 +1964,9 @@ async function checkStore(reason = 'timer') {
             incoming[product.slug] = product;
             const previous = state.products[product.slug];
             if (!previous) {
+                product.firstDiscoveredAt = product.lastSeenAt;
+                product.lastChangedAt = product.lastSeenAt;
+                recordProductObservation(product, 'discovered');
                 if (hadBaseline) {
                     const event = createEvent('new_product', null, product, false);
                     recordEvent(event);
@@ -1669,30 +1976,38 @@ async function checkStore(reason = 'timer') {
                 continue;
             }
             const watchedAtDetection = watch.has(product.slug);
+            const changeTypes = [];
             if (!previous.inStock && product.inStock) {
+                changeTypes.push('restock');
                 const event = createEvent('restock', previous, product, watchedAtDetection);
                 recordEvent(event);
                 if (shouldNotifyEvent(event, prefs))
                     notifications.push(event);
             }
             else if (previous.inStock && !product.inStock) {
+                changeTypes.push('sold-out');
                 const event = createEvent('sold_out', previous, product, watchedAtDetection);
                 recordEvent(event);
                 if (shouldNotifyEvent(event, prefs))
                     notifications.push(event);
             }
             else if (previous.status !== product.status) {
+                changeTypes.push('status');
                 const event = createEvent('status_change', previous, product, watchedAtDetection);
                 recordEvent(event);
                 if (shouldNotifyEvent(event, prefs))
                     notifications.push(event);
             }
             if (previous.price && product.price && previous.price !== product.price) {
+                changeTypes.push('price');
                 const event = createEvent('price_change', previous, product, watchedAtDetection);
                 recordEvent(event);
                 if (shouldNotifyEvent(event, prefs))
                     notifications.push(event);
             }
+            product.firstDiscoveredAt = previous.firstDiscoveredAt || previous.lastSeenAt || product.lastSeenAt;
+            product.lastChangedAt = changeTypes.length ? product.lastSeenAt : (previous.lastChangedAt || previous.lastSeenAt || product.lastSeenAt);
+            recordProductObservation(product, changeTypes.join('+') || 'observed');
         }
         // Preserve products that temporarily disappear from a partial catalog fetch.
         // GearBeacon never infers a sellout from a missing response.
@@ -1701,9 +2016,17 @@ async function checkStore(reason = 'timer') {
         monitor.lastSuccessAt = isoNow();
         monitor.consecutiveFailures = 0;
         monitor.catalogHealth = monitor.partialErrors.length ? 'degraded' : 'healthy';
+        pruneProductObservations();
         saveStateSoon();
         for (const event of notifications)
             enqueueAlert(event);
+        try {
+            const stat = typeof fs.statfsSync === 'function' ? fs.statfsSync(USER_DATA_DIR) : null;
+            const free = stat ? Number(stat.bavail) * Number(stat.bsize) : null;
+            if (free !== null && free < 1024 * 1024 * 1024)
+                enqueueOperationalAlert('disk', 'Storage space is low', `Only ${Math.max(0, Math.round(free / 1024 / 1024))} MB remains in the GearBeacon data filesystem.`);
+        }
+        catch { }
         console.log(`[monitor] success: ${monitor.productCount} products, ${notifications.length} notification event(s)`);
         writeAppLog('info', 'monitor', `Store check succeeded for ${currentRegion()}.`, { reason, products: monitor.productCount, notificationEvents: notifications.length, catalogHealth: monitor.catalogHealth });
         return { ok: true, products: monitor.productCount, notifications: notifications.length, catalogHealth: monitor.catalogHealth };
@@ -1715,6 +2038,8 @@ async function checkStore(reason = 'timer') {
         monitor.catalogHealth = lastSuccessAge > STALE_AFTER_SECONDS ? 'stale' : 'error';
         console.error('[monitor] failed:', monitor.lastError);
         writeAppLog('error', 'monitor', `Store check failed for ${currentRegion()}.`, { reason, error: monitor.lastError, consecutiveFailures: monitor.consecutiveFailures });
+        if (monitor.consecutiveFailures === 3)
+            enqueueOperationalAlert('monitor', 'Store monitoring is unhealthy', `${REGIONS[currentRegion()].label} has failed three consecutive checks: ${monitor.lastError}`);
         return { ok: false, error: monitor.lastError, consecutiveFailures: monitor.consecutiveFailures };
     }
     finally {
@@ -1744,7 +2069,23 @@ function scheduleMonitor() {
 function productForApi(product) {
     if (!product)
         return null;
-    return { ...product, watched: state.watchlist.includes(product.slug) };
+    const watched = state.watchlist.includes(product.slug);
+    const watch = watched ? db.prepare('SELECT created_at FROM watchlist WHERE region=? AND slug=?').get(currentRegion(), product.slug) : null;
+    return { ...product, watched, watchedAt: watch?.created_at || null, watchRule: watched ? watchRule(product.slug) : null };
+}
+function productDetailsForApi(slug) {
+    const product = state.products[slug];
+    if (!product)
+        return null;
+    const history = productObservations(slug);
+    return {
+        product: productForApi(product),
+        history,
+        historyRetentionDays: HISTORY_RETENTION_DAYS,
+        firstObservedAt: history.length ? history[history.length - 1].observedAt : product.firstDiscoveredAt || product.lastSeenAt || null,
+        lastChangedAt: product.lastChangedAt || history[0]?.observedAt || null,
+        notificationDecision: state.watchlist.includes(slug) ? notificationDecision({ type: 'restock', slug, region: currentRegion(), watchedAtDetection: true }) : null,
+    };
 }
 function backupSummary() {
     const backups = listBackups().filter((item) => item.name.endsWith('.sqlite3'));
@@ -1774,6 +2115,7 @@ function scheduleBackups() {
         catch (err) {
             console.error('[data] scheduled backup failed:', err?.message || err);
             writeAppLog('error', 'backups', 'Scheduled backup failed.', { error: err?.message || String(err) });
+            enqueueOperationalAlert('backup', 'Scheduled backup failed', String(err?.message || err));
         }
         finally {
             scheduleBackups();
@@ -1805,23 +2147,27 @@ function dataInfo() {
             return null;
         } })() : null,
         backup: backupSummary(),
+        history: {
+            observations: tableExists('product_observations') ? Number(db.prepare('SELECT COUNT(*) AS count FROM product_observations').get()?.count || 0) : 0,
+            retentionDays: HISTORY_RETENTION_DAYS,
+        },
         legacySource: getMeta('legacy_source'),
     };
 }
 function securityWarnings() {
     const warnings = [];
     if (ACCESS_MODE === 'local' && !isLoopbackHost(BIND_HOST))
-        warnings.push({ severity: 'high', code: 'local-remote', message: 'Local mode is exposed beyond loopback without owner authentication.' });
+        warnings.push({ severity: 'high', code: 'local-remote', settingsTab: 'general', message: 'Local mode is exposed beyond loopback without owner authentication.' });
     if (ACCESS_MODE !== 'local' && !ownerCredential())
-        warnings.push({ severity: 'high', code: 'owner-setup', message: 'Owner password setup is incomplete.' });
+        warnings.push({ severity: 'high', code: 'owner-setup', settingsTab: 'security', message: 'Owner password setup is incomplete.' });
     if (ACCESS_MODE === 'private' && !COOKIE_SECURE && !PUBLIC_BASE_URL.startsWith('https://'))
-        warnings.push({ severity: 'medium', code: 'plain-http', message: 'Remote access is using HTTP. Prefer a private VPN or authenticated HTTPS reverse proxy.' });
+        warnings.push({ severity: 'medium', code: 'plain-http', settingsTab: 'general', message: 'Remote access is using HTTP. Prefer a private VPN or authenticated HTTPS reverse proxy.' });
     if (ACCESS_MODE === 'proxy' && !PUBLIC_BASE_URL.startsWith('https://'))
-        warnings.push({ severity: 'high', code: 'proxy-url', message: 'Proxy mode should use an HTTPS public URL.' });
+        warnings.push({ severity: 'high', code: 'proxy-url', settingsTab: 'general', message: 'Proxy mode should use an HTTPS public URL.' });
     if (!SMTP_REJECT_UNAUTHORIZED && smtpConfigured())
-        warnings.push({ severity: 'medium', code: 'smtp-certificates', message: 'SMTP certificate verification is disabled.' });
+        warnings.push({ severity: 'medium', code: 'smtp-certificates', settingsTab: 'notifications', message: 'SMTP certificate verification is disabled.' });
     if (setupRequired())
-        warnings.push({ severity: 'high', code: 'setup-token', message: 'Complete owner setup and remove any configured setup token.' });
+        warnings.push({ severity: 'high', code: 'setup-token', settingsTab: 'security', message: 'Complete owner setup and remove any configured setup token.' });
     return warnings;
 }
 function appConfigurationForApi() {
@@ -1838,6 +2184,16 @@ function operationsSummary() {
     const backupRows = tableExists('backup_log') ? db.prepare('SELECT id,filename,reason,status,size,detail,created_at FROM backup_log ORDER BY id DESC LIMIT 30').all() : [];
     const notificationRows = db.prepare('SELECT id,event_id,channel,status,detail,created_at FROM notification_log ORDER BY id DESC LIMIT 50').all();
     const storage = dataInfo();
+    const warnings = securityWarnings();
+    const queue = notificationQueueSummary();
+    const unhealthyRegions = ACTIVE_REGIONS.filter((region) => !monitors[region].lastSuccessAt || monitors[region].lastError || monitors[region].catalogHealth === 'stale');
+    const issues = [
+        ...warnings.map((item) => ({ severity: item.severity === 'high' ? 'action' : 'degraded', message: item.message, settingsTab: item.settingsTab })),
+        ...(queue.failed ? [{ severity: 'action', message: `${queue.failed} notification delivery job${queue.failed === 1 ? '' : 's'} failed.`, settingsTab: 'notifications' }] : []),
+        ...(!storage.integrity.ok ? [{ severity: 'action', message: 'Database integrity check failed.', settingsTab: 'data' }] : []),
+        ...(unhealthyRegions.length ? [{ severity: 'degraded', message: `${unhealthyRegions.length} store region${unhealthyRegions.length === 1 ? ' is' : 's are'} unhealthy.` }] : []),
+    ];
+    const overall = issues.some((item) => item.severity === 'action') ? 'action' : issues.length ? 'degraded' : 'healthy';
     return {
         generatedAt: isoNow(),
         uptimeSeconds: Math.floor(process.uptime()),
@@ -1850,10 +2206,11 @@ function operationsSummary() {
             standalone: runningAsSea,
         },
         regions: ACTIVE_REGIONS.map((region) => ({ region, label: REGIONS[region].label, ...monitors[region], watchCount: states[region].watchlist.length, storedProductCount: Object.keys(states[region].products).length })),
-        notifications: { queue: notificationQueueSummary(), recent: notificationRows },
+        summary: { state: overall, label: overall === 'action' ? 'Action required' : overall === 'degraded' ? 'Degraded' : 'Healthy', issues },
+        notifications: { queue, recent: notificationRows },
         backups: { ...backupSummary(), history: backupRows, integrity: storage.integrity },
         storage: { databasePath: storage.databasePath, databaseSize: storage.databaseSize, freeSpace: storage.freeSpace, userDataDir: storage.userDataDir },
-        securityWarnings: securityWarnings(),
+        securityWarnings: warnings,
         onboardingComplete: getSetting('onboarding_complete', '0') === '1',
     };
 }
@@ -1889,15 +2246,25 @@ function exportSnapshot() {
     }
     const regionData = {};
     for (const region of ACTIVE_REGIONS) {
+        const watchRules = {};
+        for (const row of db.prepare('SELECT slug,rule_json FROM watch_rules WHERE region=?').all(region))
+            watchRules[row.slug] = normalizeWatchRule(safeJsonParse(row.rule_json, {}));
+        const watchCreatedAt = {};
+        for (const row of db.prepare('SELECT slug,created_at FROM watchlist WHERE region=?').all(region))
+            watchCreatedAt[row.slug] = row.created_at;
         regionData[region] = {
             watchlist: [...states[region].watchlist],
+            watchCreatedAt,
             products: states[region].products,
             events: states[region].events,
+            watchRules,
+            productHistory: db.prepare(`SELECT slug,observed_at AS observedAt,change_type AS changeType,status,in_stock AS inStock,price_text AS price,price_value AS priceValue
+        FROM product_observations WHERE region=? ORDER BY observed_at`).all(region).map((row) => ({ ...row, inStock: Boolean(row.inStock) })),
         };
     }
     return {
         format: 'GearBeaconBackup',
-        formatVersion: 2,
+        formatVersion: 3,
         exportedAt: isoNow(),
         appVersion: APP_VERSION,
         schemaVersion: schemaVersion(),
@@ -1952,12 +2319,15 @@ function normalizeImportedSnapshot(snapshot) {
     const isLegacy = !snapshot.format && (Array.isArray(snapshot.watchlist) || snapshot.products || Array.isArray(snapshot.events));
     if (!isBackup && !isLegacy)
         throw new Error('This file is not a GearBeacon backup or legacy GearBeacon state file.');
-    if (isBackup && Number(snapshot.formatVersion || 0) > 2)
+    if (isBackup && Number(snapshot.formatVersion || 0) > 3)
         throw new Error(`This backup format (${snapshot.formatVersion}) is newer than GearBeacon ${APP_VERSION} supports.`);
     const normalizeRegion = (value) => ({
         watchlist: Array.isArray(value?.watchlist) ? value.watchlist.map(String).filter(Boolean) : [],
+        watchCreatedAt: value?.watchCreatedAt && typeof value.watchCreatedAt === 'object' && !Array.isArray(value.watchCreatedAt) ? value.watchCreatedAt : {},
         products: value?.products && typeof value.products === 'object' && !Array.isArray(value.products) ? value.products : {},
         events: Array.isArray(value?.events) ? value.events.filter((event) => event && event.id).slice(-1000) : [],
+        watchRules: value?.watchRules && typeof value.watchRules === 'object' && !Array.isArray(value.watchRules) ? value.watchRules : {},
+        productHistory: Array.isArray(value?.productHistory) ? value.productHistory.filter((item) => item?.slug && item?.observedAt).slice(-100000) : [],
     });
     const regions = {};
     if (snapshot.regions && typeof snapshot.regions === 'object' && !Array.isArray(snapshot.regions)) {
@@ -1987,6 +2357,23 @@ function importSnapshot(snapshot) {
         if (!ACTIVE_REGIONS.includes(region))
             continue;
         persistState(regionState, region);
+        const restoreWatchCreatedAt = db.prepare('UPDATE watchlist SET created_at=? WHERE region=? AND slug=?');
+        for (const [slug, createdAt] of Object.entries(regionState.watchCreatedAt || {})) {
+            const parsed = new Date(String(createdAt));
+            if (regionState.watchlist.includes(slug) && !Number.isNaN(parsed.valueOf()))
+                restoreWatchCreatedAt.run(parsed.toISOString(), region, slug);
+        }
+        db.prepare('DELETE FROM watch_rules WHERE region=?').run(region);
+        for (const [slug, rule] of Object.entries(regionState.watchRules || {}))
+            saveWatchRule(String(slug), rule, region);
+        db.prepare('DELETE FROM product_observations WHERE region=?').run(region);
+        const addHistory = db.prepare(`INSERT INTO product_observations(region,slug,observed_at,change_type,status,in_stock,price_text,price_value) VALUES(?,?,?,?,?,?,?,?)`);
+        for (const item of regionState.productHistory || []) {
+            const observed = new Date(item.observedAt);
+            if (Number.isNaN(observed.valueOf()))
+                continue;
+            addHistory.run(region, String(item.slug), observed.toISOString(), String(item.changeType || 'imported').slice(0, 80), item.status ? String(item.status) : null, item.inStock ? 1 : 0, item.price ? String(item.price) : null, priceValue(item.priceValue ?? item.price));
+        }
         states[region] = loadState(region);
         monitors[region].productCount = Object.keys(states[region].products).length;
         watchCount += states[region].watchlist.length;
@@ -1996,12 +2383,20 @@ function importSnapshot(snapshot) {
     if (!importedRegions.length)
         throw new Error(`This backup does not contain any configured region (${ACTIVE_REGIONS.join(', ')}).`);
     if (tableExists('settings')) {
-        db.exec('DELETE FROM settings');
-        const put = db.prepare('INSERT INTO settings(key,value,updated_at) VALUES(?,?,?)');
+        const importedKeys = new Set(Object.keys(normalized.settings));
+        const remove = db.prepare('DELETE FROM settings WHERE key=?');
+        for (const row of db.prepare('SELECT key FROM settings').all()) {
+            if (!/password|secret|token|credential|session/i.test(row.key) && !importedKeys.has(row.key))
+                remove.run(row.key);
+        }
+        const put = db.prepare(`INSERT INTO settings(key,value,updated_at) VALUES(?,?,?)
+      ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`);
         for (const [key, value] of Object.entries(normalized.settings)) {
             if (!/password|secret|token|credential|session/i.test(key))
                 put.run(String(key), String(value), isoNow());
         }
+        applyAppConfig(storedAppConfig(), storedSecrets());
+        scheduleBackups();
     }
     setMeta('last_import_at', isoNow());
     return { ok: true, watchCount, eventCount, importedRegions, safetyBackup: safety };
@@ -2014,6 +2409,7 @@ function previewSnapshot(snapshot) {
         watchCount: value.watchlist.length,
         productCount: Object.keys(value.products).length,
         eventCount: value.events.length,
+        historyCount: value.productHistory.length,
     }));
     return { ok: true, regions, willImport: regions.filter((item) => item.configured).map((item) => item.region) };
 }
@@ -2410,6 +2806,11 @@ function sendJson(res, status, body) {
     });
     res.end(text);
 }
+function publicErrorMessage(err, status = 500) {
+    if (status >= 500)
+        return 'GearBeacon could not complete that request. Check Operations logs for details.';
+    return String(err?.message || 'The request could not be completed.').slice(0, 500);
+}
 function sendJsonDownload(res, body, filename) {
     const text = JSON.stringify(body, null, 2);
     res.writeHead(200, {
@@ -2649,7 +3050,8 @@ async function handleApi(req, res, url) {
             return sendJson(res, 200, updatePreparation());
         }
         catch (err) {
-            return sendJson(res, 500, { error: err.message });
+            writeAppLog('error', 'updates', 'Update preparation failed.', { error: String(err?.message || err) });
+            return sendJson(res, 500, { error: publicErrorMessage(err, 500) });
         }
     }
     const requestedRegion = String(url.searchParams.get('region') || DEFAULT_REGION).toLowerCase();
@@ -2712,6 +3114,19 @@ async function handleRegionApi(req, res, url) {
     if (req.method === 'GET' && url.pathname === '/api/update/check') {
         return sendJson(res, 200, await checkForUpdates());
     }
+    if (req.method === 'GET' && url.pathname === '/api/notifications/preview') {
+        const slug = String(url.searchParams.get('slug') || '').trim();
+        const eventType = String(url.searchParams.get('eventType') || 'restock').trim();
+        const product = slug ? state.products[slug] : null;
+        const event = { id: 'preview', type: eventType, slug: product?.slug || slug || null, name: product?.name || 'Example product', price: product?.price || '$199.00', previousPrice: '$249.00', previousStatus: 'SoldOut', status: eventType === 'restock' ? 'Available' : 'SoldOut', inStock: eventType === 'restock', watchedAtDetection: Boolean(product && state.watchlist.includes(product.slug)), url: product?.url || null, region: currentRegion(), detectedAt: isoNow() };
+        const decision = product ? notificationDecision(event) : { allowed: true, reason: 'preview', rule: { ...DEFAULT_WATCH_RULE } };
+        return sendJson(res, 200, { event, decision, delivery: deliveryPlan(event, decision.rule), copy: notificationCopy(event), configuredChannels: CHANNEL_NAMES.filter(channelConfigured) });
+    }
+    if (req.method === 'GET' && url.pathname.startsWith('/api/products/')) {
+        const slug = decodeURIComponent(url.pathname.slice('/api/products/'.length));
+        const details = productDetailsForApi(slug);
+        return details ? sendJson(res, 200, details) : sendJson(res, 404, { error: 'Product not found.' });
+    }
     if (req.method === 'GET' && url.pathname === '/api/products') {
         const search = String(url.searchParams.get('search') || '').toLowerCase().trim();
         const watchOnly = url.searchParams.get('watchOnly') === '1';
@@ -2743,20 +3158,68 @@ async function handleRegionApi(req, res, url) {
         const slug = String(body?.slug || '').trim();
         if (!slug)
             return sendJson(res, 400, { error: 'slug is required' });
-        if (!state.watchlist.includes(slug))
+        if (!state.products[slug])
+            return sendJson(res, 404, { error: 'Product not found in this region.' });
+        if (!state.watchlist.includes(slug)) {
+            db.prepare('INSERT INTO watchlist(region,slug,created_at) VALUES(?,?,?) ON CONFLICT(region,slug) DO NOTHING').run(currentRegion(), slug, isoNow());
             state.watchlist.push(slug);
+        }
+        if (body?.rule)
+            saveWatchRule(slug, body.rule);
         saveStateSoon();
         return sendJson(res, 200, { ok: true, product: productForApi(state.products[slug]), watchlist: state.watchlist });
+    }
+    if (req.method === 'POST' && url.pathname === '/api/watch/bulk') {
+        const body = await readJsonBody(req);
+        const slugs = [...new Set((Array.isArray(body?.slugs) ? body.slugs : []).map(String).filter((slug) => state.watchlist.includes(slug)))].slice(0, 1000);
+        const action = String(body?.action || '');
+        if (!slugs.length)
+            return sendJson(res, 400, { error: 'Select at least one watched product.' });
+        if (!['pause', 'resume', 'remove'].includes(action))
+            return sendJson(res, 400, { error: 'Bulk action must be pause, resume, or remove.' });
+        let pausedUntil = null;
+        if (action === 'pause') {
+            const minutes = Number(body?.minutes || 0);
+            pausedUntil = minutes > 0 ? new Date(Date.now() + Math.min(minutes, 525600) * 60000).toISOString() : 'indefinite';
+            for (const slug of slugs)
+                saveWatchRule(slug, { pausedUntil });
+        }
+        else if (action === 'resume') {
+            for (const slug of slugs)
+                saveWatchRule(slug, { enabled: true, pausedUntil: null });
+        }
+        else {
+            state.watchlist = state.watchlist.filter((slug) => !slugs.includes(slug));
+            const removeWatch = db.prepare('DELETE FROM watchlist WHERE region=? AND slug=?');
+            for (const slug of slugs)
+                removeWatch.run(currentRegion(), slug);
+        }
+        saveStateSoon();
+        return sendJson(res, 200, { ok: true, action, affected: slugs.length, pausedUntil, products: slugs.map((slug) => productForApi(state.products[slug])).filter(Boolean) });
+    }
+    if (req.method === 'GET' && url.pathname.startsWith('/api/watch/') && url.pathname.endsWith('/rules')) {
+        const slug = decodeURIComponent(url.pathname.slice('/api/watch/'.length, -'/rules'.length));
+        if (!state.watchlist.includes(slug))
+            return sendJson(res, 404, { error: 'Product is not on the watchlist.' });
+        return sendJson(res, 200, { slug, rule: watchRule(slug), globalPreferences: notificationPreferences() });
+    }
+    if (req.method === 'PUT' && url.pathname.startsWith('/api/watch/') && url.pathname.endsWith('/rules')) {
+        const slug = decodeURIComponent(url.pathname.slice('/api/watch/'.length, -'/rules'.length));
+        if (!state.watchlist.includes(slug))
+            return sendJson(res, 404, { error: 'Product is not on the watchlist.' });
+        const body = await readJsonBody(req);
+        return sendJson(res, 200, { ok: true, slug, rule: saveWatchRule(slug, body?.rule || body || {}) });
     }
     if (req.method === 'DELETE' && url.pathname.startsWith('/api/watch/')) {
         const slug = decodeURIComponent(url.pathname.slice('/api/watch/'.length));
         state.watchlist = state.watchlist.filter((x) => x !== slug);
+        db.prepare('DELETE FROM watchlist WHERE region=? AND slug=?').run(currentRegion(), slug);
         saveStateSoon();
         return sendJson(res, 200, { ok: true, watchlist: state.watchlist });
     }
     if (req.method === 'GET' && url.pathname === '/api/events') {
         const limit = Math.min(250, Math.max(1, Number(url.searchParams.get('limit') || 100)));
-        const events = state.events.slice(-limit).reverse();
+        const events = state.events.slice(-limit).reverse().map((event) => ({ ...event, notificationDecision: notificationDecision(event) }));
         return sendJson(res, 200, { events, count: events.length });
     }
     if (req.method === 'POST' && url.pathname === '/api/check') {
@@ -2826,8 +3289,10 @@ const server = http.createServer(async (req, res) => {
     }
     catch (err) {
         console.error('[http]', err);
+        const status = Number(err?.statusCode) || 500;
+        writeAppLog('error', 'http', 'Unhandled request failure.', { method: req.method, path: req.url, error: String(err?.message || err) });
         if (!res.headersSent)
-            sendJson(res, err?.statusCode || 500, { error: err?.message || String(err) });
+            sendJson(res, status, { error: publicErrorMessage(err, status) });
         else
             res.end();
     }

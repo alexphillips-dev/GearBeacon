@@ -111,6 +111,13 @@
       <div class="section-heading">
         <div><h2>Your watchlist</h2><p>Restocks on these products trigger GearBeacon alerts.</p></div>
       </div>
+      <div class="watch-toolbar" aria-label="Watchlist filters">
+        <input id="watchSearch" type="search" placeholder="Search watchlist" autocomplete="off" />
+        <select id="watchStatus"><option value="all">All statuses</option><option value="in">In stock</option><option value="out">Unavailable</option><option value="paused">Paused</option></select>
+        <select id="watchCategory"><option value="all">All categories</option></select>
+        <select id="watchSort"><option value="changed">Recently changed</option><option value="added">Recently added</option><option value="name">Name</option><option value="price-low">Price: low to high</option><option value="price-high">Price: high to low</option><option value="availability">Availability</option></select>
+      </div>
+      <div id="bulkActions" class="bulk-actions hidden"><strong id="bulkCount">0 selected</strong><select id="bulkPauseDuration"><option value="60">Pause 1 hour</option><option value="1440">Pause 1 day</option><option value="10080">Pause 1 week</option><option value="0">Pause until resumed</option></select><button id="bulkPause">Pause</button><button id="bulkResume">Resume</button><button id="bulkRemove" class="danger-button">Remove</button><button id="bulkClear" class="ghost">Clear selection</button></div>
       <div id="watchGrid" class="grid watch-grid"></div>
       <div id="watchEmpty" class="empty hidden">
         <div class="empty-icon">⌁</div>
@@ -122,6 +129,7 @@
 
     <section id="operations" class="page">
       <div class="section-heading"><div><h2>Operations</h2><p>Region health, delivery reliability, backups, storage, security, and local logs.</p></div><div class="settings-actions"><button id="refreshOperations">Refresh</button><button id="downloadLogs">Download logs</button></div></div>
+      <div id="operationsSummary" class="operations-summary"><strong>Checking installation health…</strong></div>
       <div id="securityWarnings" class="warning-list"></div>
       <div id="operationsGrid" class="ops-grid"></div>
       <article class="settings-card ops-log-card">
@@ -149,6 +157,7 @@
         <span id="browseCount">0 products</span>
       </div>
       <div id="browseGrid" class="store-grid"></div>
+      <div class="browse-more"><button id="browseLoadMore" class="hidden">Load more products</button></div>
       <div id="browseEmpty" class="store-empty hidden"><h3>No matching products</h3><p>Try another category or search.</p></div>
     </section>
 
@@ -178,7 +187,7 @@
         <div class="settings-grid">
         <article class="settings-card">
           <div class="settings-card-head">
-            <div><span class="settings-kicker">Application</span><h3>GearBeacon <span id="settingsVersion">V1.6.0</span></h3></div>
+            <div><span class="settings-kicker">Application</span><h3>GearBeacon <span id="settingsVersion">V1.7.0</span></h3></div>
             <span id="schemaBadge" class="settings-badge">SQLite</span>
           </div>
           <p>Your watched products live in a persistent SQLite database outside the GearBeacon application folder.</p>
@@ -195,11 +204,10 @@
         </article>
 
         <article class="settings-card wide-card">
-          <div class="settings-card-head"><div><span class="settings-kicker">Browser setup</span><h3>Stores, access & backups</h3></div><span id="configRestartBadge" class="settings-badge hidden">Restart required</span></div>
+          <div class="settings-card-head"><div><span class="settings-kicker">Browser setup</span><h3>Stores & access</h3></div><span id="configRestartBadge" class="settings-badge hidden">Restart required</span></div>
           <p>These settings are validated before they are saved. Region, bind-address, and access-mode changes take effect after a restart.</p>
           <form id="appConfigForm" class="config-form">
             <fieldset><legend>Monitoring</legend><div id="settingsRegions" class="choice-grid"></div><div class="form-row"><label class="field"><span>Poll interval (seconds)</span><input id="configPollSeconds" type="number" min="30" max="86400" /></label><label class="field"><span>Access mode</span><select id="configAccessMode"><option value="local">Local only</option><option value="private">Private LAN / VPN</option><option value="proxy">HTTPS reverse proxy</option></select></label></div><div class="form-row"><label class="field"><span>Bind host</span><input id="configBindHost" /></label><label class="field"><span>Public URL</span><input id="configPublicUrl" type="url" placeholder="https://gearbeacon.example.com" /></label></div><label class="field"><span>Additional allowed browser origins (comma separated)</span><input id="configAllowedOrigins" placeholder="https://trusted.example.com" /></label><label class="inline-check"><input id="configCookieSecure" type="checkbox" /> Always require HTTPS session cookies</label></fieldset>
-            <fieldset><legend>Automatic backups & delivery</legend><div class="form-row"><label class="field"><span>Backup interval (hours)</span><input id="configBackupHours" type="number" min="0" max="720" /></label><label class="field"><span>Backups retained</span><input id="configBackupRetention" type="number" min="1" max="100" /></label><label class="field"><span>Delivery attempts</span><input id="configMaxAttempts" type="number" min="1" max="10" /></label><label class="field"><span>Group window (seconds)</span><input id="configGroupSeconds" type="number" min="0" max="3600" /></label></div></fieldset>
             <button class="primary" type="submit">Validate & save</button>
           </form>
           <div id="configResult" class="settings-result hidden"></div>
@@ -209,6 +217,17 @@
 
       <section id="settingsPanelNotifications" class="settings-panel" role="tabpanel" aria-labelledby="settingsTabNotifications" data-settings-panel="notifications" hidden>
         <div class="settings-grid">
+        <article class="settings-card wide-card">
+          <div class="settings-card-head"><div><span class="settings-kicker">Delivery schedule</span><h3>Timing & reliability</h3></div><span id="deliveryModeBadge" class="settings-badge">Immediate</span></div>
+          <p>Choose when alerts can be delivered. Per-product immediate restocks can bypass quiet hours and digests.</p>
+          <form id="notificationDeliveryForm" class="config-form">
+            <div class="form-row"><label class="field"><span>Timezone</span><input id="configTimeZone" placeholder="America/New_York" /></label><label class="field"><span>Cooldown (minutes)</span><input id="configCooldownMinutes" type="number" min="0" max="10080" /></label><label class="field"><span>Delivery attempts</span><input id="configMaxAttempts" type="number" min="1" max="10" /></label><label class="field"><span>Group window (seconds)</span><input id="configGroupSeconds" type="number" min="0" max="3600" /></label></div>
+            <div class="form-row"><label class="inline-check"><input id="configQuietEnabled" type="checkbox" /> Enable quiet hours</label><label class="field"><span>Quiet start</span><input id="configQuietStart" type="time" /></label><label class="field"><span>Quiet end</span><input id="configQuietEnd" type="time" /></label><label class="inline-check"><input id="configDigestEnabled" type="checkbox" /> Deliver a daily digest</label><label class="field"><span>Digest time</span><input id="configDigestTime" type="time" /></label></div>
+            <fieldset><legend>Operational alerts</legend><div class="inline-checks"><label><input id="operationalMonitorFailures" type="checkbox" /> Store monitoring failures</label><label><input id="operationalNotificationFailures" type="checkbox" /> Delivery failures</label><label><input id="operationalBackupFailures" type="checkbox" /> Backup failures</label><label><input id="operationalLowDisk" type="checkbox" /> Low disk space</label></div></fieldset>
+            <div class="settings-actions wrap"><button class="primary" type="submit">Save delivery settings</button><button id="previewDelivery" type="button">Preview delivery</button></div>
+          </form>
+          <div id="deliveryResult" class="settings-result hidden"></div>
+        </article>
         <article class="settings-card wide-card">
           <div class="settings-card-head"><div><span class="settings-kicker">Encrypted locally</span><h3>Notification channels</h3></div><span id="secretKeyBadge" class="settings-badge">Separate key file</span></div>
           <p>Leave a secret blank to keep the saved value; enter an empty value after choosing “clear” to remove it. Test buttons send only through that channel.</p>
@@ -240,6 +259,12 @@
 
       <section id="settingsPanelData" class="settings-panel" role="tabpanel" aria-labelledby="settingsTabData" data-settings-panel="data" hidden>
         <div class="settings-grid">
+        <article class="settings-card wide-card">
+          <div class="settings-card-head"><div><span class="settings-kicker">Retention</span><h3>Backups & product history</h3></div><span id="historyBadge" class="settings-badge">Change-only history</span></div>
+          <p>GearBeacon records only meaningful availability or price changes and automatically removes history beyond the selected retention period.</p>
+          <form id="dataScheduleForm" class="config-form"><div class="form-row"><label class="field"><span>Backup interval (hours)</span><input id="configBackupHours" type="number" min="0" max="720" /></label><label class="field"><span>Backups retained</span><input id="configBackupRetention" type="number" min="1" max="100" /></label><label class="field"><span>History retention (days)</span><input id="configHistoryRetention" type="number" min="30" max="3650" /></label></div><button class="primary" type="submit">Save data settings</button></form>
+          <div id="dataScheduleResult" class="settings-result hidden"></div>
+        </article>
         <article class="settings-card wide-card">
           <div class="settings-card-head">
             <div><span class="settings-kicker">Data safety</span><h3>Backups & transfer</h3></div>
@@ -302,10 +327,17 @@
     </section>
 
     <footer>
-      <span>GearBeacon V1.6 · Private self-hosted monitoring</span>
+      <span>GearBeacon V1.7 · Private self-hosted monitoring</span>
       <span id="notifyStatus"></span>
     </footer>
   </main>
+  <section id="productDialog" class="product-dialog hidden" role="dialog" aria-modal="true" aria-labelledby="productDialogTitle">
+    <button id="productDialogBackdrop" class="product-dialog-backdrop" type="button" aria-label="Close product details"></button>
+    <article class="product-dialog-panel">
+      <div class="product-dialog-head"><div><span id="productDialogCategory" class="settings-kicker">Product</span><h2 id="productDialogTitle">Product details</h2></div><button id="closeProductDialog" class="icon-button" type="button" aria-label="Close product details">×</button></div>
+      <div id="productDialogBody" class="product-dialog-body"></div>
+    </article>
+  </section>
   <div id="toast" class="toast hidden"></div>
   <script src="/app.js"></script>
 </body>

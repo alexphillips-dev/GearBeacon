@@ -1,5 +1,18 @@
 # GearBeacon changelog
 
+## V1.7.0 — Watch intelligence and alert control
+
+- Added product detail drawers with a larger image, price and availability, SKU, store link, first-seen and last-change times, price history, and recent changes.
+- Added change-only product observations in SQLite with configurable retention, automatic pruning, and encrypted export/import support.
+- Added per-product alert rules for restocks, sellouts, price/status changes, price drops, target prices, immediate restocks, and temporary or indefinite pauses.
+- Added watchlist search, availability/category filters, six sorting modes, rule summaries, recent-change indicators, selection, and bulk pause/resume/remove actions.
+- Added debounced Browse search, paged card rendering, loading skeletons, image fallbacks and retry, and render caching so ten-second refreshes do not rebuild unchanged cards.
+- Added timezone-aware quiet hours, daily digests, event cooldowns, immediate-restock override, and an in-browser delivery preview.
+- Added optional operational alerts for repeated monitor failures, terminal notification failures, scheduled backup failures, and low disk space.
+- Reorganized backup/history controls into Data and delivery scheduling into Notifications, and added a Healthy/Degraded/Action Required Operations summary with linked remediation.
+- Added real headless-browser coverage for private setup/login/logout, dark/light themes, product images, Browse filters and loading, watch/rule/bulk flows, settings tabs, backup preview/import, Operations, sessions, and responsive layout.
+- Added a schema-v6 migration with automatic pre-update backup, exact-host image scoring, generic public 500 errors, a smaller Node 24 Alpine runtime image without package-manager tooling, and improved native standalone startup diagnostics.
+
 ## V1.6.0 — Easier setup and self-hosting
 
 - Added a five-step browser first-run wizard for owner security, regions, access mode, notifications, backups, live tests, and a final security summary.

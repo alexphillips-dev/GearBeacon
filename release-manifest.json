@@ -1,11 +1,11 @@
 {
   "name": "GearBeacon",
-  "latestVersion": "1.6.0",
+  "latestVersion": "1.7.0",
   "publishedAt": "2026-09-04T00:00:00Z",
   "downloadUrl": "https://github.com/alexphillips-dev/GearBeacon/releases",
   "releasePageUrl": "https://github.com/alexphillips-dev/GearBeacon/releases",
   "minimumSchemaVersion": 4,
-  "maximumSchemaVersion": 5,
+  "maximumSchemaVersion": 6,
   "minimumNodeVersion": "22.13.0",
-  "releaseNotes": "Guided browser setup, encrypted integration credentials, standalone Windows/macOS/Linux packages, service installers, operations dashboard, durable notification retries and grouping, owner-controlled updates, and expanded deployment tests."
+  "releaseNotes": "Product detail and change history, per-product alert rules, searchable bulk-managed watchlists, paged catalog browsing, quiet hours, digests, cooldowns, delivery previews, operational alerts, a clearer Operations summary, and expanded browser and upgrade verification."
 }

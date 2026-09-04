@@ -52,9 +52,15 @@ health, queued delivery failures, backup integrity, storage, logs, security
 warnings, and exact build information. Integration credentials are encrypted
 with a local key outside SQLite and excluded from application exports.
 
+Open any product to review its price and availability history or give it custom
+alert rules. The watchlist supports search, filters, sorting, and bulk actions.
+Settings > Notifications controls quiet hours, digests, cooldowns, and optional
+operational alerts; Settings > Data controls backups and history retention.
+
 Automated verification
 ----------------------
 node --no-warnings scripts/self-test.mjs
+node --no-warnings scripts/browser-smoke.mjs
 
 See README.md and deploy/README.md for every environment variable and deployment
 pattern.
