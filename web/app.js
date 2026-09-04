@@ -907,6 +907,7 @@ function renderNotificationSettings() {
   if ($('notifyPriceChange')) $('notifyPriceChange').checked = Boolean(prefs.priceChange);
   if ($('notifyStatusChange')) $('notifyStatusChange').checked = Boolean(prefs.statusChange);
   if ($('notifyNewProduct')) $('notifyNewProduct').checked = Boolean(prefs.newProduct);
+  if ($('notifyAllActivity')) $('notifyAllActivity').checked = Boolean(prefs.allActivity);
   if ($('channelBadge')) {
     const notifications = app.status?.notifications || {};
     const count = ['ntfyConfigured', 'discordConfigured', 'webhookConfigured', 'gotifyConfigured', 'smtpConfigured'].filter((key) => notifications[key]).length;
@@ -973,12 +974,13 @@ async function saveNotificationPreferences() {
       priceChange: $('notifyPriceChange').checked,
       statusChange: $('notifyStatusChange').checked,
       newProduct: $('notifyNewProduct').checked,
+      allActivity: $('notifyAllActivity').checked,
     };
     const result = await api('/api/notifications/preferences', { method:'PUT', body: JSON.stringify({ preferences }) });
     app.notificationPreferences = result.preferences;
     renderNotificationSettings();
     resultEl.classList.remove('hidden');
-    resultEl.innerHTML = '<strong>Notification settings saved.</strong> Future stock events will use these preferences.';
+    resultEl.innerHTML = '<strong>Notification settings saved.</strong> Future Activity events will use these preferences.';
     toast('Notification settings saved');
   } catch (err) {
     resultEl.classList.remove('hidden');

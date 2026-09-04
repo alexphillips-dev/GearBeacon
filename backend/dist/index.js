@@ -208,6 +208,7 @@ const DEFAULT_NOTIFICATION_PREFERENCES = Object.freeze({
     priceChange: false,
     statusChange: false,
     newProduct: false,
+    allActivity: false,
 });
 function getSetting(key, fallback = null) {
     if (!tableExists('settings'))
@@ -1833,6 +1834,10 @@ function notificationCopy(event) {
 function notificationDecision(event, prefs = notificationPreferences()) {
     if (event.type === 'test' || event.type === 'operational')
         return { allowed: true, reason: 'immediate', rule: { ...DEFAULT_WATCH_RULE } };
+    if (prefs.allActivity) {
+        const rule = event.watchedAtDetection ? watchRule(event.slug, event.region || currentRegion()) : { ...DEFAULT_WATCH_RULE };
+        return { allowed: true, reason: 'all-activity-enabled', rule };
+    }
     if (event.type === 'new_product')
         return { allowed: Boolean(prefs.newProduct), reason: prefs.newProduct ? 'enabled' : 'disabled', rule: { ...DEFAULT_WATCH_RULE } };
     if (!event.watchedAtDetection)
