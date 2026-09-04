@@ -2,86 +2,123 @@ name: GearBeacon Release
 
 on:
   push:
-    tags:
-      - 'v*.*.*'
+    tags: ['v*.*.*']
 
 permissions:
   contents: write
   packages: write
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+  standalone:
+    name: Package ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux-x64
+            archive: tar
+          - os: ubuntu-24.04-arm
+            name: linux-arm64
+            archive: tar
+          - os: windows-latest
+            name: windows-x64
+            archive: zip
+          - os: macos-latest
+            name: macos-arm64
+            archive: tar
+          - os: macos-26-intel
+            name: macos-x64
+            archive: tar
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '26.x'
+      - run: node scripts/check-versions.mjs
+      - run: npx --yes -p typescript@5.8.3 tsc -p backend/tsconfig.json
+      - name: Build standalone application
+        env:
+          GEARBEACON_BUILD_COMMIT: ${{ github.sha }}
+        run: node scripts/build-standalone.mjs
+      - name: Smoke test package
+        shell: bash
+        env:
+          EXPECTED_BUILD_COMMIT: ${{ github.sha }}
+        run: |
+          PACKAGE_DIR=$(find dist/standalone -mindepth 1 -maxdepth 1 -type d | head -1)
+          node scripts/standalone-smoke.mjs "$PACKAGE_DIR"
+      - name: Archive Unix package
+        if: matrix.archive == 'tar'
+        shell: bash
+        run: |
+          mkdir -p dist/packages
+          PACKAGE_DIR=$(find dist/standalone -mindepth 1 -maxdepth 1 -type d | head -1)
+          NAME=$(basename "$PACKAGE_DIR")
+          tar -czf "dist/packages/$NAME.tar.gz" -C "$(dirname "$PACKAGE_DIR")" "$NAME"
+          (cd dist/packages && shasum -a 256 "$NAME.tar.gz" > "$NAME.tar.gz.sha256")
+      - name: Archive Windows package
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/packages | Out-Null
+          $package = Get-ChildItem dist/standalone -Directory | Select-Object -First 1
+          $archive = "dist/packages/$($package.Name).zip"
+          Compress-Archive -Path $package.FullName -DestinationPath $archive
+          $leaf = Split-Path $archive -Leaf
+          $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $leaf" | Set-Content "$archive.sha256" -Encoding ascii
+      - uses: actions/upload-artifact@v6
+        with:
+          name: standalone-${{ matrix.name }}
+          path: dist/packages/*
+          if-no-files-found: error
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
+  release:
+    needs: standalone
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '22.16.0'
-
-      - name: Verify tag matches app version
+      - name: Verify tag and versions
         shell: bash
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           APP_VERSION=$(node -p "require('./backend/package.json').version")
-          if [ "$TAG_VERSION" != "$APP_VERSION" ]; then
-            echo "Tag v$TAG_VERSION does not match backend/package.json $APP_VERSION"
-            exit 1
-          fi
-
-      - name: Verify version consistency
-        run: node scripts/check-versions.mjs
-
-      - name: Compile backend
-        run: npx --yes -p typescript@5.8.3 tsc -p backend/tsconfig.json
-
-      - name: Run self-test
-        run: node --no-warnings scripts/self-test.mjs
-
-      - name: Build release archive
+          test "$TAG_VERSION" = "$APP_VERSION"
+          node scripts/check-versions.mjs
+      - run: npx --yes -p typescript@5.8.3 tsc -p backend/tsconfig.json
+      - run: node --no-warnings scripts/self-test.mjs
+      - uses: actions/download-artifact@v6
+        with:
+          pattern: standalone-*
+          path: release-assets
+          merge-multiple: true
+      - name: Build source archive
         shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          STAGE="GearBeacon-v${VERSION}"
+          STAGE="GearBeacon-v${VERSION}-source"
           mkdir -p "$STAGE"
-          rsync -a ./ "$STAGE/" \
-            --exclude '.git' \
-            --exclude '.github/workflows' \
-            --exclude 'node_modules' \
-            --exclude "$STAGE" \
-            --exclude '*.zip' \
-            --exclude '*.sha256.txt'
-          zip -qr "GearBeacon-v${VERSION}.zip" "$STAGE"
-          sha256sum "GearBeacon-v${VERSION}.zip" > "GearBeacon-v${VERSION}.sha256.txt"
-
+          rsync -a ./ "$STAGE/" --exclude '.git' --exclude 'release-assets' --exclude "$STAGE" --exclude '*.zip' --exclude '*.sha256'
+          zip -qr "release-assets/$STAGE.zip" "$STAGE"
+          (cd release-assets && sha256sum "$STAGE.zip" > "$STAGE.zip.sha256")
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          gh release create "$GITHUB_REF_NAME" \
-            "GearBeacon-v${VERSION}.zip" \
-            "GearBeacon-v${VERSION}.sha256.txt" \
-            --title "GearBeacon V${VERSION}" \
-            --generate-notes
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Sign in to GitHub Container Registry
-        uses: docker/login-action@v3
+        run: gh release create "$GITHUB_REF_NAME" release-assets/* --title "GearBeacon V${GITHUB_REF_NAME#v}" --generate-notes
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Generate container metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -91,8 +128,7 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest
-
-      - name: Publish multi-platform container
+      - name: Publish amd64 and arm64 container
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -100,3 +136,6 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VCS_REF=${{ github.sha }}
+            IMAGE_NAME=ghcr.io/${{ github.repository_owner }}/gearbeacon

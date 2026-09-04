@@ -1,5 +1,19 @@
 # GearBeacon changelog
 
+## V1.6.0 — Easier setup and self-hosting
+
+- Added a five-step browser first-run wizard for owner security, regions, access mode, notifications, backups, live tests, and a final security summary.
+- Added validated browser configuration for monitoring, access, backup retention, and every supported server notification channel.
+- Added AES-256-GCM encryption for stored notification credentials using a generated restricted-permission key outside SQLite.
+- Added individually enabled/testable ntfy, Discord, Gotify, generic webhook, and SMTP channels.
+- Added a durable SQLite notification queue with attempt limits, exponential backoff, manual retry, failure reporting, and optional grouping.
+- Added HMAC-SHA256 generic webhook signatures and strict SMTP STARTTLS/certificate controls.
+- Added an Operations dashboard with per-region health, check timing, counts, notification outcomes, backup integrity/history, storage, security warnings, logs, and build provenance.
+- Added owner-controlled update preparation with a validated backup, release notes, platform commands, explicit confirmation, checksum validation, and rollback guidance.
+- Added Node single-executable packages for Windows x64, macOS x64/ARM64, and Linux x64/ARM64 with service installers and data-preserving uninstallers.
+- Added prebuilt amd64/arm64 Compose images while retaining source builds and loopback-only host publication.
+- Expanded CI across Windows, macOS, Linux, Compose, amd64/arm64 containers, standalone binaries, database upgrades, reverse-proxy security behavior, all notification mocks, STARTTLS, CodeQL, and Trivy.
+
 ## V1.5.0 — Private self-hosting and web-only operation
 
 - Made GearBeacon an explicitly private, single-owner, self-hosted web application for Windows, macOS, Linux, servers, NAS systems, and Docker.

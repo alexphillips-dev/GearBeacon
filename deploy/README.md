@@ -1,116 +1,83 @@
 # Private GearBeacon deployment
 
-GearBeacon is a single-owner self-hosted web application. It is suitable for a local computer, trusted LAN, private VPN, home server, NAS with Docker support, or an HTTPS reverse proxy. It is not designed as a public registration service.
+GearBeacon is a single-owner self-hosted application for a local computer, trusted LAN, private VPN, home server, NAS, or authenticated HTTPS reverse proxy. It is not designed for unrestricted public exposure or public registrations.
 
-## Security boundary
+## Standalone services
 
-- Direct launch defaults to `local` mode and `127.0.0.1`.
-- `private` and `proxy` modes require owner authentication.
-- GearBeacon refuses a non-loopback `local` bind unless the explicit emergency override is enabled.
-- Docker Compose publishes only `127.0.0.1:8787` on the host by default.
-- Only liveness, readiness, and authentication bootstrap routes are public in authenticated modes.
+Each release package includes the executable, browser assets, release metadata, and the matching installer, uninstaller, and update helper. No separate Node.js installation is needed.
 
-Do not publish GearBeacon directly to the unrestricted internet. Prefer a private VPN. If internet routing is unavoidable, terminate HTTPS at a maintained reverse proxy, keep owner authentication enabled, limit firewall sources where possible, and keep the host and proxy patched.
+### Windows
 
-## Windows
+From an elevated PowerShell window in the extracted release directory:
 
-Install Node.js 22.13 or newer, extract GearBeacon to a stable directory, and run:
-
-```text
-run-windows.bat
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\install-windows-service.ps1
 ```
 
-That mode is reachable only at `http://localhost:8787` on the Windows computer.
+The installer copies GearBeacon to `%ProgramFiles%\GearBeacon`, stores data under `%ProgramData%\GearBeacon`, and registers a `SYSTEM` startup task with restart behavior. It uses private authenticated mode. Windows Firewall should allow TCP 8787 only on the Private profile and only from intended subnets.
 
-For a trusted LAN or VPN server:
-
-```text
-run-private-windows.bat
+```powershell
+.\uninstall-windows-service.ps1
 ```
 
-Allow inbound TCP `8787` only on the Windows Firewall private profile and only from the intended subnet. The terminal prints the first-run setup token. Keep the terminal running, or use a service wrapper or Task Scheduler configured for the same working directory and command:
+Uninstall preserves `%ProgramData%\GearBeacon`. Add `-RemoveData` only when permanent deletion is intentional.
 
-```text
-node --no-warnings backend\dist\index.js
-```
-
-Configure service environment variables rather than editing source files.
-
-## macOS
-
-Install Node.js, then:
+### macOS
 
 ```bash
-chmod +x run-mac-linux.sh run-private-mac-linux.sh
-./run-mac-linux.sh
+sudo ./install-macos-service.sh
 ```
 
-Use `./run-private-mac-linux.sh` for a trusted LAN/VPN server. For an always-on Mac, create a LaunchAgent or LaunchDaemon that sets the working directory, required environment variables, and runs `/usr/local/bin/node --no-warnings backend/dist/index.js`. Node may instead be under `/opt/homebrew/bin/node` on Apple Silicon; use the result of `command -v node`.
+This installs `/usr/local/lib/gearbeacon`, creates a system LaunchDaemon, stores data in `/Library/Application Support/GearBeacon`, and writes process output to `/var/log/gearbeacon.log`. The package is currently unsigned, so macOS may require an explicit owner approval until signing and notarization certificates are configured.
 
-## Linux
-
-Run `./run-mac-linux.sh` for local access or `./run-private-mac-linux.sh` for private network access.
-
-A systemd service can use:
-
-```ini
-[Unit]
-Description=GearBeacon private stock monitor
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=gearbeacon
-Group=gearbeacon
-WorkingDirectory=/opt/gearbeacon
-Environment=NODE_ENV=production
-Environment=GEARBEACON_ACCESS_MODE=proxy
-Environment=GEARBEACON_BIND_HOST=127.0.0.1
-Environment=GEARBEACON_DATA_DIR=/var/lib/gearbeacon
-ExecStart=/usr/bin/node --no-warnings /opt/gearbeacon/backend/dist/index.js
-Restart=on-failure
-RestartSec=5
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ReadWritePaths=/var/lib/gearbeacon
-
-[Install]
-WantedBy=multi-user.target
+```bash
+sudo ./uninstall-macos-service.sh
 ```
 
-Create the `gearbeacon` system user and writable `/var/lib/gearbeacon` directory before enabling the service. Adjust paths to the actual install.
+Add `--remove-data` only to delete the preserved application data.
+
+### Linux
+
+```bash
+sudo ./install-linux-service.sh
+```
+
+This creates an unprivileged `gearbeacon` system account, installs the application in `/opt/gearbeacon`, stores data in `/var/lib/gearbeacon`, and starts a hardened systemd unit. Read the setup token with:
+
+```bash
+sudo journalctl -u gearbeacon
+```
+
+Uninstall while preserving data:
+
+```bash
+sudo ./uninstall-linux-service.sh
+```
+
+Add `--remove-data` only for permanent data removal.
 
 ## Docker Compose
 
 ```bash
-docker compose up -d --build
+docker compose up -d
 docker compose logs gearbeacon
 ```
 
-The container listens on its internal network, but Compose maps it only to host loopback. Owner authentication is still mandatory. Persistent SQLite data is stored in the `gearbeacon-data` volume.
+Compose uses the published GHCR image when available and can build the checkout. It maps only host loopback, requires owner authentication inside the container, and stores SQLite, backups, and the separate notification encryption key in `gearbeacon-data`.
 
-To use a fixed setup token during automation:
-
-```bash
-GEARBEACON_SETUP_TOKEN='a-long-random-one-time-value' docker compose up -d --build
-```
-
-Remove that variable after setup. For unattended initial provisioning, use a Docker secret mounted as a file and set `GEARBEACON_OWNER_PASSWORD_FILE` to its container path. Avoid leaving a plain password in Compose history.
-
-To expose GearBeacon only on a private host interface, replace the port mapping with that interface's address:
+To expose only a private host interface, change the mapping deliberately:
 
 ```yaml
 ports:
   - "192.168.1.20:8787:8787"
 ```
 
-Keep `GEARBEACON_ACCESS_MODE=private`. Do not use a blanket public bind without a private firewall/VPN or HTTPS proxy.
+Do not use a blanket public host mapping without a private firewall/VPN or maintained HTTPS proxy.
 
 ## Reverse proxy
 
-Recommended environment:
+Set these values in the first-run wizard or environment, restart once, and keep the backend reachable only by the proxy:
 
 ```text
 GEARBEACON_ACCESS_MODE=proxy
@@ -119,7 +86,7 @@ GEARBEACON_PUBLIC_BASE_URL=https://gearbeacon.example.internal
 GEARBEACON_COOKIE_SECURE=1
 ```
 
-Minimal Caddy example:
+Caddy:
 
 ```caddyfile
 gearbeacon.example.internal {
@@ -127,7 +94,7 @@ gearbeacon.example.internal {
 }
 ```
 
-Minimal Nginx location:
+Nginx:
 
 ```nginx
 location / {
@@ -139,40 +106,47 @@ location / {
 }
 ```
 
-GearBeacon trusts forwarded host/protocol/client-address headers only in `proxy` mode. Configure extra browser origins only when genuinely required using `GEARBEACON_ALLOWED_ORIGINS`.
+GearBeacon trusts forwarded host, protocol, and address headers only in explicit `proxy` mode. Use an HTTPS public URL; secure-cookie and HSTS behavior is covered by integration tests.
 
 ## Owner setup and recovery
 
-Authenticated first start prints a one-time random setup token. Alternatively set `GEARBEACON_SETUP_TOKEN`, `GEARBEACON_OWNER_PASSWORD_FILE`, or `GEARBEACON_OWNER_PASSWORD` before first start.
+Authenticated first start prints a random one-time token. A fixed token can be set with `GEARBEACON_SETUP_TOKEN`. Automated installations may use `GEARBEACON_OWNER_PASSWORD_FILE`; avoid leaving a plaintext owner password in shell or Compose history.
 
-For owner-password recovery:
+Recovery procedure:
 
 1. Stop GearBeacon.
-2. Set a strong value through `GEARBEACON_OWNER_PASSWORD_FILE`.
-3. Set `GEARBEACON_RESET_OWNER_PASSWORD=1`.
-4. Start GearBeacon and verify the new password.
-5. Remove or reset `GEARBEACON_RESET_OWNER_PASSWORD=0`, then restart normally.
+2. Put a strong replacement password in a root/owner-readable file.
+3. Set `GEARBEACON_OWNER_PASSWORD_FILE` to that file and `GEARBEACON_RESET_OWNER_PASSWORD=1`.
+4. Start GearBeacon and sign in with the new password.
+5. Remove the reset flag/password setting, then restart normally.
 
-A password reset revokes all existing sessions. Leaving the reset flag enabled would reset the password on every restart.
+Recovery revokes every existing session. Never leave the reset flag active.
 
-## Backups and upgrades
+## Owner-controlled updates and rollback
 
-Back up the persistent data directory or Docker volume in addition to GearBeacon's internal backups. Stop the process for raw filesystem copies, or use the dashboard's validated SQLite backup/export paths while it is running.
+1. Review **Check for updates** and its release notes.
+2. Select **Prepare safe update**. This flushes regional state and creates a validated pre-update database backup.
+3. Stop the service if the helper does not manage it automatically.
+4. Run the package helper with the version and explicit confirmation shown by GearBeacon:
 
-Recommended upgrade sequence:
+```powershell
+.\update-windows.ps1 -Version VERSION -BackupConfirmed
+```
 
-1. Create an encrypted export and store its passphrase separately.
-2. Create an on-demand database backup in Settings.
-3. Replace the application files or pull the new container.
-4. Start GearBeacon against the same data directory/volume.
-5. Confirm Settings shows healthy SQLite integrity and the expected watchlists.
+```bash
+./update-mac-linux.sh VERSION --backup-confirmed
+./update-docker.sh VERSION --backup-confirmed
+```
 
-GearBeacon automatically creates a pre-update database backup when the recorded application version changes.
+Standalone helpers download the exact platform archive and reject an invalid SHA-256 checksum. Docker selects the explicit image tag. None of the helpers runs silently or on a timer.
 
-## Health checks
+For rollback, stop GearBeacon, copy the validated `pre-update-*` SQLite backup over the active database while the process is stopped, reinstall/select the previous application or image version, and start it again. Keep the `secrets.key` file with the database so configured integration credentials remain decryptable.
 
-- `GET /healthz` — process liveness; no private monitor state.
-- `GET /readyz` — all configured regional monitors are ready/current.
-- `GET /api/health` — detailed authenticated health.
+## Health and logs
 
-The Docker image includes a liveness health check against `127.0.0.1:8787/healthz`.
+- `GET /healthz` — process liveness without private data.
+- `GET /readyz` — every configured region has current healthy catalog data.
+- `GET /api/health` — authenticated detailed monitor health.
+- Operations — authenticated regional status, queue failures, backup integrity/history, disk use, warnings, and filtered/downloadable application logs.
+
+Container and service managers should use `/healthz` for liveness and `/readyz` when routing should depend on fresh store data.

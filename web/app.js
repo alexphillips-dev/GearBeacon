@@ -28,6 +28,9 @@ const app = {
   products: [],
   events: [],
   dataInfo: null,
+  config: null,
+  operations: null,
+  wizardStep: 1,
   notificationPreferences: { restock:true, soldOut:false, priceChange:false, statusChange:false, newProduct:false },
   activeTab: 'watchlist',
   browseCategory: 'All',
@@ -105,7 +108,8 @@ async function enterApp() {
   $('appShell').classList.remove('hidden');
   $('logoutBtn').classList.toggle('hidden', !app.auth?.authenticationRequired);
   await refresh();
-  await Promise.all([refreshDataInfo(), refreshNotificationPreferences(), refreshSessions()]);
+  await Promise.all([refreshDataInfo(), refreshNotificationPreferences(), refreshSessions(), refreshConfiguration()]);
+  if (!app.auth?.onboardingComplete) showWizard();
 }
 
 async function initialize() {
@@ -415,6 +419,231 @@ async function refreshDataInfo() {
   }
 }
 
+function regionChoices(containerId, selected = []) {
+  const target = $(containerId);
+  if (!target || !app.config) return;
+  target.innerHTML = app.config.availableRegions.map((region) => `<label class="choice"><input type="checkbox" value="${escapeHtml(region.key)}" ${selected.includes(region.key) ? 'checked' : ''}/><span><strong>${escapeHtml(region.label)}</strong><small>${escapeHtml(region.currency)}</small></span></label>`).join('');
+}
+
+function selectedRegions(containerId) {
+  return [...$(containerId).querySelectorAll('input[type="checkbox"]:checked')].map((input) => input.value);
+}
+
+function channelBlock(name, title, fields) {
+  const configured = app.config?.secretsConfigured || {};
+  return `<fieldset class="channel-block" data-channel-block="${name}"><legend><label><input data-channel-enabled="${name}" type="checkbox" ${app.config.config.channelEnabled[name] ? 'checked' : ''}/> ${title}</label></legend>${fields}<div class="channel-actions"><button type="button" data-test-channel="${name}">Test ${title}</button></div></fieldset>`;
+}
+
+function secretField(key, label, placeholder = '') {
+  const saved = Boolean(app.config?.secretsConfigured?.[key]);
+  return `<label class="field"><span>${label}${saved ? ' · saved' : ''}</span><input data-secret="${key}" type="password" autocomplete="new-password" placeholder="${escapeHtml(placeholder || (saved ? 'Leave blank to keep saved value' : ''))}"/></label>${saved ? `<label class="clear-secret"><input data-clear-secret="${key}" type="checkbox"/> Clear saved value</label>` : ''}`;
+}
+
+function renderConfiguration() {
+  if (!app.config) return;
+  const c = app.config.config;
+  regionChoices('settingsRegions', c.regions);
+  $('configPollSeconds').value = c.pollSeconds;
+  $('configAccessMode').value = c.accessMode;
+  $('configBindHost').value = c.bindHost;
+  $('configPublicUrl').value = c.publicBaseUrl || '';
+  $('configAllowedOrigins').value = (c.allowedOrigins || []).join(', ');
+  $('configCookieSecure').checked = Boolean(c.cookieSecure);
+  $('configBackupHours').value = c.backupIntervalHours;
+  $('configBackupRetention').value = c.backupRetention;
+  $('configMaxAttempts').value = c.notificationMaxAttempts;
+  $('configGroupSeconds').value = c.notificationGroupSeconds;
+  $('configRestartBadge').classList.toggle('hidden', !app.config.restartPending);
+  const form = $('channelConfigForm');
+  form.innerHTML = [
+    channelBlock('ntfy', 'ntfy', `<div class="form-row"><label class="field"><span>Server URL</span><input data-config="ntfyBaseUrl" type="url" value="${escapeHtml(c.ntfyBaseUrl || '')}"/></label><label class="field"><span>Topic</span><input data-config="ntfyTopic" value="${escapeHtml(c.ntfyTopic || '')}"/></label></div>${secretField('ntfyToken', 'Access token (optional)')}`),
+    channelBlock('discord', 'Discord', secretField('discordWebhookUrl', 'Webhook URL')),
+    channelBlock('gotify', 'Gotify', `<label class="field"><span>Server URL</span><input data-config="gotifyBaseUrl" type="url" value="${escapeHtml(c.gotifyBaseUrl || '')}"/></label>${secretField('gotifyToken', 'Application token')}`),
+    channelBlock('webhook', 'Generic webhook', `${secretField('webhookUrl', 'Webhook URL')}${secretField('webhookToken', 'Bearer token (optional)')}${secretField('webhookHmacSecret', 'HMAC signing secret (recommended)')}`),
+    channelBlock('email', 'Email', `<div class="form-row"><label class="field"><span>SMTP host</span><input data-config="smtpHost" value="${escapeHtml(c.smtpHost || '')}"/></label><label class="field"><span>Port</span><input data-config="smtpPort" type="number" min="1" max="65535" value="${c.smtpPort}"/></label></div><div class="form-row"><label class="field"><span>Username</span><input data-config="smtpUser" value="${escapeHtml(c.smtpUser || '')}" autocomplete="username"/></label>${secretField('smtpPassword', 'Password')}</div><div class="form-row"><label class="field"><span>From</span><input data-config="smtpFrom" value="${escapeHtml(c.smtpFrom || '')}"/></label><label class="field"><span>Recipients (comma separated)</span><input data-config="smtpTo" value="${escapeHtml((c.smtpTo || []).join(', '))}"/></label></div><div class="inline-checks"><label><input data-config="smtpSecure" type="checkbox" ${c.smtpSecure ? 'checked' : ''}/> Implicit TLS</label><label><input data-config="smtpStarttls" type="checkbox" ${c.smtpStarttls ? 'checked' : ''}/> Require STARTTLS</label><label><input data-config="smtpRejectUnauthorized" type="checkbox" ${c.smtpRejectUnauthorized ? 'checked' : ''}/> Verify certificate</label></div>`),
+  ].join('');
+}
+
+async function refreshConfiguration() {
+  try {
+    app.config = await api('/api/config');
+    renderConfiguration();
+  } catch (err) {
+    if ($('configResult')) { $('configResult').classList.remove('hidden'); $('configResult').textContent = `Configuration unavailable: ${err.message}`; }
+  }
+}
+
+function baseConfigFromSettings() {
+  return {
+    ...app.config.config,
+    regions: selectedRegions('settingsRegions'),
+    pollSeconds: Number($('configPollSeconds').value),
+    accessMode: $('configAccessMode').value,
+    bindHost: $('configBindHost').value.trim(),
+    publicBaseUrl: $('configPublicUrl').value.trim(),
+    allowedOrigins: $('configAllowedOrigins').value.split(',').map((x) => x.trim()).filter(Boolean),
+    cookieSecure: $('configCookieSecure').checked,
+    backupIntervalHours: Number($('configBackupHours').value),
+    backupRetention: Number($('configBackupRetention').value),
+    notificationMaxAttempts: Number($('configMaxAttempts').value),
+    notificationGroupSeconds: Number($('configGroupSeconds').value),
+  };
+}
+
+async function saveAppConfiguration(event) {
+  event?.preventDefault();
+  const resultEl = $('configResult');
+  try {
+    const result = await api('/api/config', { method: 'PUT', body: JSON.stringify({ config: baseConfigFromSettings() }) });
+    app.config = { ...app.config, config: result.config, secretsConfigured: result.secretsConfigured, restartPending: result.restartRequired };
+    renderConfiguration();
+    resultEl.classList.remove('hidden');
+    resultEl.innerHTML = `<strong>Configuration validated and saved.</strong>${result.restartRequired ? ' Restart GearBeacon to apply store-region, access-mode, or bind-address changes.' : ' Changes are active now.'}`;
+    toast('Configuration saved');
+  } catch (err) { resultEl.classList.remove('hidden'); resultEl.textContent = err.message; }
+}
+
+function channelConfigPayload() {
+  const config = { ...app.config.config, channelEnabled: { ...app.config.config.channelEnabled } };
+  document.querySelectorAll('[data-channel-enabled]').forEach((input) => { config.channelEnabled[input.dataset.channelEnabled] = input.checked; });
+  document.querySelectorAll('[data-config]').forEach((input) => {
+    const key = input.dataset.config;
+    config[key] = input.type === 'checkbox' ? input.checked : input.type === 'number' ? Number(input.value) : input.value;
+  });
+  const secrets = {};
+  document.querySelectorAll('[data-secret]').forEach((input) => {
+    const clear = document.querySelector(`[data-clear-secret="${input.dataset.secret}"]`);
+    if (clear?.checked) secrets[input.dataset.secret] = '';
+    else if (input.value) secrets[input.dataset.secret] = input.value;
+    else secrets[input.dataset.secret] = null;
+  });
+  return { config, secrets };
+}
+
+async function saveChannelConfiguration() {
+  const resultEl = $('channelConfigResult');
+  try {
+    const result = await api('/api/config', { method: 'PUT', body: JSON.stringify(channelConfigPayload()) });
+    app.config = { ...app.config, config: result.config, secretsConfigured: result.secretsConfigured, restartPending: result.restartRequired };
+    renderConfiguration();
+    await refresh();
+    resultEl.classList.remove('hidden'); resultEl.innerHTML = '<strong>Notification channels saved.</strong> Credentials are encrypted with the installation key outside the database.';
+    toast('Notification channels saved');
+  } catch (err) { resultEl.classList.remove('hidden'); resultEl.textContent = err.message; }
+}
+
+async function testChannel(channel, button) {
+  button.disabled = true;
+  try {
+    await api('/api/notifications/test', { method: 'POST', body: JSON.stringify({ channel }) });
+    toast(`${channel} test sent`);
+  } catch (err) { toast(`${channel} test failed: ${err.message}`); }
+  finally { button.disabled = false; }
+}
+
+function bytes(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return 'Unknown';
+  const units = ['B','KB','MB','GB','TB']; let index = 0; let n = amount;
+  while (n >= 1024 && index < units.length - 1) { n /= 1024; index += 1; }
+  return `${n.toFixed(index ? 1 : 0)} ${units[index]}`;
+}
+
+async function refreshLogs() {
+  const params = new URLSearchParams({ limit: '250' });
+  if ($('logLevel').value) params.set('level', $('logLevel').value);
+  if ($('logSearch').value.trim()) params.set('search', $('logSearch').value.trim());
+  try {
+    const result = await api(`/api/logs?${params}`);
+    $('operationsLogs').innerHTML = result.logs.length ? result.logs.map((row) => `<div class="log-row ${escapeHtml(row.level)}"><time>${escapeHtml(new Date(row.created_at).toLocaleString())}</time><span>${escapeHtml(row.level)}</span><strong>${escapeHtml(row.source)}</strong><p>${escapeHtml(row.message)}</p></div>`).join('') : '<div class="settings-note">No matching logs.</div>';
+  } catch (err) { $('operationsLogs').textContent = err.message; }
+}
+
+async function refreshOperations() {
+  try {
+    const ops = await api('/api/operations'); app.operations = ops;
+    $('runtimeBadge').textContent = `${ops.runtime.platform} · ${ops.runtime.standalone ? 'standalone' : ops.runtime.node}`;
+    $('securityWarnings').innerHTML = ops.securityWarnings.length ? ops.securityWarnings.map((item) => `<div class="warning ${escapeHtml(item.severity)}"><strong>${escapeHtml(item.severity.toUpperCase())}</strong><span>${escapeHtml(item.message)}</span></div>`).join('') : '<div class="warning good"><strong>SECURE</strong><span>No configuration warnings detected.</span></div>';
+    const queue = ops.notifications.queue;
+    const failures = (queue.recentFailures || []).map((item) => `<div class="failure-row"><strong class="bad-text">${escapeHtml(item.channel)} · ${escapeHtml(item.region.toUpperCase())}</strong><small>${escapeHtml(item.last_error || 'Unknown delivery error')} · ${item.attempts}/${item.max_attempts} attempts</small></div>`).join('');
+    const backupHistory = (ops.backups.history || []).slice(0, 6).map((item) => `<div class="failure-row"><strong class="${item.status === 'failed' ? 'bad-text' : ''}">${escapeHtml(item.reason)} · ${escapeHtml(item.status)}</strong><small>${escapeHtml(item.filename || item.detail || 'No file')} · ${escapeHtml(relativeTime(item.created_at))}</small></div>`).join('');
+    $('operationsGrid').innerHTML = `<article class="settings-card"><span class="settings-kicker">Regions</span><h3>Store health</h3>${ops.regions.map((r) => `<div class="ops-row"><span class="connection-dot ${r.lastSuccessAt && !r.lastError ? 'enabled' : ''}"></span><div><strong>${escapeHtml(r.label)}</strong><small>${r.lastError ? escapeHtml(r.lastError) : `Last check ${escapeHtml(relativeTime(r.lastSuccessAt))} · next ${escapeHtml(relativeTime(r.nextCheckAt))}`}</small></div><b>${r.productCount || 0} products</b></div>`).join('')}</article><article class="settings-card"><span class="settings-kicker">Delivery</span><h3>Notification queue</h3><dl class="settings-details"><div><dt>Pending</dt><dd>${queue.pending}</dd></div><div><dt>Delivered</dt><dd>${queue.sent}</dd></div><div><dt>Failed</dt><dd>${queue.failed}</dd></div></dl>${failures ? `<div class="failure-list">${failures}</div>` : ''}${queue.failed ? '<div class="settings-actions"><button data-retry-failed>Retry failed</button></div>' : ''}</article><article class="settings-card"><span class="settings-kicker">Data safety</span><h3>Backups</h3><dl class="settings-details"><div><dt>Validated</dt><dd>${ops.backups.count}</dd></div><div><dt>Integrity</dt><dd>${ops.backups.integrity.ok ? 'OK' : 'Failed'}</dd></div><div><dt>Latest</dt><dd>${ops.backups.latest ? escapeHtml(relativeTime(ops.backups.latest.createdAt)) : 'None'}</dd></div></dl>${backupHistory ? `<div class="failure-list">${backupHistory}</div>` : ''}</article><article class="settings-card"><span class="settings-kicker">Storage & build</span><h3>Installation</h3><dl class="settings-details"><div><dt>Database</dt><dd>${bytes(ops.storage.databaseSize)}</dd></div><div><dt>Free space</dt><dd>${bytes(ops.storage.freeSpace)}</dd></div><div><dt>Version</dt><dd>V${escapeHtml(ops.runtime.version)}</dd></div><div><dt>Commit / image</dt><dd>${escapeHtml(ops.runtime.commit || ops.runtime.image || 'Source checkout')}</dd></div></dl></article>`;
+    await refreshLogs();
+  } catch (err) { $('operationsGrid').textContent = `Operations unavailable: ${err.message}`; }
+}
+
+async function prepareUpdate() {
+  const button = $('prepareUpdateBtn'); const resultEl = $('updateResult'); button.disabled = true;
+  try { const result = await api('/api/update/prepare', { method:'POST' }); resultEl.classList.remove('hidden'); resultEl.innerHTML = `<strong>Validated pre-update backup created:</strong> ${escapeHtml(result.backup.filename)}<br>Run manually: <code>${escapeHtml(result.command || result.dockerCommand)}</code><br>${escapeHtml(result.warning)}`; }
+  catch (err) { resultEl.classList.remove('hidden'); resultEl.textContent = err.message; }
+  finally { button.disabled = false; }
+}
+
+function showWizard() {
+  app.wizardStep = app.auth?.authenticationRequired ? 2 : 1;
+  $('setupWizard').classList.remove('hidden');
+  $('appShell').classList.add('wizard-blur');
+  regionChoices('wizardRegions', app.config?.config?.regions || ['us']);
+  if (app.config) {
+    $('wizardAccessMode').value = app.config.config.accessMode;
+    $('wizardPublicUrl').value = app.config.config.publicBaseUrl || '';
+    $('wizardNtfyBaseUrl').value = app.config.config.ntfyBaseUrl || '';
+    $('wizardNtfyTopic').value = app.config.config.ntfyTopic || '';
+    $('wizardGotifyUrl').value = app.config.config.gotifyBaseUrl || '';
+    $('wizardSmtpHost').value = app.config.config.smtpHost || '';
+    $('wizardSmtpPort').value = app.config.config.smtpPort || 587;
+    $('wizardSmtpUser').value = app.config.config.smtpUser || '';
+    $('wizardSmtpFrom').value = app.config.config.smtpFrom || '';
+    $('wizardSmtpTo').value = (app.config.config.smtpTo || []).join(', ');
+    $('wizardBackupHours').value = app.config.config.backupIntervalHours;
+    $('wizardBackupRetention').value = app.config.config.backupRetention;
+  }
+  renderWizardStep();
+}
+
+function renderWizardStep() {
+  document.querySelectorAll('[data-wizard-step]').forEach((page) => page.classList.toggle('hidden', Number(page.dataset.wizardStep) !== app.wizardStep));
+  $('wizardStepLabel').textContent = `Step ${app.wizardStep} of 5`;
+  $('wizardProgress').value = app.wizardStep;
+  $('wizardBack').classList.toggle('hidden', app.wizardStep <= (app.auth?.authenticationRequired ? 2 : 1));
+  $('wizardNext').textContent = app.wizardStep === 5 ? 'Finish setup' : 'Continue';
+  if (app.wizardStep === 5 && app.config) {
+    const c = app.config.config;
+    const warnings = app.operations?.securityWarnings || [];
+    $('wizardSummary').innerHTML = `<dl class="settings-details"><div><dt>URL</dt><dd>${escapeHtml(c.publicBaseUrl || `${location.protocol}//${location.host}`)}</dd></div><div><dt>Access</dt><dd>${escapeHtml(c.accessMode)}</dd></div><div><dt>Regions</dt><dd>${c.regions.map((x) => escapeHtml(x.toUpperCase())).join(', ')}</dd></div><div><dt>Backups</dt><dd>Every ${c.backupIntervalHours || 'disabled'}${c.backupIntervalHours ? ' hours' : ''} · retain ${c.backupRetention}</dd></div><div><dt>Security</dt><dd>${warnings.length ? `${warnings.length} warning${warnings.length === 1 ? '' : 's'} — review Operations` : 'No warnings detected'}</dd></div></dl>${app.config.restartPending ? '<p class="warning-text">Restart GearBeacon once to apply region, access-mode, or bind changes.</p>' : '<p>No restart is required.</p>'}`;
+  }
+}
+
+async function wizardSaveConfiguration(includeNotifications = false) {
+  const current = app.config.config;
+  const accessMode = $('wizardAccessMode').value;
+  const config = { ...current, regions: selectedRegions('wizardRegions'), accessMode, bindHost: accessMode === 'local' ? '127.0.0.1' : '0.0.0.0', publicBaseUrl: $('wizardPublicUrl').value.trim(), backupIntervalHours: Number($('wizardBackupHours').value), backupRetention: Number($('wizardBackupRetention').value), ntfyBaseUrl: $('wizardNtfyBaseUrl').value.trim(), ntfyTopic: $('wizardNtfyTopic').value.trim(), gotifyBaseUrl: $('wizardGotifyUrl').value.trim(), smtpHost:$('wizardSmtpHost').value.trim(), smtpPort:Number($('wizardSmtpPort').value), smtpUser:$('wizardSmtpUser').value, smtpFrom:$('wizardSmtpFrom').value.trim(), smtpTo:$('wizardSmtpTo').value.split(',').map((x) => x.trim()).filter(Boolean) };
+  const secrets = includeNotifications ? { ntfyToken:$('wizardNtfyToken').value || null, discordWebhookUrl: $('wizardDiscordUrl').value || null, gotifyToken: $('wizardGotifyToken').value || null, webhookUrl:$('wizardWebhookUrl').value || null, webhookToken:$('wizardWebhookToken').value || null, webhookHmacSecret:$('wizardWebhookHmac').value || null, smtpPassword:$('wizardSmtpPassword').value || null } : {};
+  const result = await api('/api/config', { method:'PUT', body:JSON.stringify({ config, secrets }) });
+  app.config = { ...app.config, config: result.config, secretsConfigured: result.secretsConfigured, restartPending: result.restartRequired };
+}
+
+async function wizardNext() {
+  const error = $('wizardError'); error.classList.add('hidden');
+  try {
+    if (app.wizardStep === 1) {
+      const password = $('wizardPassword').value;
+      if (password !== $('wizardPasswordConfirm').value) throw new Error('Owner passwords do not match.');
+      const result = await authRequest('/api/auth/password', { method:'PUT', body:JSON.stringify({ newPassword: password }) });
+      app.auth = { ...(await authRequest('/api/auth/status')), csrfToken: result.csrfToken };
+    } else if (app.wizardStep === 2) await wizardSaveConfiguration(false);
+    else if (app.wizardStep === 3) await wizardSaveConfiguration(true);
+    else if (app.wizardStep === 4) app.operations = await api('/api/operations');
+    else if (app.wizardStep === 5) {
+      const result = await api('/api/onboarding/complete', { method:'POST' });
+      app.auth.onboardingComplete = true;
+      $('setupWizard').classList.add('hidden'); $('appShell').classList.remove('wizard-blur');
+      toast('GearBeacon setup complete'); await refreshConfiguration(); return;
+    }
+    app.wizardStep += 1; renderWizardStep();
+  } catch (err) { error.textContent = err.message; error.classList.remove('hidden'); }
+}
+
 async function saveDownloadResponse(res, fallbackName) {
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -492,7 +721,8 @@ async function checkUpdates() {
     if (result.updateAvailable) {
       resultEl.classList.add('update-available');
       const link = result.downloadUrl ? ` <a href="${escapeHtml(result.downloadUrl)}" target="_blank" rel="noopener">Download V${escapeHtml(result.latestVersion)} ↗</a>` : '';
-      resultEl.innerHTML = `<strong>GearBeacon V${escapeHtml(result.latestVersion)} is available.</strong>${link}${result.releaseNotes ? `<br>${escapeHtml(result.releaseNotes)}` : ''}`;
+      const warnings = (result.compatibilityWarnings || []).map((item) => `<br><span class="warning-text">${escapeHtml(item)}</span>`).join('');
+      resultEl.innerHTML = `<strong>GearBeacon V${escapeHtml(result.latestVersion)} is available.</strong>${link}${result.releaseNotes ? `<br>${escapeHtml(result.releaseNotes)}` : ''}${warnings}`;
     } else {
       resultEl.innerHTML = `<strong>You're up to date.</strong> GearBeacon V${escapeHtml(result.currentVersion)} is the latest version on the configured update channel.${result.warning ? `<br>${escapeHtml(result.warning)}` : ''}`;
     }
@@ -622,12 +852,17 @@ document.addEventListener('click', (event) => {
   if (go) activateTab(go.dataset.goto);
   const revoke = event.target.closest('[data-revoke-session]');
   if (revoke) revokeSession(revoke.dataset.revokeSession);
+  const test = event.target.closest('[data-test-channel]');
+  if (test) testChannel(test.dataset.testChannel, test);
+  const retry = event.target.closest('[data-retry-failed]');
+  if (retry) api('/api/notifications/retry-failed', { method:'POST' }).then((result) => { toast(`${result.queued} failed deliveries queued`); refreshOperations(); }).catch((err) => toast(err.message));
 });
 
 function activateTab(tab) {
   app.activeTab = tab;
-  if (tab === 'settings') { refreshDataInfo(); refreshNotificationPreferences(); refreshSessions(); }
-  if (['watchlist','browse','activity','settings'].includes(tab)) history.replaceState(null, '', `#${tab}`);
+  if (tab === 'settings') { refreshDataInfo(); refreshNotificationPreferences(); refreshSessions(); refreshConfiguration(); }
+  if (tab === 'operations') refreshOperations();
+  if (['watchlist','browse','activity','operations','settings'].includes(tab)) history.replaceState(null, '', `#${tab}`);
   document.querySelectorAll('.tab').forEach((x) => x.classList.toggle('active', x.dataset.tab === tab));
   document.querySelectorAll('.page').forEach((x) => x.classList.toggle('active', x.id === tab));
 }
@@ -656,8 +891,35 @@ $('exportPlainBtn').addEventListener('click', () => exportData(false));
 $('importBtn').addEventListener('click', () => $('importFile').click());
 $('importFile').addEventListener('change', () => importDataFile($('importFile').files?.[0]));
 $('updateBtn').addEventListener('click', checkUpdates);
+$('prepareUpdateBtn').addEventListener('click', prepareUpdate);
 $('saveNotificationPrefs').addEventListener('click', saveNotificationPreferences);
 $('testNotificationBtn').addEventListener('click', testServerNotification);
+$('appConfigForm').addEventListener('submit', saveAppConfiguration);
+$('channelConfigForm').addEventListener('submit', (event) => { event.preventDefault(); saveChannelConfiguration(); });
+$('saveChannels').addEventListener('click', saveChannelConfiguration);
+$('refreshOperations').addEventListener('click', refreshOperations);
+$('applyLogFilter').addEventListener('click', refreshLogs);
+$('downloadLogs').addEventListener('click', async () => {
+  try {
+    const params = new URLSearchParams({ limit:'1000', download:'1' });
+    if ($('logLevel').value) params.set('level', $('logLevel').value);
+    if ($('logSearch').value.trim()) params.set('search', $('logSearch').value.trim());
+    const res = await fetch(`/api/logs?${params}`, { credentials:'same-origin' });
+    await saveDownloadResponse(res, `GearBeacon-Logs-${new Date().toISOString().slice(0,10)}.json`);
+  } catch (err) { toast(err.message); }
+});
+$('wizardNext').addEventListener('click', wizardNext);
+$('wizardBack').addEventListener('click', () => { app.wizardStep -= 1; renderWizardStep(); });
+$('wizardStoreTest').addEventListener('click', async () => {
+  const result = $('wizardTestResult');
+  try { await api('/api/check', { method:'POST' }); result.innerHTML = '<strong>Store check passed.</strong> The configured UniFi Store responded successfully.'; }
+  catch (err) { result.textContent = `Store test failed: ${err.message}`; }
+});
+$('wizardNotificationTest').addEventListener('click', async () => {
+  const result = $('wizardTestResult');
+  try { const response = await api('/api/notifications/test', { method:'POST' }); const channels = response.outcomes.filter((x) => x.ok).map((x) => x.channel).join(', '); result.innerHTML = `<strong>Notification test passed.</strong> Delivered through ${escapeHtml(channels)}.`; }
+  catch (err) { result.textContent = `Notification test skipped or failed: ${err.message}`; }
+});
 $('passwordForm').addEventListener('submit', updateOwnerPassword);
 $('authForm').addEventListener('submit', submitAuth);
 $('logoutBtn').addEventListener('click', logout);
@@ -678,7 +940,7 @@ $('notifyBtn').addEventListener('click', async () => {
 if ('Notification' in window && Notification.permission === 'granted') $('notifyBtn').textContent = 'Browser alerts enabled ✓';
 
 const initialTab = location.hash.slice(1);
-if (['watchlist','browse','activity','settings'].includes(initialTab)) activateTab(initialTab);
+if (['watchlist','browse','activity','operations','settings'].includes(initialTab)) activateTab(initialTab);
 
 initialize();
 setInterval(() => {

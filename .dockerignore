@@ -6,3 +6,7 @@ backend/node_modules
 GearBeacon-v*
 data/*
 !data/.gitkeep
+dist
+.env
+*.key
+*.pem

@@ -26,6 +26,46 @@
     </div>
   </section>
 
+  <section id="setupWizard" class="wizard-shell hidden" aria-labelledby="wizardTitle">
+    <div class="wizard-card">
+      <div class="wizard-progress"><span id="wizardStepLabel">Step 1 of 5</span><progress id="wizardProgress" max="5" value="1"></progress></div>
+      <div class="wizard-page" data-wizard-step="1">
+        <span class="settings-kicker">Guided first run</span><h1 id="wizardTitle">Secure your private monitor</h1>
+        <p>GearBeacon has no public account service. Create an owner password for this installation.</p>
+        <label class="field"><span>Owner password</span><input id="wizardPassword" type="password" minlength="12" autocomplete="new-password" /></label>
+        <label class="field"><span>Confirm password</span><input id="wizardPasswordConfirm" type="password" minlength="12" autocomplete="new-password" /></label>
+      </div>
+      <div class="wizard-page hidden" data-wizard-step="2">
+        <span class="settings-kicker">Stores & access</span><h1>Where will GearBeacon run?</h1>
+        <p>Select every UniFi Store to monitor. Remote access always requires the owner password.</p>
+        <div id="wizardRegions" class="choice-grid"></div>
+        <label class="field"><span>Access mode</span><select id="wizardAccessMode"><option value="local">Local computer only</option><option value="private">Private LAN or VPN</option><option value="proxy">HTTPS reverse proxy</option></select></label>
+        <label class="field"><span>Public URL (optional)</span><input id="wizardPublicUrl" type="url" placeholder="https://gearbeacon.example.com" /></label>
+      </div>
+      <div class="wizard-page hidden" data-wizard-step="3">
+        <span class="settings-kicker">Notifications</span><h1>Choose alert channels</h1>
+        <p>Credentials are encrypted locally. You can skip channels and configure them later.</p>
+        <details open><summary>ntfy / Discord / Gotify</summary><div class="details-fields"><div class="form-row"><label class="field"><span>ntfy server URL</span><input id="wizardNtfyBaseUrl" type="url" /></label><label class="field"><span>ntfy topic</span><input id="wizardNtfyTopic" autocomplete="off" /></label></div><label class="field"><span>ntfy token (optional)</span><input id="wizardNtfyToken" type="password" autocomplete="off" /></label><label class="field"><span>Discord webhook URL</span><input id="wizardDiscordUrl" type="password" autocomplete="off" /></label><div class="form-row"><label class="field"><span>Gotify server URL</span><input id="wizardGotifyUrl" type="url" /></label><label class="field"><span>Gotify token</span><input id="wizardGotifyToken" type="password" autocomplete="off" /></label></div></div></details>
+        <details><summary>Generic webhook</summary><div class="details-fields"><label class="field"><span>Webhook URL</span><input id="wizardWebhookUrl" type="password" autocomplete="off" /></label><label class="field"><span>Bearer token (optional)</span><input id="wizardWebhookToken" type="password" autocomplete="off" /></label><label class="field"><span>HMAC signing secret (recommended)</span><input id="wizardWebhookHmac" type="password" autocomplete="off" /></label></div></details>
+        <details><summary>SMTP email</summary><div class="details-fields"><div class="form-row"><label class="field"><span>SMTP host</span><input id="wizardSmtpHost" /></label><label class="field"><span>SMTP port</span><input id="wizardSmtpPort" type="number" min="1" max="65535" value="587" /></label></div><div class="form-row"><label class="field"><span>Username</span><input id="wizardSmtpUser" autocomplete="username" /></label><label class="field"><span>Password</span><input id="wizardSmtpPassword" type="password" autocomplete="new-password" /></label></div><div class="form-row"><label class="field"><span>From</span><input id="wizardSmtpFrom" /></label><label class="field"><span>Recipients (comma separated)</span><input id="wizardSmtpTo" /></label></div></div></details>
+      </div>
+      <div class="wizard-page hidden" data-wizard-step="4">
+        <span class="settings-kicker">Backups & verification</span><h1>Protect and test the installation</h1>
+        <p>Choose a backup schedule, then verify the selected store and any configured notification channel.</p>
+        <div class="form-row"><label class="field"><span>Backup every (hours; 0 disables)</span><input id="wizardBackupHours" type="number" min="0" max="720" value="24" /></label><label class="field"><span>Backups to retain</span><input id="wizardBackupRetention" type="number" min="1" max="100" value="10" /></label></div>
+        <div class="settings-actions wrap"><button id="wizardStoreTest" type="button">Run store test</button><button id="wizardNotificationTest" type="button">Run notification test</button></div>
+        <div id="wizardTestResult" class="settings-result">Tests have not run yet.</div>
+      </div>
+      <div class="wizard-page hidden" data-wizard-step="5">
+        <span class="settings-kicker">Ready</span><h1>Your GearBeacon is configured</h1>
+        <p>Review the private URL and security notes below. Access-mode or region changes may require one restart.</p>
+        <div id="wizardSummary" class="summary-box"></div>
+      </div>
+      <div id="wizardError" class="settings-result error hidden"></div>
+      <div class="wizard-actions"><button id="wizardBack" type="button" class="ghost hidden">Back</button><button id="wizardNext" type="button" class="primary">Continue</button></div>
+    </div>
+  </section>
+
   <main id="appShell" class="shell hidden">
     <header class="topbar">
       <div class="brand-wrap">
@@ -63,6 +103,7 @@
       <button data-tab="watchlist" class="tab active">Watchlist <span id="watchCount" class="count">0</span></button>
       <button data-tab="browse" class="tab">Browse</button>
       <button data-tab="activity" class="tab">Activity</button>
+      <button data-tab="operations" class="tab">Operations</button>
       <button data-tab="settings" class="tab">Settings</button>
     </nav>
 
@@ -77,6 +118,17 @@
         <p>Open Browse and add the gear you are waiting for.</p>
         <button class="primary" data-goto="browse">Browse products</button>
       </div>
+    </section>
+
+    <section id="operations" class="page">
+      <div class="section-heading"><div><h2>Operations</h2><p>Region health, delivery reliability, backups, storage, security, and local logs.</p></div><div class="settings-actions"><button id="refreshOperations">Refresh</button><button id="downloadLogs">Download logs</button></div></div>
+      <div id="securityWarnings" class="warning-list"></div>
+      <div id="operationsGrid" class="ops-grid"></div>
+      <article class="settings-card ops-log-card">
+        <div class="settings-card-head"><div><span class="settings-kicker">Application logs</span><h3>Recent activity</h3></div><span id="runtimeBadge" class="settings-badge">Runtime</span></div>
+        <div class="log-filters"><select id="logLevel"><option value="">All levels</option><option value="info">Info</option><option value="warn">Warning</option><option value="error">Error</option></select><input id="logSearch" type="search" placeholder="Filter logs" /><button id="applyLogFilter">Filter</button></div>
+        <div id="operationsLogs" class="log-list"></div>
+      </article>
     </section>
 
     <section id="browse" class="page store-surface">
@@ -117,7 +169,7 @@
       <div class="settings-grid">
         <article class="settings-card">
           <div class="settings-card-head">
-            <div><span class="settings-kicker">Application</span><h3>GearBeacon <span id="settingsVersion">V1.5.0</span></h3></div>
+            <div><span class="settings-kicker">Application</span><h3>GearBeacon <span id="settingsVersion">V1.6.0</span></h3></div>
             <span id="schemaBadge" class="settings-badge">SQLite</span>
           </div>
           <p>Your watched products live in a persistent SQLite database outside the GearBeacon application folder.</p>
@@ -128,8 +180,28 @@
           </dl>
           <div class="settings-actions">
             <button id="updateBtn" class="primary">Check for updates</button>
+            <button id="prepareUpdateBtn">Prepare safe update</button>
           </div>
           <div id="updateResult" class="settings-result hidden"></div>
+        </article>
+
+        <article class="settings-card wide-card">
+          <div class="settings-card-head"><div><span class="settings-kicker">Browser setup</span><h3>Stores, access & backups</h3></div><span id="configRestartBadge" class="settings-badge hidden">Restart required</span></div>
+          <p>These settings are validated before they are saved. Region, bind-address, and access-mode changes take effect after a restart.</p>
+          <form id="appConfigForm" class="config-form">
+            <fieldset><legend>Monitoring</legend><div id="settingsRegions" class="choice-grid"></div><div class="form-row"><label class="field"><span>Poll interval (seconds)</span><input id="configPollSeconds" type="number" min="30" max="86400" /></label><label class="field"><span>Access mode</span><select id="configAccessMode"><option value="local">Local only</option><option value="private">Private LAN / VPN</option><option value="proxy">HTTPS reverse proxy</option></select></label></div><div class="form-row"><label class="field"><span>Bind host</span><input id="configBindHost" /></label><label class="field"><span>Public URL</span><input id="configPublicUrl" type="url" placeholder="https://gearbeacon.example.com" /></label></div><label class="field"><span>Additional allowed browser origins (comma separated)</span><input id="configAllowedOrigins" placeholder="https://trusted.example.com" /></label><label class="inline-check"><input id="configCookieSecure" type="checkbox" /> Always require HTTPS session cookies</label></fieldset>
+            <fieldset><legend>Automatic backups & delivery</legend><div class="form-row"><label class="field"><span>Backup interval (hours)</span><input id="configBackupHours" type="number" min="0" max="720" /></label><label class="field"><span>Backups retained</span><input id="configBackupRetention" type="number" min="1" max="100" /></label><label class="field"><span>Delivery attempts</span><input id="configMaxAttempts" type="number" min="1" max="10" /></label><label class="field"><span>Group window (seconds)</span><input id="configGroupSeconds" type="number" min="0" max="3600" /></label></div></fieldset>
+            <button class="primary" type="submit">Validate & save</button>
+          </form>
+          <div id="configResult" class="settings-result hidden"></div>
+        </article>
+
+        <article class="settings-card wide-card">
+          <div class="settings-card-head"><div><span class="settings-kicker">Encrypted locally</span><h3>Notification channels</h3></div><span id="secretKeyBadge" class="settings-badge">Separate key file</span></div>
+          <p>Leave a secret blank to keep the saved value; enter an empty value after choosing “clear” to remove it. Test buttons send only through that channel.</p>
+          <form id="channelConfigForm" class="channel-config"></form>
+          <div class="settings-actions"><button id="saveChannels" class="primary" type="button">Save channels</button></div>
+          <div id="channelConfigResult" class="settings-result hidden"></div>
         </article>
 
 
@@ -205,7 +277,7 @@
     </section>
 
     <footer>
-      <span>GearBeacon V1.5 · Private self-hosted monitoring</span>
+      <span>GearBeacon V1.6 · Private self-hosted monitoring</span>
       <span id="notifyStatus"></span>
     </footer>
   </main>
