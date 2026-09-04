@@ -110,6 +110,7 @@
     <section id="watchlist" class="page active">
       <div class="section-heading">
         <div><h2>Your watchlist</h2><p>Restocks on these products trigger GearBeacon alerts.</p></div>
+        <div class="watch-heading-actions"><button id="openWatchImport" class="primary" type="button">Import watchlist</button></div>
       </div>
       <div class="watch-toolbar" aria-label="Watchlist filters">
         <input id="watchSearch" type="search" placeholder="Search watchlist" autocomplete="off" />
@@ -365,6 +366,32 @@
     <article class="product-dialog-panel">
       <div class="product-dialog-head"><div><span id="productDialogCategory" class="settings-kicker">Product</span><h2 id="productDialogTitle">Product details</h2></div><button id="closeProductDialog" class="icon-button" type="button" aria-label="Close product details">×</button></div>
       <div id="productDialogBody" class="product-dialog-body"></div>
+    </article>
+  </section>
+  <section id="watchImportDialog" class="watch-import-dialog hidden" role="dialog" aria-modal="true" aria-labelledby="watchImportTitle">
+    <button id="watchImportBackdrop" class="watch-import-backdrop" type="button" aria-label="Close watchlist importer"></button>
+    <article class="watch-import-panel">
+      <div class="watch-import-head">
+        <div><span class="settings-kicker">Local catalog matching</span><h2 id="watchImportTitle">Import watchlist</h2></div>
+        <button id="closeWatchImport" class="icon-button" type="button" aria-label="Close watchlist importer">×</button>
+      </div>
+      <div class="watch-import-body">
+        <div class="watch-import-intro"><div><h3>Add products in one pass</h3><p>Paste UniFi Store links, product SKUs, or slugs. You can also load a TXT, CSV, or JSON file.</p></div><span id="watchImportRegion" class="settings-badge">Current store</span></div>
+        <label class="field"><span>Products to import</span><textarea id="watchImportInput" rows="7" spellcheck="false" placeholder="https://store.ui.com/us/en/category/all-wifi/products/u7-pro-xgs&#10;UVC-G4-Doorbell-Pro-PoE-Kit&#10;unas-pro"></textarea></label>
+        <div class="watch-import-source-actions">
+          <button id="chooseWatchImportFile" type="button">Choose TXT, CSV, or JSON</button>
+          <input id="watchImportFile" type="file" accept=".txt,.csv,.json,text/plain,text/csv,application/json" hidden />
+          <span id="watchImportFileName">No file selected</span>
+          <button id="previewWatchImport" class="primary" type="button">Preview import</button>
+        </div>
+        <div id="watchImportError" class="settings-result error hidden"></div>
+        <section id="watchImportPreview" class="watch-import-preview hidden" aria-live="polite">
+          <div id="watchImportSummary" class="watch-import-summary"></div>
+          <div class="watch-import-result-head"><div><h3>Import review</h3><p>Only checked products marked Ready will be added.</p></div><button id="clearWatchImport" class="ghost" type="button">Clear</button></div>
+          <div id="watchImportResults" class="watch-import-results"></div>
+          <div class="watch-import-confirm"><span id="watchImportSelection">0 products ready</span><button id="confirmWatchImport" class="primary" type="button" disabled>Add products</button></div>
+        </section>
+      </div>
     </article>
   </section>
   <div id="toast" class="toast hidden"></div>

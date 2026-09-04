@@ -121,8 +121,16 @@ try {
   ], { stdio:['ignore', 'ignore', 'pipe'] });
   chrome.stderr.on('data', () => {});
   const activePortFile = join(chromeProfile, 'DevToolsActivePort');
-  await waitFor(() => existsSync(activePortFile), 'Chrome did not expose a DevTools port');
-  const debugPort = Number((await readFile(activePortFile, 'utf8')).split(/\r?\n/)[0]);
+  let debugPort = null;
+  await waitFor(async () => {
+    if (!existsSync(activePortFile)) return false;
+    try {
+      const candidate = Number((await readFile(activePortFile, 'utf8')).split(/\r?\n/)[0]);
+      if (!Number.isFinite(candidate) || candidate <= 0) return false;
+      debugPort = candidate;
+      return true;
+    } catch { return false; }
+  }, 'Chrome did not expose a readable DevTools port');
   let pageTarget = null;
   await waitFor(async () => {
     const targets = await (await fetch(`http://127.0.0.1:${debugPort}/json/list`)).json();
@@ -148,6 +156,9 @@ try {
   }
   await evaluate("document.getElementById('wizardNext').click()");
   await waitForBrowser("document.getElementById('setupWizard').classList.contains('hidden') && app.auth.onboardingComplete", 'Guided setup did not complete');
+
+  const watchImportPlacement = await evaluate("(() => { const heading=document.querySelector('#watchlist .section-heading').getBoundingClientRect(); const button=document.getElementById('openWatchImport').getBoundingClientRect(); return { headingRight:heading.right, buttonRight:button.right, buttonLeft:button.left, headingMid:heading.left + heading.width / 2, visible:button.width > 0 && button.height > 0 }; })()");
+  assert(watchImportPlacement.visible && Math.abs(watchImportPlacement.headingRight - watchImportPlacement.buttonRight) <= 3 && watchImportPlacement.buttonLeft > watchImportPlacement.headingMid, `Watchlist import action is not positioned at the top right: ${JSON.stringify(watchImportPlacement)}`);
 
   const navigationTheme = await evaluate("document.documentElement.dataset.theme");
   const browseTabPoint = await evaluate("(() => { const rect=document.querySelector('[data-tab=\"browse\"]').getBoundingClientRect(); return { x:rect.left+rect.width/2, y:rect.top+rect.height/2 }; })()");
@@ -210,6 +221,26 @@ try {
   await evaluate(`document.querySelectorAll('#watchGrid [data-watch-select]').forEach((input) => { input.checked=true; input.dispatchEvent(new Event('change',{bubbles:true})); })`);
   await evaluate("document.getElementById('bulkResume').click()");
   await waitForBrowser("app.products.filter((product) => product.watched).every((product) => !product.watchRule?.pausedUntil)", 'Bulk resume failed');
+
+  await evaluate(`(() => {
+    document.getElementById('openWatchImport').click();
+    const input=document.getElementById('watchImportInput');
+    input.value=${JSON.stringify('https://store.ui.com/us/en/category/all-cloud-gateways/products/udm-se\nu7-pro-xgs\nhttps://store.ui.com/us/en/category/all-cloud-gateways/products/udm-se\nhttps://store.ui.com/ca/en/category/network-storage/products/unas-pro\nretired-product')};
+    input.dispatchEvent(new Event('input',{bubbles:true}));
+    document.getElementById('previewWatchImport').click();
+  })()`);
+  await waitForBrowser("app.watchImportPreview?.summary?.addable === 1 && document.querySelectorAll('#watchImportResults .watch-import-result').length === 5", 'Watchlist import review did not render');
+  const watchImportReview = await evaluate("({ ready:app.watchImportPreview.summary.addable, already:app.watchImportPreview.summary.alreadyWatched, duplicates:app.watchImportPreview.summary.duplicates, mismatch:app.watchImportPreview.summary.regionMismatch, unrecognized:app.watchImportPreview.summary.unrecognized, selected:document.querySelectorAll('#watchImportResults [data-import-slug]:checked').length, button:document.getElementById('confirmWatchImport').textContent, region:document.getElementById('watchImportRegion').textContent })");
+  assert(watchImportReview.ready === 1 && watchImportReview.already === 1 && watchImportReview.duplicates === 1 && watchImportReview.mismatch === 1 && watchImportReview.unrecognized === 1 && watchImportReview.selected === 1 && watchImportReview.button === 'Add 1 product' && /United States Store/.test(watchImportReview.region), `Watchlist import classifications are incomplete: ${JSON.stringify(watchImportReview)}`);
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width:390, height:844, screenWidth:390, screenHeight:844, deviceScaleFactor:1, mobile:false });
+  const responsiveImport = await evaluate("(() => { const panel=document.querySelector('.watch-import-panel').getBoundingClientRect(); return { width:panel.width, height:panel.height, overflow:document.documentElement.scrollWidth <= window.innerWidth + 1, summaryColumns:getComputedStyle(document.getElementById('watchImportSummary')).gridTemplateColumns.split(' ').length }; })()");
+  assert(responsiveImport?.width === 390 && responsiveImport.height === 844 && responsiveImport.overflow && responsiveImport.summaryColumns === 2, `Watchlist importer is not responsive at 390px: ${JSON.stringify(responsiveImport)}`);
+  await cdp.send('Emulation.clearDeviceMetricsOverride');
+  await evaluate("document.getElementById('confirmWatchImport').click()");
+  await waitForBrowser("document.getElementById('watchImportDialog').classList.contains('hidden') && app.products.find((product) => product.slug === 'udm-se')?.watched === true && document.getElementById('watchCount').textContent === '3'", 'Confirmed watchlist import did not add the matched product');
+  assert(await evaluate("app.products.find((product) => product.slug === 'u7-pro-xgs')?.watchRule?.targetPrice === 250"), 'Watchlist import changed an existing product alert rule');
+  await evaluate("toggleWatch('udm-se')");
+  await waitForBrowser("app.products.find((product) => product.slug === 'udm-se')?.watched === false && document.getElementById('watchCount').textContent === '2'", 'Browser watchlist import cleanup failed');
 
   await evaluate(`(async () => {
     await api('/api/mock/toggle/u7-pro-xgs', { method:'POST' });
@@ -293,7 +324,7 @@ try {
   await evaluate("document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabSecurity').click()");
   await waitForBrowser("document.querySelectorAll('#sessionList [data-revoke-session]').length >= 1", 'Authenticated session management did not render');
 
-  console.log(`BROWSER SMOKE PASSED: ${process.platform} · setup/auth · unclipped navigation · dark/light · images · search/category/load-more · stable dialog hover · watch/rules/bulk · compact activity details/outcomes · email settings/preview/deep-link · backup/import · operations · responsive`);
+  console.log(`BROWSER SMOKE PASSED: ${process.platform} · setup/auth · unclipped navigation · dark/light · images · search/category/load-more · stable dialog hover · watch/rules/bulk/import · compact activity details/outcomes · email settings/preview/deep-link · backup/import · operations · responsive`);
 } catch (error) {
   if (serverOutput.length) process.stderr.write(`\nGearBeacon server output:\n${serverOutput.join('').slice(-12000)}\n`);
   throw error;
