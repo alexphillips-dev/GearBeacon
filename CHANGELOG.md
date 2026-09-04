@@ -2,6 +2,7 @@
 
 ## V1.7.0 — Watch intelligence and alert control
 
+- Fixed the product-detail backdrop changing to an opaque gray or light button background when hovered.
 - Rebuilt SMTP notifications as responsive, event-specific HTML emails with equivalent plain-text parts, inline branding, secure optional product-image embedding, unique message IDs, and graceful image fallbacks.
 - Added dedicated restock, target-price, price-drop, sellout, status-change, new-product, digest, operational, and test-email presentations with captured detection-time details and price calculations.
 - Added email appearance settings for density, theme, subject prefix, explanations, price calculations, embedded images, and digest limits, plus same-renderer desktop/mobile previews and email-only test delivery.
