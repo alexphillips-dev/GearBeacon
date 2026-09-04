@@ -1,3 +1,5 @@
+![GearBeacon — Track Ubiquiti gear and get notified when it is back in stock](.github/assets/banner.png)
+
 # GearBeacon V1.4
 
 **Know the second it's back.**
