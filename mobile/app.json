@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "GearBeacon",
+    "slug": "gearbeacon",
+    "version": "1.4.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "scheme": "gearbeacon",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.gearbeacon.app"
+    },
+    "android": {
+      "package": "com.gearbeacon.app"
+    },
+    "plugins": [
+      "expo-notifications"
+    ],
+    "extra": {
+      "apiBaseUrl": "http://192.168.1.100:8787",
+      "eas": {
+        "projectId": ""
+      }
+    }
+  }
+}

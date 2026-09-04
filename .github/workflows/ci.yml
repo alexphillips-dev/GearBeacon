@@ -1,0 +1,44 @@
+name: GearBeacon CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+
+      - name: Verify version consistency
+        run: node scripts/check-versions.mjs
+
+      - name: Compile backend
+        run: npx --yes -p typescript@5.8.3 tsc -p backend/tsconfig.json
+
+      - name: Check browser JavaScript
+        run: node --check web/app.js
+
+      - name: Install mobile dependencies
+        working-directory: mobile
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Type-check mobile app
+        working-directory: mobile
+        run: npx tsc --noEmit
+
+      - name: Run GearBeacon self-test
+        run: node --no-warnings scripts/self-test.mjs

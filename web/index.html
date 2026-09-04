@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#090b0c" />
+  <title>GearBeacon</title>
+  <script>try{document.documentElement.dataset.theme=localStorage.getItem('gearbeacon.theme')==='light'?'light':'dark'}catch{}</script>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand-wrap">
+        <div class="mark">GB</div>
+        <div>
+          <h1>GearBeacon</h1>
+          <p>Know the second it's back.</p>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button id="themeBtn" class="icon-button" type="button" title="Switch to light mode" aria-label="Switch to light mode"><span id="themeIcon" aria-hidden="true">☀</span></button>
+        <button id="notifyBtn" class="ghost">Enable browser alerts</button>
+        <button id="checkBtn" class="primary">Check now</button>
+      </div>
+    </header>
+
+    <section id="statusPanel" class="status-card">
+      <div class="status-left">
+        <span id="statusDot" class="dot"></span>
+        <div>
+          <strong id="statusTitle">Starting monitor…</strong>
+          <span id="statusSub">Establishing baseline</span>
+        </div>
+      </div>
+      <div class="status-metrics">
+        <div><span>Products</span><strong id="productCount">—</strong></div>
+        <div><span>Region</span><strong id="regionName">—</strong></div>
+        <div><span>Poll</span><strong id="pollRate">—</strong></div>
+      </div>
+    </section>
+
+    <nav class="tabs" aria-label="GearBeacon sections">
+      <button data-tab="watchlist" class="tab active">Watchlist <span id="watchCount" class="count">0</span></button>
+      <button data-tab="browse" class="tab">Browse</button>
+      <button data-tab="activity" class="tab">Activity</button>
+      <button data-tab="settings" class="tab">Settings</button>
+    </nav>
+
+    <section id="watchlist" class="page active">
+      <div class="section-heading">
+        <div><h2>Your watchlist</h2><p>Restocks on these products trigger GearBeacon alerts.</p></div>
+      </div>
+      <div id="watchGrid" class="grid watch-grid"></div>
+      <div id="watchEmpty" class="empty hidden">
+        <div class="empty-icon">⌁</div>
+        <h3>No products watched yet</h3>
+        <p>Open Browse and add the gear you are waiting for.</p>
+        <button class="primary" data-goto="browse">Browse products</button>
+      </div>
+    </section>
+
+    <section id="browse" class="page store-surface">
+      <div class="store-header">
+        <div>
+          <span class="store-eyebrow">UniFi catalog</span>
+          <h2>Browse products</h2>
+          <p>Pick a category, then watch anything you want GearBeacon to alert on.</p>
+        </div>
+        <label class="store-search-wrap">
+          <span>⌕</span>
+          <input id="search" type="search" placeholder="Search products" autocomplete="off" />
+        </label>
+      </div>
+      <div id="categoryTabs" class="store-category-tabs" role="tablist" aria-label="Product categories"></div>
+      <div class="store-results-bar">
+        <strong id="browseTitle">All products</strong>
+        <span id="browseCount">0 products</span>
+      </div>
+      <div id="browseGrid" class="store-grid"></div>
+      <div id="browseEmpty" class="store-empty hidden"><h3>No matching products</h3><p>Try another category or search.</p></div>
+    </section>
+
+    <section id="activity" class="page">
+      <div class="section-heading">
+        <div><h2>Stock activity</h2><p>Exact transitions detected by this GearBeacon monitor.</p></div>
+      </div>
+      <div id="activityList" class="activity-list"></div>
+      <div id="activityEmpty" class="empty hidden"><h3>No stock changes detected yet</h3><p>The first check establishes a baseline. Changes appear here after that.</p></div>
+    </section>
+
+
+    <section id="settings" class="page">
+      <div class="section-heading">
+        <div><h2>Settings</h2><p>Version, update checks, and upgrade-safe data management.</p></div>
+      </div>
+
+      <div class="settings-grid">
+        <article class="settings-card">
+          <div class="settings-card-head">
+            <div><span class="settings-kicker">Application</span><h3>GearBeacon <span id="settingsVersion">V1.4.0</span></h3></div>
+            <span id="schemaBadge" class="settings-badge">SQLite</span>
+          </div>
+          <p>Your watched products now live in a persistent SQLite database outside the GearBeacon application folder.</p>
+          <dl class="settings-details">
+            <div><dt>Storage</dt><dd id="storageEngine">SQLite</dd></div>
+            <div><dt>Schema</dt><dd id="schemaVersion">—</dd></div>
+            <div><dt>Data folder</dt><dd id="dataPath" class="path-value">—</dd></div>
+          </dl>
+          <div class="settings-actions">
+            <button id="updateBtn" class="primary">Check for updates</button>
+          </div>
+          <div id="updateResult" class="settings-result hidden"></div>
+        </article>
+
+
+        <article class="settings-card">
+          <div class="settings-card-head">
+            <div><span class="settings-kicker">Alerts</span><h3>Notifications</h3></div>
+            <span id="pushBadge" class="settings-badge">0 push devices</span>
+          </div>
+          <p>Choose which monitored events can trigger server-side alerts. Restocks stay enabled by default; other alert types are opt-in.</p>
+          <div class="notification-options">
+            <label class="setting-toggle"><span><strong>Restocks</strong><small>Watched product becomes available</small></span><input id="notifyRestock" type="checkbox" checked /><span class="toggle-ui"></span></label>
+            <label class="setting-toggle"><span><strong>Sold out</strong><small>Watched product becomes unavailable</small></span><input id="notifySoldOut" type="checkbox" /><span class="toggle-ui"></span></label>
+            <label class="setting-toggle"><span><strong>Price changes</strong><small>Price changes on a watched product</small></span><input id="notifyPriceChange" type="checkbox" /><span class="toggle-ui"></span></label>
+            <label class="setting-toggle"><span><strong>Status changes</strong><small>Other store-status changes on watched products</small></span><input id="notifyStatusChange" type="checkbox" /><span class="toggle-ui"></span></label>
+            <label class="setting-toggle"><span><strong>New products</strong><small>Alert when GearBeacon discovers a new catalog item</small></span><input id="notifyNewProduct" type="checkbox" /><span class="toggle-ui"></span></label>
+          </div>
+          <div class="settings-actions wrap">
+            <button id="saveNotificationPrefs" class="primary">Save notification settings</button>
+            <button id="testNotificationBtn">Send test notification</button>
+          </div>
+          <div id="notificationResult" class="settings-result hidden"></div>
+        </article>
+        <article class="settings-card">
+          <div class="settings-card-head">
+            <div><span class="settings-kicker">Data safety</span><h3>Backups & transfer</h3></div>
+            <span id="backupBadge" class="settings-badge">0 backups</span>
+          </div>
+          <p>GearBeacon automatically creates a safety backup when an installed version changes before database migrations are applied. It keeps the latest five database backups.</p>
+          <dl class="settings-details">
+            <div><dt>Latest backup</dt><dd id="latestBackup">None yet</dd></div>
+            <div><dt>Watchlist</dt><dd id="settingsWatchCount">0 products</dd></div>
+          </dl>
+          <div class="settings-actions wrap">
+            <button id="backupBtn">Create backup now</button>
+            <button id="exportBtn">Export GearBeacon data</button>
+            <button id="importBtn">Import GearBeacon data</button>
+            <input id="importFile" type="file" accept=".json,.gearbeacon.json,application/json" hidden />
+          </div>
+          <div class="settings-note">Importing replaces this monitor's current watchlist/data after first creating a safety backup.</div>
+        </article>
+      </div>
+    </section>
+
+    <footer>
+      <span>GearBeacon V1.4 · Production-ready alerts</span>
+      <span id="notifyStatus"></span>
+    </footer>
+  </main>
+  <div id="toast" class="toast hidden"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
