@@ -44,8 +44,8 @@
   --border: #d8d9d5;
   --border-soft: #e6e6e2;
   --text: #171817;
-  --muted: #71736f;
-  --muted2: #969791;
+  --muted: #5f625e;
+  --muted2: #70726e;
   --accent: #6c6255;
   --accent-soft: #eeeae3;
   --good: #17884c;
@@ -61,7 +61,7 @@
   --store-bg: #ffffff;
   --store-card: #ffffff;
   --store-ink: #171817;
-  --store-muted: #73756f;
+  --store-muted: #5f625e;
   --store-line: #e0e1dd;
   --store-soft: #f4f5f3;
   --store-active: #171817;
@@ -271,7 +271,7 @@ button.ghost { background: transparent; }
 }
 .watch-icon:hover { background:var(--button-hover); }
 .watch-icon.watching { border-color:var(--accent); background:var(--accent-soft); color:var(--store-ink); }
-.store-sku { color:var(--muted2); font-size:10px; margin-top:5px; text-transform:uppercase; letter-spacing:.045em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.store-sku { color:var(--store-muted); font-size:10px; margin-top:5px; text-transform:uppercase; letter-spacing:.045em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .store-price-row { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:14px; }
 .store-price-row strong { font-size:14px; }
 .stock-label { font-size:13px; line-height:1.2; font-weight:650; color:var(--store-muted); white-space:nowrap; }
@@ -349,7 +349,7 @@ button.ghost { background: transparent; }
 .settings-card-head { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; }
 .settings-card h3 { margin:4px 0 0; font-size:18px; letter-spacing:-.025em; }
 .settings-card > p { color:var(--muted); font-size:13px; line-height:1.55; margin:12px 0 18px; }
-.settings-kicker { color:var(--muted2); text-transform:uppercase; letter-spacing:.11em; font-size:10px; font-weight:750; }
+.settings-kicker { color:var(--muted); text-transform:uppercase; letter-spacing:.11em; font-size:10px; font-weight:750; }
 .settings-badge { flex:0 0 auto; border:1px solid var(--border); background:var(--panel2); color:var(--muted); border-radius:99px; padding:6px 9px; font-size:10px; font-weight:700; }
 .settings-details { margin:0; border-top:1px solid var(--border); }
 .settings-details > div { display:grid; grid-template-columns:110px minmax(0,1fr); gap:12px; padding:11px 0; border-bottom:1px solid var(--border); }

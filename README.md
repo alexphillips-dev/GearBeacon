@@ -44,7 +44,7 @@ Download the package for your operating system from [GitHub Releases](https://gi
 - **macOS Intel or Apple Silicon:** run `./gearbeacon`, or use `sudo ./install-macos-service.sh` for a LaunchDaemon.
 - **Linux x64 or ARM64:** run `./gearbeacon`, or use `sudo ./install-linux-service.sh` for a hardened systemd service.
 
-The uninstallers preserve GearBeacon data by default. Their explicit `-RemoveData` or `--remove-data` option is required to delete it. Release packages are currently unsigned; signing and macOS notarization can be added after project certificates are available. Verify the adjacent SHA-256 checksum before installing.
+The uninstallers preserve GearBeacon data by default. Their explicit `-RemoveData` or `--remove-data` option is required to delete it. Every release archive includes an adjacent SHA-256 checksum and SPDX JSON SBOM and is covered by GitHub artifact provenance. Release packages are currently unsigned; signing and macOS notarization remain outside the V1.10 scope.
 
 ### Source checkout
 
@@ -249,19 +249,20 @@ Only liveness, readiness, and authentication bootstrap routes work without an ow
 ## Development and verification
 
 ```bash
-node scripts/check-versions.mjs
-npx --yes -p typescript@5.8.3 tsc -p backend/tsconfig.json
-node --check web/app.js
-node scripts/check-web-contract.mjs
-node --no-warnings scripts/self-test.mjs
-node --no-warnings scripts/fault-test.mjs
-node --no-warnings scripts/browser-smoke.mjs
+npm ci
+npm run build
+npm run check
+npm test
+npm run test:browser
+npm run test:update-helpers
 docker compose build
 ```
 
-CI exercises fresh installs and backup-protected upgrades from V1.5–V1.7 on Windows, macOS, and Linux; confirmation and unlisting behavior; searchable/exportable activity; primary and encrypted-secondary restore tests; diagnostics and support-bundle redaction; deterministic rate-limit, partial-catalog, restart, storage, key, 500-product, and 10k-activity fault scenarios; real Chrome workflows for persistent filters, reset states, offline recovery, copy actions, desktop and compact widths; product images, rules, scheduling and bulk actions; integration-secret encryption; every notification mock; webhook signing; SMTP STARTTLS; authentication, CSRF, origin, secure-cookie, and forwarded-header behavior; launcher syntax; real Docker Compose startup; amd64/arm64 containers; and native standalone packages. CodeQL and Trivy scan source and container images.
+CI exercises fresh installs and backup-protected upgrades from V1.5–V1.7 on Windows, macOS, and Linux; confirmation and unlisting behavior; searchable/exportable activity; primary and encrypted-secondary restore tests; diagnostics and support-bundle redaction; deterministic rate-limit, partial-catalog, restart, storage, key, 500-product, and 10k-activity fault scenarios; real Chrome workflows with axe WCAG scans, keyboard/focus behavior, reduced motion, persistent filters, reset states, offline recovery, copy actions, responsive widths, both themes, product images, rules, scheduling and bulk actions; integration-secret encryption; every notification mock; webhook signing; SMTP STARTTLS; authentication, CSRF, origin, secure-cookie, and forwarded-header behavior; update-helper safety; launcher syntax; real Docker Compose startup; amd64/arm64 containers; and native standalone packages. CodeQL and Trivy scan source and container images.
 
-Tagged releases produce checksummed standalone packages for Windows x64, macOS x64/ARM64, and Linux x64/ARM64, plus amd64/arm64 GHCR images. Prerelease tags such as `v1.9.0-rc.1` create GitHub prereleases without moving the stable `latest` image tag. Standalone builds use Node's single-executable application tooling.
+Run **Candidate packages** manually with a prerelease version such as `1.10.0-rc.1` to create retained Actions artifacts without publishing a release. It uses the exact reusable packaging jobs used by a tag, extracts every archive, starts every native executable, validates the source archive, generates SBOMs, and records attestations.
+
+Prerelease tags such as `v1.10.0-rc.1` must point to a commit on `dev` and never move the stable container `latest` tag. Stable tags such as `v1.10.0` must point to a commit on protected `main`. Publication also requires successful CI and security workflows at the exact SHA, consistent version/changelog/manifest data, checksummed and rehearsed packages, amd64/arm64 images, SBOMs, and provenance. The GitHub release stays a draft until those steps succeed. Use the [stable release checklist](.github/RELEASE_CHECKLIST.md) for real installation, upgrade, rollback, accessibility, and 24–48 hour soak evidence.
 
 ## Project layout
 
@@ -274,6 +275,8 @@ Tagged releases produce checksummed standalone packages for Windows x64, macOS x
 | `.github/workflows` | Cross-platform CI, security scans, and releases |
 
 Release-specific history belongs in [CHANGELOG.md](CHANGELOG.md), keeping this README current and readable.
+
+Please read [CONTRIBUTING.md](CONTRIBUTING.md) before proposing a change. Report suspected vulnerabilities privately using the process in [SECURITY.md](SECURITY.md), never in a public issue.
 
 ## License and trademarks
 

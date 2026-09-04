@@ -1,4 +1,4 @@
-// GearBeacon V1.9 backend
+// GearBeacon V1.10 backend
 // Private, owner-operated stock monitoring for local and self-hosted installs.
 // @ts-nocheck
 
@@ -14,14 +14,14 @@ const { URL } = require('node:url');
 const { DatabaseSync } = require('node:sqlite');
 const { renderEmail, buildMimeEmail } = require('./email');
 
-const APP_VERSION = '1.9.0';
+const APP_VERSION = '1.10.0';
 const DATABASE_SCHEMA_VERSION = 7;
 const STORE_BASE = 'https://store.ui.com';
 const REGIONS = {
-  us: { label: 'United States', path: 'us/en', currency: 'USD' },
-  eu: { label: 'Europe', path: 'eu/en', currency: 'EUR' },
-  uk: { label: 'United Kingdom', path: 'uk/en', currency: 'GBP' },
-  ca: { label: 'Canada', path: 'ca/en', currency: 'CAD' },
+  us: { label: 'United States', path: 'us/en', currency: 'USD', origin: STORE_BASE },
+  eu: { label: 'Europe', path: 'eu/en', currency: 'EUR', origin: 'https://eu.store.ui.com' },
+  uk: { label: 'United Kingdom', path: 'uk/en', currency: 'GBP', origin: 'https://uk.store.ui.com' },
+  ca: { label: 'Canada', path: 'ca/en', currency: 'CAD', origin: 'https://ca.store.ui.com' },
 };
 
 // Current broad UniFi Store category pages. GearBeacon only requests these
@@ -1259,7 +1259,7 @@ function mockCatalog() {
       comingSoon: status === 'ComingSoon',
       restockEtaAt: null,
       soldOutAt: status === 'SoldOut' ? isoNow() : null,
-      url: `${STORE_BASE}/${REGIONS[region].path}/products/${p.slug}`,
+      url: `${REGIONS[region].origin}/${REGIONS[region].path}/products/${p.slug}`,
       region,
       lastSeenAt: isoNow(),
     };
@@ -1296,7 +1296,7 @@ async function getBuildId(force = false) {
   if (!force && buildIdCache.value && Date.now() - buildIdCache.fetchedAt < freshForMs) {
     return buildIdCache.value;
   }
-  const home = `${STORE_BASE}/${REGIONS[region].path}`;
+  const home = `${REGIONS[region].origin}/${REGIONS[region].path}`;
   const res = await fetchWithTimeout(home, { headers: HEADERS });
   if (!res.ok) throw storeHttpError(res, 'Store homepage');
   const html = await res.text();
@@ -1319,7 +1319,7 @@ async function fetchCategory(buildId, category) {
   const region = currentRegion();
   let pagePath = `/${REGIONS[region].path}/${category}`;
   for (let hop = 0; hop < 4; hop += 1) {
-    const dataUrl = `${STORE_BASE}/_next/data/${buildId}${pagePath}.json`;
+    const dataUrl = `${REGIONS[region].origin}/_next/data/${buildId}${pagePath}.json`;
     const res = await fetchWithTimeout(dataUrl, { headers: HEADERS, redirect: 'manual' });
 
     if ([301, 302, 303, 307, 308].includes(res.status)) {
@@ -1484,7 +1484,7 @@ function normalizeProduct(product) {
     comingSoon,
     restockEtaAt: minIso(variants.map((v) => v.restockEtaAt)),
     soldOutAt: maxIso(variants.map((v) => v.soldOutAt)),
-    url: `${STORE_BASE}/${REGIONS[region].path}/products/${product.slug}`,
+    url: `${REGIONS[region].origin}/${REGIONS[region].path}/products/${product.slug}`,
     region,
     lastSeenAt: isoNow(),
   };
@@ -2030,7 +2030,7 @@ function previewNotificationEvent(slug, requestedType = 'restock') {
     inStock:isAvailable, watchedAtDetection:Boolean(product ? state.watchlist.includes(product.slug) : true),
     targetPrice, immediateRestock:requestedType === 'restock',
     triggerReason:eventTriggerReason(underlyingType, requestedType, { targetPrice, priceDropOnly:requestedType === 'price_drop', immediateRestock:requestedType === 'restock' }, true),
-    url:product?.url || `${STORE_BASE}/${REGIONS[currentRegion()].path}/products/${product?.slug || slug || 'example-product'}`,
+    url:product?.url || `${REGIONS[currentRegion()].origin}/${REGIONS[currentRegion()].path}/products/${product?.slug || slug || 'example-product'}`,
     dashboardUrl:productDashboardUrl(product?.slug || slug || 'example-product'), region:currentRegion(), detectedAt:isoNow(), notificationTimeZone:NOTIFICATION_TIME_ZONE,
   };
   return event;
@@ -2617,13 +2617,15 @@ function watchImportReference(value) {
   let candidate = input;
   let sourceRegion = null;
   let invalidUrl = false;
-  const urlCandidate = /^(?:https?:\/\/|store\.ui\.com\/)/i.test(input) ? (/^https?:\/\//i.test(input) ? input : `https://${input}`) : null;
+  const urlCandidate = /^(?:https?:\/\/|(?:[a-z]{2}\.)?store\.ui\.com\/)/i.test(input) ? (/^https?:\/\//i.test(input) ? input : `https://${input}`) : null;
   if (urlCandidate) {
     try {
       const url = new URL(urlCandidate);
-      if (url.hostname.toLowerCase() !== 'store.ui.com') invalidUrl = true;
+      const hostname = url.hostname.toLowerCase();
+      const hostRegion = Object.entries(REGIONS).find(([, config]) => new URL(config.origin).hostname === hostname)?.[0] || null;
+      if (!hostRegion) invalidUrl = true;
       const segments = url.pathname.split('/').map((part) => decodeURIComponent(part)).filter(Boolean);
-      if (REGIONS[String(segments[0] || '').toLowerCase()]) sourceRegion = String(segments[0]).toLowerCase();
+      sourceRegion = REGIONS[String(segments[0] || '').toLowerCase()] ? String(segments[0]).toLowerCase() : hostRegion;
       const productIndex = segments.lastIndexOf('products');
       candidate = productIndex >= 0 && segments[productIndex + 1] ? segments[productIndex + 1] : '';
     } catch {
@@ -2650,7 +2652,7 @@ function previewWatchImport(content, fileName = '') {
       if (prefix) product = bySlug.get(prefix) || null;
     }
     const base = { id:index + 1, input:reference.input, identifier:reference.identifier || null, sourceRegion:reference.sourceRegion, destinationRegion:region };
-    if (reference.invalidUrl) return { ...base, status:'unrecognized', label:'Unsupported URL', detail:'Only links from store.ui.com can be imported.' };
+    if (reference.invalidUrl) return { ...base, status:'unrecognized', label:'Unsupported URL', detail:'Only links from official regional UniFi Store hosts can be imported.' };
     if (!product) return { ...base, status:'unrecognized', label:'Not in catalog', detail:`No matching product is currently listed in the ${REGIONS[region].label} catalog. It may be discontinued or use a different identifier.` };
     const productData = { slug:product.slug, name:product.name, category:product.category, price:product.price || null, imageUrl:product.imageUrl || null };
     if (reference.sourceRegion && reference.sourceRegion !== region) return { ...base, ...productData, status:'region-mismatch', label:'Other region', detail:`This link is for ${REGIONS[reference.sourceRegion].label}. Switch GearBeacon to that Store region to import it.` };
@@ -2984,7 +2986,7 @@ async function runDiagnostics({ network = true } = {}) {
     let detail = current.lastSuccessAt ? `Last successful catalog check: ${current.lastSuccessAt}.` : 'This region has not completed a successful catalog check.';
     if (network && !MOCK_MODE) {
       try {
-        const response = await regionContext.run(region, () => fetchWithTimeout(`${STORE_BASE}/${REGIONS[region].path}`, { headers:HEADERS }, 8000));
+        const response = await regionContext.run(region, () => fetchWithTimeout(`${REGIONS[region].origin}/${REGIONS[region].path}`, { headers:HEADERS }, 8000));
         if (!response.ok) throw storeHttpError(response, 'Store reachability probe');
         try { await response.body?.cancel(); } catch {}
         status = 'pass'; detail = 'DNS, TLS, and the UniFi Store endpoint responded successfully.';
@@ -3529,7 +3531,7 @@ function listSessions(current) {
 
 function outboundConnections() {
   return [
-    { name: 'UniFi Store', enabled: true, required: true, destination: STORE_BASE, purpose: 'Inventory checks' },
+    { name: 'UniFi Store', enabled: true, required: true, destination: [...new Set(ACTIVE_REGIONS.map((region) => REGIONS[region].origin))].join(', '), purpose: 'Inventory checks' },
     { name: 'GitHub Releases', enabled: Boolean(GITHUB_RELEASE_API || UPDATE_MANIFEST_URL), required: false, destination: UPDATE_MANIFEST_URL || GITHUB_RELEASE_API || null, purpose: 'Manual update checks' },
     { name: 'ntfy', enabled: channelConfigured('ntfy'), required: false, destination: NTFY_TOPIC ? NTFY_BASE_URL : null, purpose: 'Notifications' },
     { name: 'Discord', enabled: channelConfigured('discord'), required: false, destination: DISCORD_WEBHOOK_URL ? 'Configured webhook' : null, purpose: 'Notifications' },
@@ -4046,7 +4048,7 @@ async function handleRegionApi(req, res, url) {
       inStock: false,
       comingSoon: false,
       price: null,
-      url: `${STORE_BASE}/${REGIONS[currentRegion()].path}/products/${slug}`,
+      url: `${REGIONS[currentRegion()].origin}/${REGIONS[currentRegion()].path}/products/${slug}`,
       region: currentRegion(),
       watched: true,
     });

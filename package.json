@@ -1,0 +1,20 @@
+{
+  "name": "gearbeacon-build-tools",
+  "version": "1.10.0",
+  "private": true,
+  "description": "Locked development and release tooling for GearBeacon",
+  "license": "Apache-2.0",
+  "scripts": {
+    "build": "tsc -p backend/tsconfig.json",
+    "check": "node scripts/check-versions.mjs && node --check web/app.js && node --check scripts/browser-smoke.mjs && node --check scripts/build-standalone.mjs && node --check scripts/live-catalog-canary.mjs && node --check scripts/update-helper-smoke.mjs && node --check scripts/check-web-contract.mjs && node scripts/check-web-contract.mjs",
+    "test": "node --no-warnings scripts/self-test.mjs && node --no-warnings scripts/fault-test.mjs",
+    "test:browser": "node --no-warnings scripts/browser-smoke.mjs",
+    "test:live-catalog": "node --no-warnings scripts/live-catalog-canary.mjs",
+    "test:update-helpers": "node --no-warnings scripts/update-helper-smoke.mjs"
+  },
+  "devDependencies": {
+    "axe-core": "4.13.0",
+    "postject": "1.0.0-alpha.6",
+    "typescript": "5.8.3"
+  }
+}

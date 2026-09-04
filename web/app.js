@@ -1693,8 +1693,17 @@ function activateTab(tab) {
   if (tab === 'operations') refreshOperations();
   if (tab === 'activity') refreshActivity(app.activity.page || 1);
   history.replaceState(null, '', `#${tab}`);
-  document.querySelectorAll('.tab').forEach((x) => x.classList.toggle('active', x.dataset.tab === tab));
-  document.querySelectorAll('.page').forEach((x) => x.classList.toggle('active', x.id === tab));
+  document.querySelectorAll('.tab').forEach((button) => {
+    const active = button.dataset.tab === tab;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+    button.tabIndex = active ? 0 : -1;
+  });
+  document.querySelectorAll('.page').forEach((panel) => {
+    const active = panel.id === tab;
+    panel.classList.toggle('active', active);
+    panel.hidden = !active;
+  });
   persistUiState();
 }
 function activateSettingsTab(tab, focus = false) {
@@ -1713,7 +1722,19 @@ function activateSettingsTab(tab, focus = false) {
     panel.hidden = !active;
   });
 }
-document.querySelectorAll('.tab').forEach((tab) => tab.addEventListener('click', () => activateTab(tab.dataset.tab)));
+document.querySelectorAll('.tab').forEach((tab) => {
+  tab.addEventListener('click', () => activateTab(tab.dataset.tab));
+  tab.addEventListener('keydown', (event) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const current = APP_TABS.indexOf(tab.dataset.tab);
+    const next = event.key === 'Home' ? 0
+      : event.key === 'End' ? APP_TABS.length - 1
+      : (current + (event.key === 'ArrowRight' ? 1 : -1) + APP_TABS.length) % APP_TABS.length;
+    activateTab(APP_TABS[next]);
+    document.querySelector(`.tab[data-tab="${APP_TABS[next]}"]`)?.focus();
+  });
+});
 document.querySelectorAll('[data-settings-tab]').forEach((tab) => {
   tab.addEventListener('click', () => activateSettingsTab(tab.dataset.settingsTab));
   tab.addEventListener('keydown', (event) => {
@@ -1763,7 +1784,7 @@ document.addEventListener('keydown', (event) => {
   if (event.key === 'Tab') {
     const dialog = [$('watchImportDialog'), $('activityDialog'), $('productDialog')].find((item) => item && !item.classList.contains('hidden'));
     if (dialog) {
-      const focusable = [...dialog.querySelectorAll('button:not(:disabled),a[href],input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex]:not([tabindex="-1"])')].filter((item) => item.offsetParent !== null);
+      const focusable = [...dialog.querySelectorAll('button:not(:disabled):not([tabindex="-1"]),a[href]:not([tabindex="-1"]),input:not(:disabled):not([tabindex="-1"]),select:not(:disabled):not([tabindex="-1"]),textarea:not(:disabled):not([tabindex="-1"]),[tabindex]:not([tabindex="-1"])')].filter((item) => item.offsetParent !== null);
       if (focusable.length) {
         const first = focusable[0]; const last = focusable.at(-1);
         if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }

@@ -7,127 +7,99 @@ on:
 permissions:
   contents: write
   packages: write
+  actions: read
+  id-token: write
+  attestations: write
 
 jobs:
-  standalone:
-    name: Package ${{ matrix.name }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            name: linux-x64
-            archive: tar
-          - os: ubuntu-24.04-arm
-            name: linux-arm64
-            archive: tar
-          - os: windows-latest
-            name: windows-x64
-            archive: zip
-          - os: macos-latest
-            name: macos-arm64
-            archive: tar
-          - os: macos-26-intel
-            name: macos-x64
-            archive: tar
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '26.x'
-      - run: node scripts/check-versions.mjs
-      - run: npx --yes -p typescript@5.8.3 tsc -p backend/tsconfig.json
-      - name: Build standalone application
-        env:
-          GEARBEACON_BUILD_COMMIT: ${{ github.sha }}
-          GEARBEACON_PACKAGE_VERSION: ${{ github.ref_name }}
-        run: node scripts/build-standalone.mjs
-      - name: Smoke test package
-        shell: bash
-        env:
-          EXPECTED_BUILD_COMMIT: ${{ github.sha }}
-        run: |
-          PACKAGE_DIR=$(find dist/standalone -mindepth 1 -maxdepth 1 -type d | head -1)
-          node scripts/standalone-smoke.mjs "$PACKAGE_DIR"
-      - name: Archive Unix package
-        if: matrix.archive == 'tar'
-        shell: bash
-        run: |
-          mkdir -p dist/packages
-          PACKAGE_DIR=$(find dist/standalone -mindepth 1 -maxdepth 1 -type d | head -1)
-          NAME=$(basename "$PACKAGE_DIR")
-          tar -czf "dist/packages/$NAME.tar.gz" -C "$(dirname "$PACKAGE_DIR")" "$NAME"
-          (cd dist/packages && shasum -a 256 "$NAME.tar.gz" > "$NAME.tar.gz.sha256")
-      - name: Archive Windows package
-        if: matrix.archive == 'zip'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force dist/packages | Out-Null
-          $package = Get-ChildItem dist/standalone -Directory | Select-Object -First 1
-          $archive = "dist/packages/$($package.Name).zip"
-          Compress-Archive -Path $package.FullName -DestinationPath $archive
-          $leaf = Split-Path $archive -Leaf
-          $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  $leaf" | Set-Content "$archive.sha256" -Encoding ascii
-      - uses: actions/upload-artifact@v6
-        with:
-          name: standalone-${{ matrix.name }}
-          path: dist/packages/*
-          if-no-files-found: error
-
-  release:
-    needs: standalone
+  preflight:
+    name: Release policy
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22.16.0'
-      - name: Verify tag and versions
+          cache: npm
+      - run: npm ci
+      - name: Verify tag, manifest, changelog, and source branch
         shell: bash
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           BASE_VERSION="${TAG_VERSION%%[-+]*}"
           APP_VERSION=$(node -p "require('./backend/package.json').version")
-          test "$BASE_VERSION" = "$APP_VERSION"
-          node scripts/check-versions.mjs
-      - run: npx --yes -p typescript@5.8.3 tsc -p backend/tsconfig.json
-      - run: node --no-warnings scripts/self-test.mjs
-      - uses: actions/download-artifact@v6
+          test "$BASE_VERSION" = "$APP_VERSION" || { echo "Tag $GITHUB_REF_NAME does not match application V$APP_VERSION." >&2; exit 1; }
+          npm run build
+          npm run check
+          grep -Fq "## V${APP_VERSION} " CHANGELOG.md || { echo "CHANGELOG.md has no V${APP_VERSION} entry." >&2; exit 1; }
+          node -e "const m=require('./release-manifest.json'); if (!m.releaseNotes?.trim()) throw new Error('Release notes are empty')"
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then TARGET=dev; else TARGET=main; fi
+          git fetch --no-tags origin "$TARGET"
+          git merge-base --is-ancestor "$GITHUB_SHA" "origin/$TARGET" || { echo "$GITHUB_REF_NAME must point to a commit on $TARGET." >&2; exit 1; }
+      - name: Require successful CI and security checks at this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          for WORKFLOW in ci.yml security.yml; do
+            CONCLUSION=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$WORKFLOW/runs?head_sha=$GITHUB_SHA&per_page=30" --jq '[.workflow_runs[] | select(.event == "push")][0].conclusion // "missing"')
+            test "$CONCLUSION" = success || { echo "$WORKFLOW is not successful at $GITHUB_SHA (found: $CONCLUSION)." >&2; exit 1; }
+          done
+
+  package:
+    needs: preflight
+    uses: ./.github/workflows/package.yml
+    with:
+      package_version: ${{ github.ref_name }}
+
+  release:
+    name: Publish verified release
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
           pattern: standalone-*
           path: release-assets
           merge-multiple: true
-      - name: Build source archive
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: source
+          path: release-assets
+      - name: Verify packaged checksums
         shell: bash
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          STAGE="GearBeacon-v${VERSION}-source"
-          mkdir -p "$STAGE"
-          rsync -a ./ "$STAGE/" --exclude '.git' --exclude 'release-assets' --exclude "$STAGE" --exclude '*.zip' --exclude '*.sha256'
-          zip -qr "release-assets/$STAGE.zip" "$STAGE"
-          (cd release-assets && sha256sum "$STAGE.zip" > "$STAGE.zip.sha256")
-      - name: Create GitHub Release
+          for CHECKSUM in release-assets/*.sha256; do
+            (cd release-assets && sha256sum -c "$(basename "$CHECKSUM")")
+          done
+      - name: Create or refresh draft release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           PRERELEASE=()
           if [[ "$GITHUB_REF_NAME" == *-* ]]; then PRERELEASE=(--prerelease); fi
-          gh release create "$GITHUB_REF_NAME" release-assets/* --title "GearBeacon V${GITHUB_REF_NAME#v}" --generate-notes "${PRERELEASE[@]}"
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+          if gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft >/tmp/gearbeacon-release-state 2>/dev/null; then
+            test "$(cat /tmp/gearbeacon-release-state)" = true || { echo 'A published release already exists for this tag.' >&2; exit 1; }
+            gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" release-assets/* --draft --title "GearBeacon V${GITHUB_REF_NAME#v}" --generate-notes "${PRERELEASE[@]}"
+          fi
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.5.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Generate container metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ghcr.io/${{ github.repository_owner }}/gearbeacon
           tags: |
@@ -135,13 +107,27 @@ jobs:
             type=semver,pattern={{major}}.{{minor}},enable=${{ !contains(github.ref_name, '-') }}
             type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
       - name: Publish amd64 and arm64 container
-        uses: docker/build-push-action@v6
+        id: container
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
+          pull: true
+          provenance: mode=max
+          sbom: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             VCS_REF=${{ github.sha }}
             IMAGE_NAME=ghcr.io/${{ github.repository_owner }}/gearbeacon
+      - name: Attest published container
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.0.0
+        with:
+          subject-name: ghcr.io/${{ github.repository_owner }}/gearbeacon
+          subject-digest: ${{ steps.container.outputs.digest }}
+          push-to-registry: true
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false

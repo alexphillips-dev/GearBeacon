@@ -1,5 +1,20 @@
 # GearBeacon changelog
 
+## V1.10.0 — Release readiness, accessibility, and trust
+
+- Locked TypeScript, axe-core, postject, Node build versions, GitHub Actions, security scanners, Docker build actions, and the multi-platform runtime image to reviewable versions or immutable identities.
+- Added manually dispatched candidate packages that use the same reusable Windows, macOS, Linux, and source packaging path as tagged releases without creating a public release.
+- Added archive extraction and real executable startup rehearsals for every standalone package plus extracted-source validation before an artifact can be published.
+- Added SPDX JSON software bills of materials and GitHub artifact attestations for downloadable packages, with registry SBOM and maximum provenance for multi-platform container images.
+- Added fail-closed release policy checks for version, manifest, changelog, source branch, and successful CI and security runs at the exact tag commit.
+- Restricted prerelease tags to `dev` commits and stable tags to protected `main` commits, while keeping a release draft until all packages, images, and attestations succeed.
+- Added cross-platform tests proving update helpers refuse to run without an explicit validated-backup confirmation.
+- Added a weekly and manually dispatchable read-only live catalog canary for the US, Canada, Europe, and UK with temporary storage, structural checks, and no watchlist or notification configuration.
+- Updated Canada, Europe, and UK monitoring and product links to their direct regional Store hosts after the canary exposed redirect loops on the shared host.
+- Added automated axe WCAG scans for owner setup and primary workflows, keyboard navigation for main tabs, improved dialog focus containment, explicit tab/panel semantics, status announcements, accessible filter names, and corrected small-text contrast.
+- Added deterministic checks for reduced motion, keyboard focus, dialog behavior, responsive reflow, product images, and both color themes to the real Chrome suite.
+- Added Dependabot coverage for npm tooling, GitHub Actions, and Docker plus security reporting, contribution, issue, pull-request, and real-install release-checklist guidance.
+
 ## V1.9.0 — Daily-use polish and fault testing
 
 - Preserved the selected main tab, Settings subsection, Browse filters, Watchlist filters, and Activity filters across browser refreshes using local browser storage only.
