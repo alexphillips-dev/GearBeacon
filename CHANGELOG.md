@@ -2,6 +2,7 @@
 
 ## V1.7.0 — Watch intelligence and alert control
 
+- Enriched the Stock activity feed with exact before/after transitions, price movement, prior-state duration, region context, exact detection times, and server-alert outcomes while preserving the compact 64-pixel row height across desktop and mobile.
 - Fixed the product-detail backdrop changing to an opaque gray or light button background when hovered.
 - Fixed the main navigation tabs lifting into and being clipped by their scroll container on hover.
 - Rebuilt SMTP notifications as responsive, event-specific HTML emails with equivalent plain-text parts, inline branding, secure optional product-image embedding, unique message IDs, and graceful image fallbacks.

@@ -211,6 +211,39 @@ try {
   await evaluate("document.getElementById('bulkResume').click()");
   await waitForBrowser("app.products.filter((product) => product.watched).every((product) => !product.watchRule?.pausedUntil)", 'Bulk resume failed');
 
+  await evaluate(`(async () => {
+    await api('/api/mock/toggle/u7-pro-xgs', { method:'POST' });
+    await api('/api/check', { method:'POST' });
+    await refresh();
+    document.querySelector('[data-tab="activity"]').click();
+  })()`);
+  await waitForBrowser("document.getElementById('activity').classList.contains('active') && document.querySelector('#activityList .event')", 'Stock activity did not render');
+  const activityRow = await evaluate(`(() => {
+    const row = document.querySelector('#activityList .event');
+    const meta = row.querySelector('.event-meta');
+    return {
+      height:row.getBoundingClientRect().height,
+      meta:meta.textContent,
+      metaTitle:meta.title,
+      metaWhiteSpace:getComputedStyle(meta).whiteSpace,
+      alert:row.querySelector('.event-alert-label').textContent,
+      alertTitle:row.querySelector('.event-alert').title,
+      timeTitle:row.querySelector('time').title,
+      aria:row.getAttribute('aria-label'),
+    };
+  })()`);
+  assert(activityRow?.height === 64, `Desktop activity row height changed: ${JSON.stringify(activityRow)}`);
+  assert(activityRow.meta.includes('Sold out → In stock') && activityRow.meta.includes('$299.00') && activityRow.meta.includes('Back after') && activityRow.metaWhiteSpace === 'nowrap', `Compact activity transition details are incomplete: ${JSON.stringify(activityRow)}`);
+  assert(activityRow.alert === 'No channel' && /no server notification channel was configured/i.test(activityRow.alertTitle), `Activity server-alert outcome is incomplete: ${JSON.stringify(activityRow)}`);
+  assert(/U7 Pro XGS activity details/i.test(activityRow.aria) && activityRow.timeTitle && !/^\d{4}-\d{2}-\d{2}T/.test(activityRow.timeTitle), `Activity accessibility or exact-time details are incomplete: ${JSON.stringify(activityRow)}`);
+  await evaluate("document.querySelector('#activityList .event time').click()");
+  await waitForBrowser("!document.getElementById('productDialog').classList.contains('hidden') && document.getElementById('productDialogTitle').textContent === 'U7 Pro XGS'", 'Whole-row activity navigation did not open product details');
+  await evaluate("document.getElementById('closeProductDialog').click()");
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width:390, height:844, screenWidth:390, screenHeight:844, deviceScaleFactor:1, mobile:false });
+  const compactActivity = await evaluate("(() => { const row=document.querySelector('#activityList .event'); return { height:row.getBoundingClientRect().height, overflow:document.documentElement.scrollWidth <= window.innerWidth + 1, alertLabel:getComputedStyle(row.querySelector('.event-alert-label')).display, timeColumn:row.querySelector('time').getBoundingClientRect().top - row.getBoundingClientRect().top }; })()");
+  assert(compactActivity?.height === 64 && compactActivity.overflow && compactActivity.alertLabel === 'none' && compactActivity.timeColumn < 32, `Mobile activity row did not remain compact: ${JSON.stringify(compactActivity)}`);
+  await cdp.send('Emulation.clearDeviceMetricsOverride');
+
   await evaluate("document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabNotifications').click()");
   await waitForBrowser("!document.getElementById('settingsPanelNotifications').hidden && document.getElementById('settingsPanelData').hidden", 'Notification settings tab failed');
   await waitForBrowser("document.getElementById('emailPreviewProduct').options.length >= 5", 'Email preview products did not load');
@@ -260,7 +293,7 @@ try {
   await evaluate("document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabSecurity').click()");
   await waitForBrowser("document.querySelectorAll('#sessionList [data-revoke-session]').length >= 1", 'Authenticated session management did not render');
 
-  console.log(`BROWSER SMOKE PASSED: ${process.platform} · setup/auth · unclipped navigation · dark/light · images · search/category/load-more · stable dialog hover · watch/rules/bulk · email settings/preview/deep-link · backup/import · operations · responsive`);
+  console.log(`BROWSER SMOKE PASSED: ${process.platform} · setup/auth · unclipped navigation · dark/light · images · search/category/load-more · stable dialog hover · watch/rules/bulk · compact activity details/outcomes · email settings/preview/deep-link · backup/import · operations · responsive`);
 } catch (error) {
   if (serverOutput.length) process.stderr.write(`\nGearBeacon server output:\n${serverOutput.join('').slice(-12000)}\n`);
   throw error;

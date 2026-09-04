@@ -235,6 +235,8 @@ try {
   const restockEvent = events.events.find((event) => event.slug === 'u7-pro-xgs' && event.type === 'restock' && event.watchedAtDetection);
   if (!restockEvent) throw new Error('Watched restock event was not generated.');
   if (!restockEvent.imageUrl || restockEvent.alertKind !== 'restock' || !restockEvent.triggerReason || !restockEvent.notificationTimeZone || restockEvent.priceValue === undefined || !Object.hasOwn(restockEvent, 'priceDifferencePercent')) throw new Error('Queued alert snapshot is missing immutable email details.');
+  if (!restockEvent.previousStateSince || !Number.isFinite(restockEvent.previousStateDurationSeconds) || restockEvent.previousStateDurationSeconds < 0) throw new Error('Activity event is missing its previous-state duration.');
+  if (!restockEvent.serverAlert?.state || !restockEvent.serverAlert?.label || !restockEvent.serverAlert?.detail || !restockEvent.serverAlert.channels?.length || ['muted', 'no-channel'].includes(restockEvent.serverAlert.state)) throw new Error(`Activity event is missing its server-alert outcome: ${JSON.stringify(restockEvent.serverAlert)}`);
 
   const preferences = await request('/api/notifications/preferences?region=us', {
     method: 'PUT',
@@ -260,6 +262,8 @@ try {
     await delay(200);
   }
   if (!retried) throw new Error('Failed webhook delivery did not enter exponential retry state.');
+  const retryingActivity = (await request('/api/events?limit=20&region=us')).events.find((event) => event.id === restockEvent.id);
+  if (retryingActivity?.serverAlert?.state !== 'retrying' || retryingActivity.serverAlert.label !== 'Retrying' || !/another delivery attempt/i.test(retryingActivity.serverAlert.detail || '')) throw new Error(`Activity feed did not reflect the live server retry outcome: ${JSON.stringify(retryingActivity?.serverAlert)}`);
   const groupedDelivery = await request('/api/notifications/log?limit=100');
   if (!groupedDelivery.notifications.some((row) => row.status === 'sent' && /grouped 2/.test(row.detail || ''))) throw new Error('Notification grouping did not combine nearby events.');
   let groupedEmail = null;
@@ -436,7 +440,7 @@ try {
   const proxyStatus = await fetchJson('/api/status', { headers:{ Cookie:proxyCookie, Origin:'https://gearbeacon.test', 'X-Forwarded-Proto':'https', 'X-Forwarded-Host':'gearbeacon.test' } }, 200);
   if (proxyStatus.response.headers.get('strict-transport-security') == null || proxyStatus.response.headers.get('access-control-allow-origin') !== 'https://gearbeacon.test') throw new Error('Proxy-mode HTTPS security headers or origin policy failed.');
 
-  console.log('\nSELF-TEST PASSED: V1.7 product history/rules + scheduling + rich multipart email/preview/image safety + guided configuration + encrypted credentials + notification mocks/HMAC/retry queue + operations + safe binds/auth/CSRF + V1.5 migration + backups/restore + updates all work.');
+  console.log('\nSELF-TEST PASSED: V1.7 product history/rules + compact activity detail/server-alert outcomes + scheduling + rich multipart email/preview/image safety + guided configuration + encrypted credentials + notification mocks/HMAC/retry queue + operations + safe binds/auth/CSRF + V1.5 migration + backups/restore + updates all work.');
 } finally {
   await stopServer();
   await new Promise((resolve) => smtpServer.close(resolve));

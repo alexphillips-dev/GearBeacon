@@ -1371,7 +1371,13 @@ function createEvent(type, previous, current, watchedAtDetection) {
   const rule = watchedAtDetection ? watchRule(current.slug, region) : { ...DEFAULT_WATCH_RULE };
   const prices = eventPriceSnapshot(previous, current);
   const alertKind = eventAlertKind(type, previous, current, rule);
-  return {
+  const detectedAt = isoNow();
+  const previousStateSince = previous?.lastChangedAt || previous?.lastSeenAt || previous?.firstDiscoveredAt || null;
+  const previousStateStartedAt = previousStateSince ? new Date(previousStateSince).getTime() : NaN;
+  const previousStateDurationSeconds = Number.isFinite(previousStateStartedAt)
+    ? Math.max(0, Math.round((new Date(detectedAt).getTime() - previousStateStartedAt) / 1000))
+    : null;
+  const event = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     type,
     slug: current.slug,
@@ -1395,9 +1401,14 @@ function createEvent(type, previous, current, watchedAtDetection) {
     url: current.url,
     dashboardUrl: productDashboardUrl(current.slug, region),
     notificationTimeZone: NOTIFICATION_TIME_ZONE,
+    previousStateSince,
+    previousStateDurationSeconds,
     region,
-    detectedAt: isoNow(),
+    detectedAt,
   };
+  const decision = notificationDecision(event);
+  if (!decision.allowed) event.serverAlert = { recordedAt:detectedAt, state:'muted', reason:decision.reason };
+  return event;
 }
 
 async function postJson(url, body, headers = {}) {
@@ -1873,15 +1884,33 @@ function markCooldown(event) {
 function enqueueAlert(event, options = {}) {
   const decision = notificationDecision(event);
   const rule = decision.rule || DEFAULT_WATCH_RULE;
-  if (!decision.allowed || !cooldownAllows(event, rule)) return 0;
+  const rememberPlan = (serverAlert) => {
+    event.serverAlert = { recordedAt:isoNow(), ...serverAlert };
+    const stored = state.events.find((item) => item.id === event.id);
+    if (stored && stored !== event) stored.serverAlert = event.serverAlert;
+    if (stored) saveStateSoon();
+  };
+  if (!decision.allowed) {
+    rememberPlan({ state:'muted', reason:decision.reason });
+    return 0;
+  }
+  if (!cooldownAllows(event, rule)) {
+    rememberPlan({ state:'muted', reason:'cooldown' });
+    return 0;
+  }
   const excluded = new Set(options.excludeChannels || []);
   const channels = CHANNEL_NAMES.filter((channel) => channelConfigured(channel) && !excluded.has(channel));
   const now = isoNow();
   const plan = deliveryPlan(event, rule);
+  if (!channels.length) {
+    rememberPlan({ state:'no-channel', reason:'no-channel', mode:plan.mode, deliverAt:plan.deliverAt, channels:[] });
+    return 0;
+  }
   const insert = db.prepare(`INSERT INTO notification_queue(event_id,region,channel,payload_json,attempts,max_attempts,next_attempt_at,status,last_error,created_at,updated_at)
     VALUES(?,?,?,?,0,?,?,'pending',NULL,?,?) ON CONFLICT(event_id,channel) DO NOTHING`);
   for (const channel of channels) insert.run(event.id, event.region || currentRegion(), channel, JSON.stringify(event), NOTIFICATION_MAX_ATTEMPTS, plan.deliverAt, now, now);
   if (channels.length) {
+    rememberPlan({ state:'queued', reason:'enabled', mode:plan.mode, deliverAt:plan.deliverAt, channels });
     markCooldown(event);
     writeAppLog('info', 'notifications', `Queued ${channels.length} notification delivery job(s).`, { eventId:event.id, region:event.region, channels, delivery:plan });
   }
@@ -1901,6 +1930,48 @@ function notificationQueueSummary() {
   const recentFailures = db.prepare("SELECT id,event_id,region,channel,attempts,max_attempts,last_error,updated_at FROM notification_queue WHERE status='failed' ORDER BY updated_at DESC LIMIT 20").all();
   const next = db.prepare("SELECT next_attempt_at FROM notification_queue WHERE status='pending' ORDER BY next_attempt_at LIMIT 1").get();
   return { ...summary, recentFailures, nextDeliveryAt:next?.next_attempt_at || null };
+}
+
+function eventServerAlertSummary(event, decision, queueRows = [], logRows = []) {
+  const displayChannel = (channel) => channel === 'email' ? 'Email' : channel === 'ntfy' ? 'ntfy' : channel === 'discord' ? 'Discord' : channel === 'gotify' ? 'Gotify' : channel === 'webhook' ? 'Webhook' : channel;
+  const channels = [...new Set([...queueRows, ...logRows].map((row) => row.channel).filter(Boolean))];
+  const channelText = channels.length ? channels.map(displayChannel).join(', ') : '';
+  const currentByChannel = new Map();
+  for (const row of logRows) if (!currentByChannel.has(row.channel)) currentByChannel.set(row.channel, row);
+  for (const row of queueRows) currentByChannel.set(row.channel, row);
+  const currentRows = [...currentByChannel.values()];
+  const statuses = new Set(currentRows.map((row) => row.status));
+  const sentChannels = currentRows.filter((row) => row.status === 'sent').map((row) => row.channel);
+  const failedChannels = currentRows.filter((row) => row.status === 'failed').map((row) => row.channel);
+  if (sentChannels.length && failedChannels.length) return { state:'partial', label:'Partial', detail:`Sent through ${sentChannels.map(displayChannel).join(', ')}; failed through ${failedChannels.map(displayChannel).join(', ')}.`, channels, mode:event.serverAlert?.mode || null, deliverAt:event.serverAlert?.deliverAt || null };
+  if (statuses.has('failed') || (!queueRows.length && failedChannels.length)) return { state:'failed', label:'Failed', detail:`Server delivery failed${channelText ? ` through ${channelText}` : ''}. Open Operations for details.`, channels, mode:event.serverAlert?.mode || null, deliverAt:event.serverAlert?.deliverAt || null };
+  if (statuses.has('processing')) return { state:'sending', label:'Sending', detail:`Sending the server alert${channelText ? ` through ${channelText}` : ''}.`, channels, mode:event.serverAlert?.mode || null, deliverAt:event.serverAlert?.deliverAt || null };
+  if (statuses.has('pending')) {
+    const attempts = Math.max(0, ...queueRows.map((row) => Number(row.attempts) || 0));
+    const mode = event.serverAlert?.mode || null;
+    const label = attempts ? 'Retrying' : mode === 'digest' ? 'Digest' : mode === 'after-quiet-hours' ? 'Quiet hours' : 'Queued';
+    const next = queueRows.map((row) => row.next_attempt_at).filter(Boolean).sort()[0] || event.serverAlert?.deliverAt || null;
+    const explanation = mode === 'digest' ? 'Queued for the daily digest' : mode === 'after-quiet-hours' ? 'Held until quiet hours end' : attempts ? 'Waiting for another delivery attempt' : 'Server alert queued';
+    return { state:attempts ? 'retrying' : mode === 'digest' ? 'digest' : mode === 'after-quiet-hours' ? 'quiet' : 'queued', label, detail:`${explanation}${channelText ? ` through ${channelText}` : ''}.`, channels, mode, deliverAt:next };
+  }
+  if (sentChannels.length || statuses.has('sent')) return { state:'sent', label:'Sent', detail:`Server alert sent${channelText ? ` through ${channelText}` : ''}.`, channels, mode:event.serverAlert?.mode || null, deliverAt:event.serverAlert?.deliverAt || null };
+  if (statuses.has('cancelled')) return { state:'muted', label:'Cancelled', detail:'Server delivery was cancelled because the channel was disabled or incomplete.', channels, mode:event.serverAlert?.mode || null, deliverAt:event.serverAlert?.deliverAt || null };
+
+  const snapshot = event.serverAlert;
+  if (snapshot?.state === 'no-channel') return { state:'no-channel', label:'No channel', detail:'This event matched your alert rules, but no server notification channel was configured.', channels:[], mode:snapshot.mode || null, deliverAt:snapshot.deliverAt || null };
+  const reason = snapshot?.reason || decision.reason;
+  if (!decision.allowed || snapshot?.state === 'muted') {
+    const reasons = {
+      'not-watched':'The product was not watched when this change was detected.',
+      paused:'Alerts for this product were paused when the change was detected.',
+      disabled:'This event type was disabled by your alert rules.',
+      cooldown:'The alert was suppressed by the configured cooldown.',
+      'unsupported-event':'This event type does not send server alerts.',
+    };
+    return { state:'muted', label:reason === 'not-watched' ? 'No alert' : 'Muted', detail:reasons[reason] || 'No server alert was sent for this event.', channels:[], mode:null, deliverAt:null };
+  }
+  if (snapshot?.state === 'queued') return { state:'queued', label:'Alerted', detail:'A server alert was queued when this change was detected; detailed delivery history is no longer available.', channels:snapshot.channels || [], mode:snapshot.mode || null, deliverAt:snapshot.deliverAt || null };
+  return { state:'no-channel', label:'No channel', detail:'No server-side notification delivery was recorded for this event.', channels:[], mode:null, deliverAt:null };
 }
 
 function retryDelaySeconds(attempts) {
@@ -3237,7 +3308,25 @@ async function handleRegionApi(req, res, url) {
 
   if (req.method === 'GET' && url.pathname === '/api/events') {
     const limit = Math.min(250, Math.max(1, Number(url.searchParams.get('limit') || 100)));
-    const events = state.events.slice(-limit).reverse().map((event) => ({ ...event, notificationDecision:notificationDecision(event) }));
+    const recentEvents = state.events.slice(-limit).reverse();
+    const eventIds = recentEvents.map((event) => event.id).filter(Boolean);
+    const queueByEvent = new Map();
+    const logsByEvent = new Map();
+    if (eventIds.length) {
+      const placeholders = eventIds.map(() => '?').join(',');
+      for (const row of db.prepare(`SELECT event_id,channel,status,attempts,max_attempts,next_attempt_at,last_error,updated_at FROM notification_queue WHERE event_id IN (${placeholders})`).all(...eventIds)) {
+        if (!queueByEvent.has(row.event_id)) queueByEvent.set(row.event_id, []);
+        queueByEvent.get(row.event_id).push(row);
+      }
+      for (const row of db.prepare(`SELECT event_id,channel,status,detail,created_at FROM notification_log WHERE event_id IN (${placeholders}) ORDER BY id DESC`).all(...eventIds)) {
+        if (!logsByEvent.has(row.event_id)) logsByEvent.set(row.event_id, []);
+        logsByEvent.get(row.event_id).push(row);
+      }
+    }
+    const events = recentEvents.map((event) => {
+      const decision = notificationDecision(event);
+      return { ...event, notificationDecision:decision, serverAlert:eventServerAlertSummary(event, decision, queueByEvent.get(event.id) || [], logsByEvent.get(event.id) || []) };
+    });
     return sendJson(res, 200, { events, count: events.length });
   }
 

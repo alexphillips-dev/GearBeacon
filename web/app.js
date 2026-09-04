@@ -65,6 +65,77 @@ function relativeTime(iso) {
   if (hr < 24) return `${hr}h ago`;
   return new Date(iso).toLocaleString();
 }
+function humanStatus(value) {
+  const text = String(value || 'Unknown').replace(/([a-z])([A-Z])/g, '$1 $2').replaceAll('_', ' ').replaceAll('-', ' ').trim();
+  return text ? `${text[0].toUpperCase()}${text.slice(1).toLowerCase()}` : 'Unknown';
+}
+function exactEventTime(event) {
+  const date = new Date(event.detectedAt);
+  if (Number.isNaN(date.valueOf())) return String(event.detectedAt || 'Unknown time');
+  const timeZone = event.notificationTimeZone || app.config?.config?.notificationTimeZone;
+  try { return new Intl.DateTimeFormat(undefined, { dateStyle:'full', timeStyle:'long', ...(timeZone ? { timeZone } : {}) }).format(date); }
+  catch { return date.toLocaleString(); }
+}
+function activityDuration(seconds) {
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  if (total < 60) return 'under 1m';
+  const units = [['d',86400],['h',3600],['m',60]];
+  let remaining = total;
+  const parts = [];
+  for (const [label, size] of units) {
+    const amount = Math.floor(remaining / size);
+    if (amount) { parts.push(`${amount}${label}`); remaining -= amount * size; }
+    if (parts.length === 2) break;
+  }
+  return parts.join(' ');
+}
+function activityPriceNumber(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const parsed = Number.parseFloat(String(value || '').replace(/[^0-9,.-]/g, '').replaceAll(',', ''));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+function activityMoney(event, value) {
+  const symbol = String(event.price || event.previousPrice || '$').match(/[^\d\s.,-]+/)?.[0] || '$';
+  return `${symbol}${Math.abs(value).toFixed(2)}`;
+}
+function activityMeta(event) {
+  const parts = [];
+  const previousStatus = humanStatus(event.previousStatus);
+  const currentStatus = humanStatus(event.status);
+  if (event.type === 'restock') parts.push({ text:`${event.previousStatus ? previousStatus : 'Sold out'} → In stock`, className:'event-meta-transition' });
+  else if (event.type === 'sold_out') parts.push({ text:`${event.previousStatus ? previousStatus : 'In stock'} → Sold out`, className:'event-meta-transition' });
+  else if (event.type === 'status_change') parts.push({ text:`${previousStatus} → ${currentStatus}`, className:'event-meta-transition' });
+  else if (event.type === 'price_change') parts.push({ text:`${event.previousPrice || 'Previous price'} → ${event.price || 'New price'}`, className:'event-meta-transition' });
+  else if (event.type === 'new_product') parts.push({ text:'New product discovered', className:'event-meta-transition' });
+  else parts.push({ text:humanStatus(event.type), className:'event-meta-transition' });
+
+  if (event.type !== 'price_change' && event.price) parts.push({ text:event.price, className:'event-meta-price' });
+  if (event.type === 'price_change') {
+    const current = event.priceValue ?? activityPriceNumber(event.price);
+    const previous = event.previousPriceValue ?? activityPriceNumber(event.previousPrice);
+    const difference = event.priceDifference ?? (current !== null && previous !== null ? current - previous : null);
+    const percent = event.priceDifferencePercent ?? (difference !== null && previous ? (difference / previous) * 100 : null);
+    if (difference !== null && Number.isFinite(Number(difference)) && Number(difference) !== 0) {
+      parts.push({ text:`${Number(difference) < 0 ? '↓' : '↑'} ${activityMoney(event, Number(difference))}`, extra:Number.isFinite(Number(percent)) ? `(${Math.abs(Number(percent)).toFixed(1)}%)` : '', className:'event-meta-delta' });
+    }
+    if (event.alertKind === 'target_price') parts.push({ text:'Target reached', className:'event-meta-target' });
+  }
+  if (event.previousStateDurationSeconds !== null && event.previousStateDurationSeconds !== undefined) {
+    const duration = activityDuration(event.previousStateDurationSeconds);
+    const text = event.type === 'restock' ? `Back after ${duration}` : event.type === 'sold_out' ? `Available for ${duration}` : event.type === 'price_change' ? `Price held for ${duration}` : `Previous state for ${duration}`;
+    parts.push({ text, className:'event-meta-duration' });
+  }
+  if ((app.status?.regions?.length || 0) > 1 && event.region) parts.push({ text:String(event.region).toUpperCase(), className:'event-meta-region' });
+  return parts;
+}
+function serverAlertTitle(event) {
+  const alert = event.serverAlert || {};
+  let detail = alert.detail || 'No server-side notification information is available.';
+  if (alert.deliverAt && ['queued', 'retrying', 'digest', 'quiet', 'sending'].includes(alert.state)) {
+    try { detail += ` Scheduled for ${new Date(alert.deliverAt).toLocaleString()}.`; } catch {}
+  }
+  return detail;
+}
 function toast(message) {
   $('toast').textContent = message;
   $('toast').classList.remove('hidden');
@@ -445,12 +516,20 @@ async function saveProductRule(form) {
 }
 
 function renderEvents() {
-  const icon = { restock:'↑', sold_out:'↓', price_change:'$', status_change:'↔' };
-  $('activityList').innerHTML = app.events.map((e) => `<article class="event ${escapeHtml(e.type)}">
-    <div class="event-icon">${icon[e.type] || '•'}</div>
-    <button class="event-product" type="button" data-product-detail="${escapeHtml(e.slug)}"><strong>${escapeHtml(e.name)}</strong><span class="event-meta">${escapeHtml(e.type.replace('_',' '))}${e.price ? ` · ${escapeHtml(e.price)}` : ''}${e.watchedAtDetection ? ' · watched' : ''}</span></button>
-    <time title="${escapeHtml(e.detectedAt)}">${escapeHtml(relativeTime(e.detectedAt))}</time>
-  </article>`).join('');
+  const icon = { restock:'↑', sold_out:'↓', price_change:'$', status_change:'↔', new_product:'+' };
+  $('activityList').innerHTML = app.events.map((e) => {
+    const metadata = activityMeta(e);
+    const metadataText = metadata.map((part) => `${part.text}${part.extra ? ` ${part.extra}` : ''}`).join(' · ');
+    const metadataHtml = metadata.map((part) => `<span class="event-meta-part ${escapeHtml(part.className)}">${escapeHtml(part.text)}${part.extra ? ` <span class="event-delta-percent">${escapeHtml(part.extra)}</span>` : ''}</span>`).join('');
+    const alert = e.serverAlert || { state:'no-channel', label:'No channel' };
+    const exactTime = exactEventTime(e);
+    const activityLabel = `Open ${e.name} activity details. ${metadataText}. Server alert: ${alert.label}. Detected ${exactTime}.`;
+    return `<button class="event event-button ${escapeHtml(e.type)}" type="button" data-product-detail="${escapeHtml(e.slug)}" aria-label="${escapeHtml(activityLabel)}">
+      <span class="event-icon" aria-hidden="true">${icon[e.type] || '•'}</span>
+      <span class="event-main"><strong>${escapeHtml(e.name)}</strong><span class="event-meta" title="${escapeHtml(metadataText)}">${metadataHtml}</span></span>
+      <span class="event-side"><span class="event-alert ${escapeHtml(alert.state)}" title="${escapeHtml(serverAlertTitle(e))}"><span class="event-alert-dot" aria-hidden="true"></span><span class="event-alert-label">${escapeHtml(alert.label)}</span></span><time datetime="${escapeHtml(e.detectedAt)}" title="${escapeHtml(exactTime)}">${escapeHtml(relativeTime(e.detectedAt))}</time></span>
+    </button>`;
+  }).join('');
   $('activityEmpty').classList.toggle('hidden', app.events.length > 0);
 }
 
