@@ -2,7 +2,8 @@
   "name": "gearbeacon-backend",
   "version": "1.4.0",
   "private": true,
-  "description": "GearBeacon V1.4 stock monitor with production notifications, GitHub releases, and cloud-ready health monitoring",
+  "description": "GearBeacon stock monitor with notifications, release integration, and deployment health monitoring",
+  "license": "Apache-2.0",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node --no-warnings dist/index.js",

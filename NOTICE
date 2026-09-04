@@ -1,0 +1,18 @@
+GearBeacon
+Copyright 2026 alexphillips-dev
+
+GearBeacon is an independent project and is not affiliated with or endorsed by
+Ubiquiti Inc. Ubiquiti and UniFi are trademarks of their respective owner.
+
+The stock adapter uses publicly reachable data exposed to the UniFi Store
+frontend. That integration can change without notice. GearBeacon does not
+bypass authentication, rate limits, or anti-bot controls.
+
+GearBeacon can integrate with GitHub Releases, Expo Push, ntfy, and Discord.
+Those external services have their own terms, availability, and configuration
+requirements.
+
+During design, the MIT-licensed open-source project
+"jamesccupps/UnifiStockWatcher" was consulted as a reference for UniFi Store
+behavior. GearBeacon's source code was developed independently rather than
+copied from that project.
