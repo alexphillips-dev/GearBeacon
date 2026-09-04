@@ -2,6 +2,7 @@ const $ = (id) => document.getElementById(id);
 const THEME_KEY = 'gearbeacon.theme';
 const SETTINGS_TAB_KEY = 'gearbeacon.settingsTab';
 const SETTINGS_TABS = ['general', 'notifications', 'data', 'security', 'privacy'];
+const initialDeepLink = new URLSearchParams(location.search);
 
 function applyTheme(theme) {
   const next = theme === 'light' ? 'light' : 'dark';
@@ -25,7 +26,8 @@ applyTheme(localStorage.getItem(THEME_KEY) || 'dark');
 const CATEGORY_ORDER = ['Cloud Gateways', 'Switching', 'WiFi', 'Cameras & Physical Security', 'Door Access', 'Integrations', 'Accessories & Cables', 'Network Storage'];
 const app = {
   auth: null,
-  currentRegion: localStorage.getItem('gearbeacon.region') || null,
+  currentRegion: initialDeepLink.get('region') || localStorage.getItem('gearbeacon.region') || null,
+  pendingProductSlug: initialDeepLink.get('product') || null,
   status: null,
   products: [],
   events: [],
@@ -121,6 +123,12 @@ async function enterApp() {
   await refresh();
   await Promise.all([refreshDataInfo(), refreshNotificationPreferences(), refreshSessions(), refreshConfiguration()]);
   if (!app.auth?.onboardingComplete) showWizard();
+  else if (app.pendingProductSlug && app.products.some((product) => product.slug === app.pendingProductSlug)) {
+    const slug = app.pendingProductSlug;
+    app.pendingProductSlug = null;
+    activateTab('browse');
+    await openProductDialog(slug);
+  }
 }
 
 async function initialize() {
@@ -659,6 +667,15 @@ function renderConfiguration() {
   $('operationalNotificationFailures').checked = c.operationalAlerts?.notificationFailures !== false;
   $('operationalBackupFailures').checked = c.operationalAlerts?.backupFailures !== false;
   $('operationalLowDisk').checked = c.operationalAlerts?.lowDiskSpace !== false;
+  $('emailDetailLevel').value = c.emailDetailLevel || 'standard';
+  $('emailTheme').value = c.emailTheme || 'auto';
+  $('emailSubjectPrefix').value = c.emailSubjectPrefix ?? '[GearBeacon]';
+  $('emailDigestMaxItems').value = c.emailDigestMaxItems || 12;
+  $('emailEmbedImages').checked = c.emailEmbedImages !== false;
+  $('emailExplainReason').checked = c.emailExplainReason !== false;
+  $('emailPriceCalculations').checked = c.emailPriceCalculations !== false;
+  $('emailAppearanceBadge').textContent = `${(c.emailDetailLevel || 'standard')[0].toUpperCase()}${(c.emailDetailLevel || 'standard').slice(1)} · ${(c.emailTheme || 'auto') === 'auto' ? 'Device theme' : c.emailTheme}`;
+  renderEmailPreviewProducts();
   $('deliveryModeBadge').textContent = c.digestEnabled ? `Daily · ${c.digestTime}` : c.quietHoursEnabled ? `Quiet ${c.quietHoursStart}–${c.quietHoursEnd}` : c.notificationGroupSeconds ? `Grouped ${c.notificationGroupSeconds}s` : 'Immediate';
   $('configRestartBadge').classList.toggle('hidden', !app.config.restartPending);
   const form = $('channelConfigForm');
@@ -701,6 +718,27 @@ function deliveryConfigFromSettings() {
   return { ...app.config.config, notificationTimeZone:$('configTimeZone').value.trim(), notificationCooldownMinutes:Number($('configCooldownMinutes').value), notificationMaxAttempts:Number($('configMaxAttempts').value), notificationGroupSeconds:Number($('configGroupSeconds').value), quietHoursEnabled:$('configQuietEnabled').checked, quietHoursStart:$('configQuietStart').value, quietHoursEnd:$('configQuietEnd').value, digestEnabled:$('configDigestEnabled').checked, digestTime:$('configDigestTime').value, operationalAlerts:{ monitorFailures:$('operationalMonitorFailures').checked, notificationFailures:$('operationalNotificationFailures').checked, backupFailures:$('operationalBackupFailures').checked, lowDiskSpace:$('operationalLowDisk').checked } };
 }
 
+function emailConfigFromSettings() {
+  return {
+    ...app.config.config,
+    emailDetailLevel:$('emailDetailLevel').value,
+    emailTheme:$('emailTheme').value,
+    emailSubjectPrefix:$('emailSubjectPrefix').value,
+    emailDigestMaxItems:Number($('emailDigestMaxItems').value),
+    emailEmbedImages:$('emailEmbedImages').checked,
+    emailExplainReason:$('emailExplainReason').checked,
+    emailPriceCalculations:$('emailPriceCalculations').checked,
+  };
+}
+
+function renderEmailPreviewProducts() {
+  const select = $('emailPreviewProduct');
+  if (!select) return;
+  const selected = select.value;
+  const products = [...app.products].sort((a, b) => Number(b.watched) - Number(a.watched) || a.name.localeCompare(b.name));
+  select.innerHTML = products.length ? products.map((product) => `<option value="${escapeHtml(product.slug)}" ${product.slug === selected ? 'selected' : ''}>${escapeHtml(product.name)}${product.watched ? ' · watched' : ''}</option>`).join('') : '<option value="">Example product</option>';
+}
+
 async function saveConfigurationSection(config, resultEl, successMessage) {
   const result = await api('/api/config', { method:'PUT', body:JSON.stringify({ config }) });
   app.config = { ...app.config, config:result.config, secretsConfigured:result.secretsConfigured, restartPending:result.restartRequired };
@@ -740,6 +778,57 @@ async function saveDeliveryConfiguration(event) {
   try { await saveConfigurationSection(deliveryConfigFromSettings(), resultEl, 'Delivery settings saved.'); toast('Delivery settings saved'); }
   catch (err) { resultEl.classList.remove('hidden'); resultEl.textContent = err.message; }
   finally { if (button) { button.disabled = false; button.textContent = 'Save delivery settings'; } }
+}
+
+async function saveEmailConfiguration(event) {
+  event.preventDefault();
+  const resultEl = $('emailAppearanceResult');
+  const button = event.submitter;
+  if (button) { button.disabled = true; button.textContent = 'Saving…'; }
+  try {
+    await saveConfigurationSection(emailConfigFromSettings(), resultEl, 'Email appearance saved.');
+    toast('Email appearance saved');
+  } catch (err) { resultEl.classList.remove('hidden'); resultEl.textContent = err.message; }
+  finally { if (button) { button.disabled = false; button.textContent = 'Save email appearance'; } }
+}
+
+function previewEmail() {
+  const button = $('previewEmail');
+  const frame = $('emailPreviewFrame');
+  const canvas = $('emailPreviewCanvas');
+  const status = $('emailPreviewStatus');
+  const params = new URLSearchParams({
+    region:app.currentRegion || 'us',
+    slug:$('emailPreviewProduct').value,
+    eventType:$('emailPreviewType').value,
+    theme:$('emailTheme').value,
+    detailLevel:$('emailDetailLevel').value,
+    subjectPrefix:$('emailSubjectPrefix').value,
+    digestMaxItems:$('emailDigestMaxItems').value,
+    explainReason:$('emailExplainReason').checked ? '1' : '0',
+    priceCalculations:$('emailPriceCalculations').checked ? '1' : '0',
+    preview:String(Date.now()),
+  });
+  button.disabled = true; button.textContent = 'Rendering…';
+  canvas.classList.toggle('mobile', $('emailPreviewViewport').value === 'mobile');
+  canvas.classList.remove('hidden'); status.classList.add('hidden');
+  frame.onload = () => { button.disabled = false; button.textContent = 'Preview email'; };
+  frame.onerror = () => { button.disabled = false; button.textContent = 'Preview email'; status.textContent = 'The email preview could not be rendered.'; status.classList.remove('hidden'); canvas.classList.add('hidden'); };
+  frame.src = `/api/notifications/email-preview?${params}`;
+}
+
+async function sendTestEmail() {
+  const button = $('sendTestEmail');
+  const resultEl = $('emailAppearanceResult');
+  button.disabled = true; button.textContent = 'Sending…';
+  try {
+    const result = await api('/api/notifications/test', { method:'POST', body:JSON.stringify({ channel:'email' }) });
+    const outcome = result.outcomes?.[0];
+    if (!outcome?.ok) throw new Error(outcome?.error || 'Email is disabled or SMTP settings are incomplete.');
+    resultEl.classList.remove('hidden'); resultEl.innerHTML = '<strong>Test email sent.</strong> Check the configured SMTP recipient inbox.';
+    toast('Test email sent');
+  } catch (err) { resultEl.classList.remove('hidden'); resultEl.textContent = `Test email failed: ${err.message}`; }
+  finally { button.disabled = false; button.textContent = 'Send test email'; }
 }
 
 async function previewDelivery() {
@@ -1063,7 +1152,7 @@ async function refresh() {
     app.products = products.products || [];
     maybeBrowserNotify(events.events || []);
     app.events = events.events || [];
-    renderStatus(); renderProducts(); renderEvents(); renderSettings();
+    renderStatus(); renderProducts(); renderEvents(); renderSettings(); renderEmailPreviewProducts();
   } catch (err) {
     if (/Region must be one of/i.test(err.message) && app.currentRegion) {
       app.currentRegion = null;
@@ -1224,6 +1313,10 @@ $('appConfigForm').addEventListener('submit', saveAppConfiguration);
 $('dataScheduleForm').addEventListener('submit', saveDataConfiguration);
 $('notificationDeliveryForm').addEventListener('submit', saveDeliveryConfiguration);
 $('previewDelivery').addEventListener('click', previewDelivery);
+$('emailAppearanceForm').addEventListener('submit', saveEmailConfiguration);
+$('previewEmail').addEventListener('click', previewEmail);
+$('sendTestEmail').addEventListener('click', sendTestEmail);
+$('emailPreviewViewport').addEventListener('change', () => $('emailPreviewCanvas').classList.toggle('mobile', $('emailPreviewViewport').value === 'mobile'));
 $('channelConfigForm').addEventListener('submit', (event) => { event.preventDefault(); saveChannelConfiguration(); });
 $('saveChannels').addEventListener('click', saveChannelConfiguration);
 $('refreshOperations').addEventListener('click', refreshOperations);

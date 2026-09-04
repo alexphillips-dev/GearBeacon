@@ -8,12 +8,14 @@ import net from 'node:net';
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 
 const projectRoot = fileURLToPath(new URL('..', import.meta.url));
 const testRoot = await mkdtemp(join(tmpdir(), 'gearbeacon-v17-test-'));
 let child = null;
 let base = '';
 let smtpMessages = 0;
+const smtpBodies = [];
 const notificationRequests = { ntfy: 0, discord: 0, gotify: 0, webhook: 0, webhookSigned: false };
 const webhookHmacSecret = 'v17-test-hmac-signing-secret';
 const notificationServer = http.createServer((req, res) => {
@@ -40,6 +42,7 @@ const notificationBase = `http://127.0.0.1:${notificationPort}`;
 const smtpServer = net.createServer((socket) => {
   let buffer = '';
   let inData = false;
+  let dataLines = [];
   socket.write('220 GearBeacon test SMTP\r\n');
   socket.on('error', () => {});
   socket.on('data', (chunk) => {
@@ -49,10 +52,11 @@ const smtpServer = net.createServer((socket) => {
       const line = buffer.slice(0, index + 1).replace(/\r?\n$/, '');
       buffer = buffer.slice(index + 1);
       if (inData) {
-        if (line === '.') { inData = false; smtpMessages += 1; socket.write('250 queued\r\n'); }
+        if (line === '.') { inData = false; smtpMessages += 1; smtpBodies.push(dataLines.join('\r\n')); dataLines = []; socket.write('250 queued\r\n'); }
+        else dataLines.push(line.startsWith('..') ? line.slice(1) : line);
       } else if (/^EHLO /i.test(line)) socket.write('250-test.local\r\n250 8BITMIME\r\n');
       else if (/^(MAIL FROM|RCPT TO):/i.test(line)) socket.write('250 accepted\r\n');
-      else if (line === 'DATA') { inData = true; socket.write('354 send message\r\n'); }
+      else if (line === 'DATA') { inData = true; dataLines = []; socket.write('354 send message\r\n'); }
       else if (line === 'QUIT') { socket.write('221 bye\r\n'); socket.end(); }
       else socket.write('500 unsupported\r\n');
     }
@@ -60,6 +64,14 @@ const smtpServer = net.createServer((socket) => {
 });
 await new Promise((resolve, reject) => { smtpServer.listen(0, '127.0.0.1', resolve); smtpServer.once('error', reject); });
 const smtpPort = smtpServer.address().port;
+const require = createRequire(import.meta.url);
+const { renderEmail, validInlineImageUrl } = require('../backend/dist/email.js');
+
+function decodedMimePart(raw, type) {
+  const escaped = type.replace('/', '\\/');
+  const match = raw.match(new RegExp(`Content-Type: ${escaped}; charset=UTF-8\\r\\nContent-Transfer-Encoding: base64\\r\\n\\r\\n([A-Za-z0-9+/=\\r\\n]+)`));
+  return match ? Buffer.from(match[1].replace(/\s/g, ''), 'base64').toString('utf8') : '';
+}
 
 function startServer(port, dataDir, extraEnv = {}) {
   base = `http://127.0.0.1:${port}`;
@@ -220,7 +232,9 @@ try {
   await request('/api/mock/toggle/uvc-ai-turret?region=us', { method: 'POST' });
   await request('/api/check?region=us', { method: 'POST' });
   const events = await request('/api/events?limit=20&region=us');
-  if (!events.events.some((event) => event.slug === 'u7-pro-xgs' && event.type === 'restock' && event.watchedAtDetection)) throw new Error('Watched restock event was not generated.');
+  const restockEvent = events.events.find((event) => event.slug === 'u7-pro-xgs' && event.type === 'restock' && event.watchedAtDetection);
+  if (!restockEvent) throw new Error('Watched restock event was not generated.');
+  if (!restockEvent.imageUrl || restockEvent.alertKind !== 'restock' || !restockEvent.triggerReason || !restockEvent.notificationTimeZone || restockEvent.priceValue === undefined || !Object.hasOwn(restockEvent, 'priceDifferencePercent')) throw new Error('Queued alert snapshot is missing immutable email details.');
 
   const preferences = await request('/api/notifications/preferences?region=us', {
     method: 'PUT',
@@ -229,6 +243,11 @@ try {
   if (!preferences.preferences.soldOut || !preferences.preferences.newProduct) throw new Error('Notification preferences did not save.');
   const notificationTest = await request('/api/notifications/test?region=us', { method: 'POST' });
   if (!notificationTest.outcomes.every((outcome) => outcome.ok) || smtpMessages < 1) throw new Error('One or more notification mock deliveries failed.');
+  const testMime = smtpBodies.at(-1) || '';
+  const testHtml = decodedMimePart(testMime, 'text/html');
+  const testText = decodedMimePart(testMime, 'text/plain');
+  if (!/multipart\/related/i.test(testMime) || !/multipart\/alternative/i.test(testMime) || !/Message-ID: <[^>]+>/i.test(testMime) || !/Content-ID: <gearbeacon-logo>/i.test(testMime)) throw new Error('SMTP email is missing MIME alternatives, inline branding, or Message-ID.');
+  if (!/Email is working/i.test(testHtml) || !/Why you received this/i.test(testHtml) || !/Email is working/i.test(testText) || /<script/i.test(testHtml)) throw new Error('SMTP HTML/plain-text test content is incomplete or unsafe.');
   const individualTest = await request('/api/notifications/test?region=us', { method:'POST', body:JSON.stringify({ channel:'webhook' }) });
   if (individualTest.outcomes.length !== 1 || individualTest.outcomes[0].channel !== 'webhook' || !individualTest.outcomes[0].ok) throw new Error('Individual notification-channel testing failed.');
   if (!notificationRequests.ntfy || !notificationRequests.discord || !notificationRequests.gotify || !notificationRequests.webhook || !notificationRequests.webhookSigned) throw new Error('Notification HTTP mocks or generic webhook HMAC signing failed.');
@@ -243,6 +262,12 @@ try {
   if (!retried) throw new Error('Failed webhook delivery did not enter exponential retry state.');
   const groupedDelivery = await request('/api/notifications/log?limit=100');
   if (!groupedDelivery.notifications.some((row) => row.status === 'sent' && /grouped 2/.test(row.detail || ''))) throw new Error('Notification grouping did not combine nearby events.');
+  let groupedEmail = null;
+  for (let attempt = 0; attempt < 80 && !groupedEmail; attempt += 1) {
+    groupedEmail = smtpBodies.map((raw) => ({ raw, html:decodedMimePart(raw, 'text/html'), text:decodedMimePart(raw, 'text/plain') })).find((message) => /U7 Pro XGS/.test(message.html) && /AI Turret/.test(message.html));
+    if (!groupedEmail) await delay(200);
+  }
+  if (!groupedEmail || !/GearBeacon digest/i.test(groupedEmail.text) || (!/Content-ID: <product-/i.test(groupedEmail.raw) && !/IMAGE UNAVAILABLE/i.test(groupedEmail.html))) throw new Error('Grouped email digest, text alternative, or product-image fallback is incomplete.');
   const savedRules = await request('/api/watch/u7-pro-xgs/rules?region=us', {
     method:'PUT', body:JSON.stringify({ rule:{ restock:true, soldOut:false, priceChange:true, statusChange:false, priceDropOnly:true, targetPrice:250, immediateRestock:true } }),
   });
@@ -255,10 +280,24 @@ try {
     notificationTimeZone:'UTC', quietHoursEnabled:false, quietHoursStart:'22:00', quietHoursEnd:'07:00',
     digestEnabled:false, digestTime:'09:00', notificationCooldownMinutes:7, historyRetentionDays:400,
     operationalAlerts:{ monitorFailures:true, notificationFailures:true, backupFailures:true, lowDiskSpace:true },
+    emailDetailLevel:'detailed', emailTheme:'dark', emailSubjectPrefix:'[GB Test]', emailDigestMaxItems:3,
+    emailEmbedImages:true, emailExplainReason:true, emailPriceCalculations:true,
   } }) });
-  if (schedulingSave.config.notificationTimeZone !== 'UTC' || schedulingSave.config.notificationCooldownMinutes !== 7 || schedulingSave.config.historyRetentionDays !== 400 || !schedulingSave.config.operationalAlerts.lowDiskSpace) throw new Error('V1.7 delivery or retention settings did not save.');
+  if (schedulingSave.config.notificationTimeZone !== 'UTC' || schedulingSave.config.notificationCooldownMinutes !== 7 || schedulingSave.config.historyRetentionDays !== 400 || !schedulingSave.config.operationalAlerts.lowDiskSpace || schedulingSave.config.emailDetailLevel !== 'detailed' || schedulingSave.config.emailDigestMaxItems !== 3 || schedulingSave.config.emailSubjectPrefix !== '[GB Test]') throw new Error('V1.7 delivery, email, or retention settings did not save.');
+  await fetchJson('/api/config/validate', { method:'POST', body:JSON.stringify({ ...schedulingSave.config, emailSubjectPrefix:'[GearBeacon]\r\nBcc: attacker@example.test' }) }, 400);
   const deliveryPreview = await request('/api/notifications/preview?region=us&slug=u7-pro-xgs&eventType=restock');
-  if (deliveryPreview.decision?.allowed !== true || deliveryPreview.delivery?.mode !== 'immediate-restock' || deliveryPreview.delivery?.timeZone !== 'UTC' || !deliveryPreview.copy?.title) throw new Error('Notification delivery preview did not honor the product rule.');
+  if (deliveryPreview.decision?.allowed !== true || deliveryPreview.delivery?.mode !== 'immediate-restock' || deliveryPreview.delivery?.timeZone !== 'UTC' || !deliveryPreview.copy?.title || !/^\[GB Test\]/.test(deliveryPreview.email?.subject || '') || !/Why you received this/i.test(deliveryPreview.email?.text || '')) throw new Error('Notification delivery or email preview did not honor saved settings.');
+  for (const type of ['restock','target_price','price_drop','sold_out','status_change','new_product','operational','test','digest']) {
+    const response = await fetch(`${base}/api/notifications/email-preview?region=us&slug=u7-pro-xgs&eventType=${type}&theme=light&detailLevel=detailed&digestMaxItems=3`);
+    const html = await response.text();
+    if (!response.ok || !/<!doctype html>/i.test(html) || !/GearBeacon/i.test(html) || /<script/i.test(html)) throw new Error(`Email preview failed for ${type}.`);
+    if (response.headers.get('x-frame-options')) throw new Error('Email preview cannot be framed by its authenticated Settings page.');
+    if (!/frame-ancestors 'self'/.test(response.headers.get('content-security-policy') || '')) throw new Error('Email preview CSP is not restricted to the GearBeacon origin.');
+    if (type === 'digest' && (!/And 3 more updates not shown/i.test(html) || (html.match(/U7 Pro XGS/g) || []).length !== 2)) throw new Error('Digest preview did not enforce maximum items and product deduplication.');
+  }
+  if (!validInlineImageUrl('https://images.svc.ui.com/product.png') || validInlineImageUrl('https://images.svc.ui.com.attacker.test/product.png') || validInlineImageUrl('http://images.svc.ui.com/product.png')) throw new Error('Inline email image host/protocol allowlist is unsafe.');
+  const escapedEmail = renderEmail({ type:'restock', name:'<script>alert(1)</script>', slug:'unsafe', region:'us', detectedAt:new Date().toISOString(), url:'javascript:alert(1)' }, { subjectPrefix:'[Test]', regions:{ us:{ label:'United States' } }, logoSource:'/assets/icon.png' });
+  if (escapedEmail.html.includes('<script>alert(1)</script>') || escapedEmail.html.includes('javascript:') || !escapedEmail.html.includes('&lt;script&gt;')) throw new Error('Email renderer did not escape untrusted content or reject unsafe links.');
   const utcNow = new Date();
   const quietStart = `${String(utcNow.getUTCHours()).padStart(2, '0')}:${String(utcNow.getUTCMinutes()).padStart(2, '0')}`;
   const quietEndDate = new Date(utcNow.getTime() + 5 * 60000);
@@ -397,7 +436,7 @@ try {
   const proxyStatus = await fetchJson('/api/status', { headers:{ Cookie:proxyCookie, Origin:'https://gearbeacon.test', 'X-Forwarded-Proto':'https', 'X-Forwarded-Host':'gearbeacon.test' } }, 200);
   if (proxyStatus.response.headers.get('strict-transport-security') == null || proxyStatus.response.headers.get('access-control-allow-origin') !== 'https://gearbeacon.test') throw new Error('Proxy-mode HTTPS security headers or origin policy failed.');
 
-  console.log('\nSELF-TEST PASSED: V1.7 product history/rules + scheduling + guided configuration + encrypted credentials + notification mocks/HMAC/retry queue + operations + safe binds/auth/CSRF + V1.5 migration + backups/restore + updates all work.');
+  console.log('\nSELF-TEST PASSED: V1.7 product history/rules + scheduling + rich multipart email/preview/image safety + guided configuration + encrypted credentials + notification mocks/HMAC/retry queue + operations + safe binds/auth/CSRF + V1.5 migration + backups/restore + updates all work.');
 } finally {
   await stopServer();
   await new Promise((resolve) => smtpServer.close(resolve));

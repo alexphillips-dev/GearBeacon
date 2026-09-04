@@ -229,6 +229,35 @@
           <div id="deliveryResult" class="settings-result hidden"></div>
         </article>
         <article class="settings-card wide-card">
+          <div class="settings-card-head"><div><span class="settings-kicker">Email design</span><h3>Email appearance & preview</h3></div><span id="emailAppearanceBadge" class="settings-badge">Standard</span></div>
+          <p>Control how much detail email includes, safely embed product images, and preview the exact template GearBeacon sends through SMTP.</p>
+          <form id="emailAppearanceForm" class="config-form">
+            <div class="form-row">
+              <label class="field"><span>Detail level</span><select id="emailDetailLevel"><option value="compact">Compact</option><option value="standard">Standard</option><option value="detailed">Detailed</option></select></label>
+              <label class="field"><span>Color theme</span><select id="emailTheme"><option value="auto">Match device</option><option value="dark">Dark</option><option value="light">Light</option></select></label>
+              <label class="field"><span>Subject prefix</span><input id="emailSubjectPrefix" maxlength="60" placeholder="[GearBeacon]" /></label>
+              <label class="field"><span>Maximum digest items</span><input id="emailDigestMaxItems" type="number" min="1" max="50" /></label>
+            </div>
+            <div class="inline-checks email-options">
+              <label><input id="emailEmbedImages" type="checkbox" /> Embed product images in email</label>
+              <label><input id="emailExplainReason" type="checkbox" /> Explain why the alert was sent</label>
+              <label><input id="emailPriceCalculations" type="checkbox" /> Show savings and price changes</label>
+            </div>
+            <div class="settings-actions wrap"><button class="primary" type="submit">Save email appearance</button><button id="sendTestEmail" type="button">Send test email</button></div>
+          </form>
+          <div id="emailAppearanceResult" class="settings-result hidden"></div>
+          <div class="email-preview-panel">
+            <div class="email-preview-toolbar">
+              <label class="field"><span>Preview product</span><select id="emailPreviewProduct"></select></label>
+              <label class="field"><span>Alert type</span><select id="emailPreviewType"><option value="restock">Back in stock</option><option value="target_price">Target price reached</option><option value="price_drop">Price drop</option><option value="sold_out">Sold out</option><option value="status_change">Status changed</option><option value="new_product">New product</option><option value="digest">Daily digest</option><option value="operational">Operational alert</option><option value="test">Test email</option></select></label>
+              <label class="field"><span>Preview width</span><select id="emailPreviewViewport"><option value="desktop">Desktop</option><option value="mobile">Mobile</option></select></label>
+              <button id="previewEmail" type="button">Preview email</button>
+            </div>
+            <div id="emailPreviewStatus" class="email-preview-status">Choose an alert and select Preview email.</div>
+            <div id="emailPreviewCanvas" class="email-preview-canvas hidden"><iframe id="emailPreviewFrame" title="GearBeacon email preview" loading="lazy"></iframe></div>
+          </div>
+        </article>
+        <article class="settings-card wide-card">
           <div class="settings-card-head"><div><span class="settings-kicker">Encrypted locally</span><h3>Notification channels</h3></div><span id="secretKeyBadge" class="settings-badge">Separate key file</span></div>
           <p>Leave a secret blank to keep the saved value; enter an empty value after choosing “clear” to remove it. Test buttons send only through that channel.</p>
           <form id="channelConfigForm" class="channel-config"></form>

@@ -193,7 +193,30 @@ try {
 
   await evaluate("document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabNotifications').click()");
   await waitForBrowser("!document.getElementById('settingsPanelNotifications').hidden && document.getElementById('settingsPanelData').hidden", 'Notification settings tab failed');
-  await evaluate("document.getElementById('settingsTabData').click()");
+  await waitForBrowser("document.getElementById('emailPreviewProduct').options.length >= 5", 'Email preview products did not load');
+  await evaluate(`(() => {
+    document.getElementById('emailDetailLevel').value='detailed';
+    document.getElementById('emailTheme').value='light';
+    document.getElementById('emailSubjectPrefix').value='[Browser Test]';
+    document.getElementById('emailDigestMaxItems').value='4';
+    document.getElementById('emailAppearanceForm').requestSubmit();
+  })()`);
+  await waitForBrowser("app.config?.config?.emailDetailLevel === 'detailed' && app.config?.config?.emailSubjectPrefix === '[Browser Test]' && app.config?.config?.emailDigestMaxItems === 4", 'Email appearance settings did not save');
+  await evaluate(`(() => {
+    document.getElementById('emailPreviewProduct').value='u7-pro-xgs';
+    document.getElementById('emailPreviewType').value='target_price';
+    document.getElementById('emailPreviewViewport').value='mobile';
+    document.getElementById('previewEmail').click();
+  })()`);
+  await waitForBrowser("document.getElementById('emailPreviewFrame').contentDocument?.body?.innerText.includes('PRICE TARGET') && document.getElementById('emailPreviewCanvas').classList.contains('mobile') && getComputedStyle(document.getElementById('emailPreviewFrame').contentDocument.body).backgroundColor === 'rgb(242, 244, 246)'", 'Mobile light email preview did not render');
+  await evaluate(`(() => { document.getElementById('emailTheme').value='dark'; document.getElementById('emailPreviewType').value='digest'; document.getElementById('emailPreviewViewport').value='desktop'; document.getElementById('previewEmail').click(); })()`);
+  await waitForBrowser("document.getElementById('emailPreviewFrame').contentDocument?.body?.innerText.includes('GEARBEACON DIGEST') && !document.getElementById('emailPreviewCanvas').classList.contains('mobile') && getComputedStyle(document.getElementById('emailPreviewFrame').contentDocument.body).backgroundColor === 'rgb(13, 16, 18)'", 'Desktop dark digest preview did not render');
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width:390, height:844, screenWidth:390, screenHeight:844, deviceScaleFactor:1, mobile:false });
+  assert(await evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1 && getComputedStyle(document.querySelector('.email-preview-toolbar')).gridTemplateColumns.split(' ').length === 1"), 'Email appearance settings overflow at a 390px viewport.');
+  await cdp.send('Emulation.clearDeviceMetricsOverride');
+  await evaluate(`location.href=${JSON.stringify(`${baseUrl}/?region=us&product=u7-pro-xgs#browse`)}`);
+  await waitForBrowser("!document.getElementById('productDialog').classList.contains('hidden') && document.getElementById('productDialogTitle').textContent === 'U7 Pro XGS' && document.getElementById('browse').classList.contains('active')", 'Authenticated email product deep link did not open the matching product');
+  await evaluate("document.getElementById('closeProductDialog').click(); document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabData').click()");
   await waitForBrowser("!document.getElementById('settingsPanelData').hidden && document.getElementById('settingsPanelNotifications').hidden", 'Data settings tab failed');
   const browserBackup = await evaluate(`(async () => {
     const backup = await api('/api/data/export/encrypted', { method:'POST', body:JSON.stringify({ passphrase:'browser backup passphrase' }) });
@@ -217,7 +240,7 @@ try {
   await evaluate("document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabSecurity').click()");
   await waitForBrowser("document.querySelectorAll('#sessionList [data-revoke-session]').length >= 1", 'Authenticated session management did not render');
 
-  console.log(`BROWSER SMOKE PASSED: ${process.platform} · setup/auth · dark/light · images · search/category/load-more · watch/rules/bulk · settings · backup/import · operations · responsive`);
+  console.log(`BROWSER SMOKE PASSED: ${process.platform} · setup/auth · dark/light · images · search/category/load-more · watch/rules/bulk · email settings/preview/deep-link · backup/import · operations · responsive`);
 } catch (error) {
   if (serverOutput.length) process.stderr.write(`\nGearBeacon server output:\n${serverOutput.join('').slice(-12000)}\n`);
   throw error;

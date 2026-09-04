@@ -2,6 +2,10 @@
 
 ## V1.7.0 — Watch intelligence and alert control
 
+- Rebuilt SMTP notifications as responsive, event-specific HTML emails with equivalent plain-text parts, inline branding, secure optional product-image embedding, unique message IDs, and graceful image fallbacks.
+- Added dedicated restock, target-price, price-drop, sellout, status-change, new-product, digest, operational, and test-email presentations with captured detection-time details and price calculations.
+- Added email appearance settings for density, theme, subject prefix, explanations, price calculations, embedded images, and digest limits, plus same-renderer desktop/mobile previews and email-only test delivery.
+- Added private dashboard product deep links from email and immutable alert snapshots so queued messages retain product imagery, trigger reason, targets, prices, status, timezone, and original links.
 - Added product detail drawers with a larger image, price and availability, SKU, store link, first-seen and last-change times, price history, and recent changes.
 - Added change-only product observations in SQLite with configurable retention, automatic pruning, and encrypted export/import support.
 - Added per-product alert rules for restocks, sellouts, price/status changes, price drops, target prices, immediate restocks, and temporary or indefinite pauses.

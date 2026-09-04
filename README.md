@@ -128,7 +128,11 @@ Each watched product can inherit those global event choices or override them. Pr
 
 Normal events are written to a persistent SQLite queue before delivery. Failed attempts use exponential backoff up to the configured limit. Operations shows pending/delivered/failed counts, failure reasons, and an owner-controlled retry action. The optional grouping window combines nearby events for the same region and channel.
 
-SMTP port 465 uses implicit TLS. Other SMTP ports require STARTTLS by default, and credentials are never sent on an unencrypted connection. Certificate validation is enabled by default.
+SMTP email uses responsive, event-specific HTML with a matching plain-text alternative. Restocks, price targets and drops, sellouts, status changes, new products, operational issues, tests, and grouped digests each have a focused layout. Product details are captured when the event is queued, so delayed alerts describe what GearBeacon actually detected. When a public URL is configured, email can link directly back to the matching product in the private dashboard.
+
+Email appearance controls in Settings offer compact, standard, or detailed layouts; device, light, or dark themes; subject prefixes; price calculations; alert explanations; digest limits; and a desktop/mobile preview rendered by the same code used for SMTP. Product images are embedded inline by default from an exact Ubiquiti host allowlist with strict timeout, content-type, and size limits. Image failures fall back cleanly and never prevent the alert from being sent. Messages contain no tracking pixels, scripts, remote fonts, or analytics.
+
+SMTP port 465 uses implicit TLS. Other SMTP ports require STARTTLS by default, and credentials are never sent on an unencrypted connection. Certificate validation is enabled by default. Messages use `multipart/alternative` for HTML and text, `multipart/related` for inline images, and a unique `Message-ID`.
 
 Generic webhooks receive JSON and, when a signing secret is configured, these headers:
 
@@ -192,6 +196,13 @@ Browser-saved settings are intended for most owners. Environment values seed new
 | `SMTP_REJECT_UNAUTHORIZED` | `1` | Validate SMTP certificate |
 | `SMTP_USER` / `SMTP_PASSWORD` | blank | SMTP credentials |
 | `SMTP_FROM` / `SMTP_TO` | blank | Sender and recipients |
+| `GEARBEACON_EMAIL_DETAIL_LEVEL` | `standard` | `compact`, `standard`, or `detailed` email layout |
+| `GEARBEACON_EMAIL_EMBED_IMAGES` | `1` | Embed allowlisted product images as inline attachments |
+| `GEARBEACON_EMAIL_EXPLAIN_REASON` | `1` | Include why each alert was sent |
+| `GEARBEACON_EMAIL_PRICE_CALCULATIONS` | `1` | Show savings or price-increase math |
+| `GEARBEACON_EMAIL_DIGEST_MAX_ITEMS` | `12` | Maximum unique products shown per digest, 1–50 |
+| `GEARBEACON_EMAIL_SUBJECT_PREFIX` | `[GearBeacon]` | Optional subject prefix, up to 60 characters |
+| `GEARBEACON_EMAIL_THEME` | `auto` | `auto`, `light`, or `dark` email colors |
 | `GEARBEACON_BUILD_COMMIT` / `GEARBEACON_IMAGE` | blank | Build provenance shown in Operations |
 | `GEARBEACON_GITHUB_RELEASE_API` | project releases | Manual update source; blank disables |
 | `GEARBEACON_UPDATE_MANIFEST_URL` | blank | Custom update channel |

@@ -16,12 +16,20 @@ const packageName = `GearBeacon-v${pkg.version}-${platform}-${arch}`;
 const outputDir = join(root, 'dist', 'standalone', packageName);
 const executableName = process.platform === 'win32' ? 'GearBeacon.exe' : 'gearbeacon';
 const executable = join(outputDir, executableName);
+const bundledMainFile = join(tmpdir(), `gearbeacon-standalone-main-${process.pid}.cjs`);
+
+const indexSource = readFileSync(join(root, 'backend', 'dist', 'index.js'), 'utf8');
+const emailSource = readFileSync(join(root, 'backend', 'dist', 'email.js'), 'utf8');
+const emailRequire = "const { renderEmail, buildMimeEmail } = require('./email');";
+if (!indexSource.includes(emailRequire)) throw new Error('Standalone bundling could not find the GearBeacon email module import.');
+const bundledSource = indexSource.replace(emailRequire, `const { renderEmail, buildMimeEmail } = (() => {\n  const module = { exports: {} };\n  const exports = module.exports;\n${emailSource}\n  return module.exports;\n})();`);
+writeFileSync(bundledMainFile, bundledSource);
 
 rmSync(outputDir, { recursive: true, force: true });
 mkdirSync(outputDir, { recursive: true });
 const seaConfigFile = join(tmpdir(), `gearbeacon-sea-${process.pid}.json`);
 writeFileSync(seaConfigFile, JSON.stringify({
-  main: join(root, 'backend', 'dist', 'index.js'),
+  main: bundledMainFile,
   mainFormat: 'commonjs',
   executable: process.execPath,
   output: executable,
@@ -34,6 +42,7 @@ writeFileSync(seaConfigFile, JSON.stringify({
 
 const build = spawnSync(process.execPath, ['--build-sea', seaConfigFile], { cwd: root, stdio: 'inherit' });
 rmSync(seaConfigFile, { force: true });
+rmSync(bundledMainFile, { force: true });
 if (build.status !== 0 || !existsSync(executable)) throw new Error(`Node SEA build failed with exit code ${build.status}.`);
 if (process.platform === 'darwin') {
   const signing = spawnSync('codesign', ['--sign', '-', '--force', executable], { stdio:'inherit' });
