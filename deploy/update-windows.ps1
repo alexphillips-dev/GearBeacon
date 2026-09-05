@@ -2,7 +2,7 @@
 param([Parameter(Mandatory=$true)][string]$Version, [string]$InstallDir = "$env:ProgramFiles\GearBeacon", [switch]$BackupConfirmed)
 $ErrorActionPreference = 'Stop'
 if (-not $BackupConfirmed) { throw 'Use Prepare safe update in GearBeacon first, then rerun with -BackupConfirmed.' }
-if ($Version -notmatch '^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$') { throw 'Version must be a release version such as 0.1.10.' }
+if ($Version -notmatch '^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$') { throw 'Version must be a release version such as 1.0.0.' }
 $InstallDir = [IO.Path]::GetFullPath($InstallDir)
 if ((Split-Path $InstallDir -Leaf) -ne 'GearBeacon') { throw 'InstallDir must resolve to a GearBeacon directory.' }
 $arch = 'x64'

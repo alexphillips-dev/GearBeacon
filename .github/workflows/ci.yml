@@ -30,7 +30,7 @@ jobs:
         run: |
           npm run build
           npm run check
-      - name: Fresh install, V1.5-V1.7 upgrades, reliability, recovery and integration tests
+      - name: Fresh install, V0.1.5-V0.1.7 upgrades, reliability, recovery and integration tests
         run: node --no-warnings scripts/self-test.mjs
       - name: Deterministic fault, restart, recovery and scale tests
         run: node --no-warnings scripts/fault-test.mjs
@@ -169,4 +169,4 @@ jobs:
         shell: bash
         env:
           EXPECTED_BUILD_COMMIT: ${{ github.sha }}
-        run: node scripts/standalone-smoke.mjs dist/standalone/GearBeacon-v0.1.10-*/
+        run: node scripts/standalone-smoke.mjs dist/standalone/GearBeacon-v1.0.0-*/
