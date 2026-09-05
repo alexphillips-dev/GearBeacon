@@ -11,7 +11,7 @@ const tls = require('node:tls');
 const { AsyncLocalStorage } = require('node:async_hooks');
 const { URL } = require('node:url');
 const { DatabaseSync } = require('node:sqlite');
-const { renderEmail, buildMimeEmail } = require('./email');
+const { renderEmail, buildMimeEmail, numericPrice } = require('./email');
 const APP_VERSION = '1.0.0';
 const DATABASE_SCHEMA_VERSION = 7;
 const STORE_BASE = 'https://store.ui.com';
@@ -250,11 +250,7 @@ const DEFAULT_WATCH_RULE = Object.freeze({
     pausedUntil: null,
 });
 function priceValue(value) {
-    if (typeof value === 'number' && Number.isFinite(value))
-        return value;
-    const normalized = String(value || '').replace(/[^0-9,.-]/g, '').replace(/,/g, '');
-    const parsed = Number.parseFloat(normalized);
-    return Number.isFinite(parsed) ? parsed : null;
+    return numericPrice(value);
 }
 function normalizeWatchRule(input, base = DEFAULT_WATCH_RULE) {
     const value = input && typeof input === 'object' ? input : {};
@@ -753,17 +749,25 @@ function secretKey() {
             const stat = fs.lstatSync(SECRET_KEY_FILE);
             if (stat.isSymbolicLink() || !stat.isFile())
                 throw new Error('Secret key path is not a regular file.');
+            if (process.platform !== 'win32') {
+                fs.chmodSync(SECRET_KEY_FILE, 0o600);
+                const mode = fs.lstatSync(SECRET_KEY_FILE).mode & 0o777;
+                if (mode !== 0o600)
+                    throw new Error(`Secret key permissions are ${mode.toString(8)}; expected 600.`);
+            }
             const key = Buffer.from(fs.readFileSync(SECRET_KEY_FILE, 'utf8').trim(), 'base64');
             if (key.length !== 32)
                 throw new Error('Secret key file is invalid.');
-            try {
-                fs.chmodSync(SECRET_KEY_FILE, 0o600);
-            }
-            catch { }
             return key;
         }
         const key = crypto.randomBytes(32);
         fs.writeFileSync(SECRET_KEY_FILE, key.toString('base64'), { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+        if (process.platform !== 'win32') {
+            fs.chmodSync(SECRET_KEY_FILE, 0o600);
+            const mode = fs.lstatSync(SECRET_KEY_FILE).mode & 0o777;
+            if (mode !== 0o600)
+                throw new Error(`Secret key permissions are ${mode.toString(8)}; expected 600.`);
+        }
         return key;
     }
     catch (err) {
@@ -906,6 +910,8 @@ function normalizeAppConfig(input, base = DEFAULT_APP_CONFIG) {
         throw new Error('Bind host must be a valid IP address or hostname.');
     if (accessMode === 'local' && !isLoopbackHost(bindHost))
         throw new Error('Local mode must bind to a loopback address. Choose private or proxy mode for remote access.');
+    if (accessMode === 'proxy' && !isLoopbackHost(bindHost))
+        throw new Error('Proxy mode must bind to loopback so forwarded headers are accepted only from a same-host reverse proxy.');
     const publicBaseUrl = validHttpUrl(String(body.publicBaseUrl ?? base.publicBaseUrl).trim());
     if (accessMode === 'proxy' && !publicBaseUrl.startsWith('https://'))
         throw new Error('Proxy mode requires an HTTPS public URL.');
@@ -3639,8 +3645,11 @@ async function checkForUpdates() {
     };
 }
 function isLoopbackHost(host) {
-    const normalized = String(host || '').trim().toLowerCase().replace(/^\[|\]$/g, '');
+    const normalized = String(host || '').trim().toLowerCase().replace(/^\[|\]$/g, '').replace(/^::ffff:/, '');
     return normalized === 'localhost' || normalized === '::1' || normalized === '0:0:0:0:0:0:0:1' || /^127(?:\.\d{1,3}){3}$/.test(normalized);
+}
+function requestFromLoopbackProxy(req) {
+    return ACCESS_MODE === 'proxy' && isLoopbackHost(req.socket.remoteAddress);
 }
 function randomToken(bytes = 32) {
     return crypto.randomBytes(bytes).toString('base64url');
@@ -3738,7 +3747,7 @@ function sessionForRequest(req) {
     return { ...session, last_used_at: now, token };
 }
 function requestAddress(req) {
-    if (ACCESS_MODE === 'proxy') {
+    if (requestFromLoopbackProxy(req)) {
         const forwardedValues = String(req.headers['x-forwarded-for'] || '').split(',').map((value) => value.trim()).filter(Boolean);
         const forwarded = forwardedValues[forwardedValues.length - 1] || '';
         if (forwarded)
@@ -3758,7 +3767,7 @@ function createSession(req) {
     return { token, csrfToken, tokenHash, createdAt, expiresAt };
 }
 function requestUsesHttps(req) {
-    return COOKIE_SECURE || (ACCESS_MODE === 'proxy' && String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase() === 'https');
+    return COOKIE_SECURE || (requestFromLoopbackProxy(req) && String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase() === 'https');
 }
 function sessionCookie(req, token, expiresAt) {
     return `gearbeacon_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Expires=${new Date(expiresAt).toUTCString()}${requestUsesHttps(req) ? '; Secure' : ''}`;
@@ -3869,7 +3878,7 @@ function apiStatus() {
     };
 }
 function requestHost(req) {
-    if (ACCESS_MODE === 'proxy') {
+    if (requestFromLoopbackProxy(req)) {
         const forwarded = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim();
         if (forwarded)
             return forwarded.toLowerCase();
@@ -4633,6 +4642,9 @@ const server = http.createServer(async (req, res) => {
 async function start() {
     if (!isLoopbackHost(BIND_HOST) && ACCESS_MODE === 'local' && !ALLOW_INSECURE_REMOTE) {
         throw new Error('Refusing to expose an unauthenticated local-mode server on a non-loopback address. Use GEARBEACON_ACCESS_MODE=private or explicitly set GEARBEACON_ALLOW_INSECURE_REMOTE=1.');
+    }
+    if (ACCESS_MODE === 'proxy' && !isLoopbackHost(BIND_HOST)) {
+        throw new Error('Refusing proxy mode on a non-loopback bind. Keep GearBeacon reachable only through a same-host HTTPS reverse proxy.');
     }
     initializeOwnerAuthentication();
     console.log('');

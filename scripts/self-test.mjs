@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
-import { mkdtemp, mkdir, readFile, lstat, rm } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, lstat, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -65,7 +65,7 @@ const smtpServer = net.createServer((socket) => {
 await new Promise((resolve, reject) => { smtpServer.listen(0, '127.0.0.1', resolve); smtpServer.once('error', reject); });
 const smtpPort = smtpServer.address().port;
 const require = createRequire(import.meta.url);
-const { renderEmail, validInlineImageUrl } = require('../backend/dist/email.js');
+const { renderEmail, validInlineImageUrl, numericPrice } = require('../backend/dist/email.js');
 
 function decodedMimePart(raw, type) {
   const escaped = type.replace('/', '\\/');
@@ -154,6 +154,30 @@ async function proveUnsafeBindRefusal(dataDir) {
   }
 }
 
+async function proveUnsafeProxyBindRefusal(dataDir) {
+  const rejected = spawn(process.execPath, ['--no-warnings', 'backend/dist/index.js'], {
+    cwd: projectRoot,
+    env: {
+      ...process.env,
+      MOCK_MODE: '1', PORT: '8895', GEARBEACON_DATA_DIR: dataDir,
+      GEARBEACON_SKIP_LEGACY_IMPORT: '1', GEARBEACON_ACCESS_MODE: 'proxy',
+      GEARBEACON_BIND_HOST: '0.0.0.0', GEARBEACON_PUBLIC_BASE_URL: 'https://gearbeacon.test',
+      GEARBEACON_BACKUP_INTERVAL_HOURS: '0',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let output = '';
+  rejected.stdout.on('data', (data) => { output += data; });
+  rejected.stderr.on('data', (data) => { output += data; });
+  const exitCode = await Promise.race([
+    new Promise((resolve) => rejected.once('exit', resolve)),
+    delay(5000).then(() => { rejected.kill('SIGKILL'); return null; }),
+  ]);
+  if (exitCode === 0 || !/(?:Proxy mode must bind to loopback|Refusing proxy mode on a non-loopback bind)/i.test(output)) {
+    throw new Error('Proxy mode did not refuse a non-loopback bind.');
+  }
+}
+
 function downgradeDatabaseForUpgradeTest(databaseFile, appVersion, schema) {
   const target = new DatabaseSync(databaseFile);
   target.exec(`
@@ -174,12 +198,17 @@ function downgradeDatabaseForUpgradeTest(databaseFile, appVersion, schema) {
 const localData = join(testRoot, 'local');
 const privateData = join(testRoot, 'private');
 const refusalData = join(testRoot, 'refusal');
+const proxyRefusalData = join(testRoot, 'proxy-refusal');
 const proxyData = join(testRoot, 'proxy');
 const secondaryData = join(testRoot, 'secondary-recovery');
-await Promise.all([mkdir(localData), mkdir(privateData), mkdir(refusalData), mkdir(proxyData), mkdir(secondaryData)]);
+await Promise.all([mkdir(localData), mkdir(privateData), mkdir(refusalData), mkdir(proxyRefusalData), mkdir(proxyData), mkdir(secondaryData)]);
 
 try {
+  for (const [formatted, expected] of [['$1,299.00', 1299], ['£299.00', 299], ['€299,00', 299], ['€1.299,00', 1299], ['1 299,50 €', 1299.5]]) {
+    if (numericPrice(formatted) !== expected) throw new Error(`Localized price parsing failed for ${formatted}.`);
+  }
   await proveUnsafeBindRefusal(refusalData);
+  await proveUnsafeProxyBindRefusal(proxyRefusalData);
 
   // Local mode: loopback-only, web-only, multi-region, persistence and backups.
   startServer(8899, localData, {
@@ -212,6 +241,7 @@ try {
   const initialConfig = await request('/api/config');
   if ((await request('/api/auth/status')).onboardingComplete) throw new Error('Fresh installation incorrectly skipped guided onboarding.');
   await fetchJson('/api/config/validate', { method:'POST', body:JSON.stringify({ ...initialConfig.config, accessMode:'proxy', publicBaseUrl:'http://unsafe.test' }) }, 400);
+  await fetchJson('/api/config/validate', { method:'POST', body:JSON.stringify({ ...initialConfig.config, accessMode:'proxy', bindHost:'0.0.0.0', publicBaseUrl:'https://gearbeacon.test' }) }, 400);
   const configSave = await request('/api/config', { method:'PUT', body:JSON.stringify({
     config: { ...initialConfig.config, notificationGroupSeconds: 1, notificationMaxAttempts: 3 },
     secrets: { webhookHmacSecret, discordWebhookUrl: `${notificationBase}/discord`, webhookUrl: `${notificationBase}/webhook`, webhookToken: 'test-bearer', gotifyToken: 'test-gotify-token' },
@@ -226,6 +256,12 @@ try {
   const keyStat = await lstat(join(localData, 'secrets.key'));
   const keyBytes = Buffer.from((await readFile(join(localData, 'secrets.key'), 'utf8')).trim(), 'base64');
   if (!keyStat.isFile() || keyStat.isSymbolicLink() || keyBytes.length !== 32) throw new Error('Separate local notification key file is invalid.');
+  if (process.platform !== 'win32') {
+    await chmod(join(localData, 'secrets.key'), 0o644);
+    await request('/api/config', { method:'PUT', body:JSON.stringify({ config:configSave.config, secrets:{} }) });
+    const repairedKey = await lstat(join(localData, 'secrets.key'));
+    if ((repairedKey.mode & 0o777) !== 0o600) throw new Error('Existing secret-key permissions were not restored to 0600.');
+  }
   const onboarding = await request('/api/onboarding/complete', { method:'POST' });
   if (!onboarding.ok || !(await request('/api/auth/status')).onboardingComplete) throw new Error('Guided onboarding state did not persist.');
 
@@ -562,6 +598,8 @@ try {
   const proxyCookieHeader = proxySetup.response.headers.get('set-cookie') || '';
   if (!/; Secure/i.test(proxyCookieHeader)) throw new Error('Proxy-mode HTTPS did not create a Secure session cookie.');
   const proxyCookie = proxyCookieHeader.split(';')[0];
+  const proxySessions = await fetchJson('/api/auth/sessions', { headers:{ Cookie:proxyCookie, 'X-Forwarded-For':'203.0.113.7' } }, 200);
+  if (!proxySessions.body.sessions.some((session) => session.current && session.remoteAddress === '203.0.113.7')) throw new Error('Loopback reverse proxy address handling failed.');
   const proxyStatus = await fetchJson('/api/status', { headers:{ Cookie:proxyCookie, Origin:'https://gearbeacon.test', 'X-Forwarded-Proto':'https', 'X-Forwarded-Host':'gearbeacon.test' } }, 200);
   if (proxyStatus.response.headers.get('strict-transport-security') == null || proxyStatus.response.headers.get('access-control-allow-origin') !== 'https://gearbeacon.test') throw new Error('Proxy-mode HTTPS security headers or origin policy failed.');
 

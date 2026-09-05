@@ -7,6 +7,7 @@ const manifest = await readJson('release-manifest.json');
 const source = await readFile('backend/src/index.ts', 'utf8');
 const compiled = await readFile('backend/dist/index.js', 'utf8');
 const web = await readFile('web/index.html', 'utf8');
+const releaseWorkflow = await readFile('.github/workflows/release.yml', 'utf8');
 const sourceVersion = source.match(/const APP_VERSION = '([^']+)'/)?.[1];
 const compiledVersion = compiled.match(/const APP_VERSION = '([^']+)'/)?.[1];
 const webVersion = web.match(/id="settingsVersion">V([^<]+)</)?.[1];
@@ -23,5 +24,8 @@ const checks = {
 
 for (const [file, version] of Object.entries(checks)) {
   if (version !== expected) throw new Error(`${file} version ${version ?? 'missing'} does not match ${expected}`);
+}
+if (!releaseWorkflow.includes('test "$GITHUB_SHA" = "$TARGET_SHA"') || releaseWorkflow.includes('merge-base --is-ancestor "$GITHUB_SHA"')) {
+  throw new Error('Release workflow must require a tag to equal the selected branch tip.');
 }
 console.log(`Version consistency OK: ${expected}`);

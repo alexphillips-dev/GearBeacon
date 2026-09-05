@@ -120,7 +120,7 @@ location / {
 }
 ```
 
-GearBeacon trusts forwarded host, protocol, and address headers only in explicit `proxy` mode. Use an HTTPS public URL; secure-cookie and HSTS behavior is covered by integration tests.
+GearBeacon requires proxy mode to remain loopback-bound and trusts forwarded host, protocol, and address headers only from that same-host proxy connection. Use an HTTPS public URL; secure-cookie and HSTS behavior is covered by integration tests.
 
 ## Owner setup and recovery
 

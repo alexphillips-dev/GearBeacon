@@ -107,7 +107,7 @@ In authenticated modes, enter the one-time token printed by the process or conta
 
 GearBeacon refuses an unauthenticated `local` server on a non-loopback address. Do not publish it directly to the unrestricted internet. Prefer WireGuard, Tailscale, or another private VPN. If routed access is necessary, terminate HTTPS at a maintained reverse proxy and restrict firewall sources.
 
-Proxy mode accepts `X-Forwarded-Host`, `X-Forwarded-Proto`, and `X-Forwarded-For` only when explicitly enabled. Set an HTTPS public URL so session cookies are `Secure`; forwarded HTTPS responses also receive HSTS.
+Proxy mode requires a loopback bind and accepts `X-Forwarded-Host`, `X-Forwarded-Proto`, and `X-Forwarded-For` only from that same-host proxy connection. Set an HTTPS public URL so session cookies are `Secure`; forwarded HTTPS responses also receive HSTS.
 
 See [deployment guidance](deploy/README.md) for service installation, Caddy/Nginx examples, recovery, updates, and rollback.
 
