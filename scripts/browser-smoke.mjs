@@ -207,6 +207,9 @@ try {
   }
   await cdp.send('CSS.forcePseudoState', { nodeId:browseTabNode.nodeId, forcedPseudoClasses:[] });
   await evaluate(`applyTheme(${JSON.stringify(navigationTheme)})`);
+  // Axe must inspect the final theme colors, not an intermediate frame from
+  // the 180 ms body/button color transition.
+  await delay(250);
 
   await evaluate("document.querySelector('[data-tab=\"browse\"]').click()");
   await waitForBrowser("document.getElementById('browse').classList.contains('active') && document.querySelectorAll('#browseGrid .store-card:not(.skeleton-card)').length >= 5", 'Browse catalog did not render');
