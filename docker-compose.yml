@@ -4,6 +4,14 @@ services:
     pull_policy: missing
     build: .
     restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=64m,mode=1777
     ports:
       # Loopback-only host publishing is the safe default. Use a private VPN or
       # authenticated HTTPS reverse proxy for access from other devices.

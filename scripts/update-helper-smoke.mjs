@@ -13,10 +13,10 @@ const run = (command, args, expectedText) => {
 };
 
 if (process.platform === 'win32') {
-  run('pwsh', ['-NoProfile', '-NonInteractive', '-File', 'deploy/update-windows.ps1', '-Version', '1.0.0'], 'BackupConfirmed');
+  run('pwsh', ['-NoProfile', '-NonInteractive', '-File', 'deploy/update-windows.ps1', '-Version', '1.0.1'], 'BackupConfirmed');
 } else {
-  run('sh', ['deploy/update-mac-linux.sh', '1.0.0'], '--backup-confirmed');
-  run('sh', ['deploy/update-docker.sh', '1.0.0'], '--backup-confirmed');
+  run('sh', ['deploy/update-mac-linux.sh', '1.0.1'], '--backup-confirmed');
+  run('sh', ['deploy/update-docker.sh', '1.0.1'], '--backup-confirmed');
 }
 
 console.log('Update helper safety checks passed.');

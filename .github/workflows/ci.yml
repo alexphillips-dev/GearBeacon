@@ -102,6 +102,15 @@ jobs:
           curl --fail --silent http://127.0.0.1:8787/healthz
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8787/api/status)" = '428'
           docker compose ps
+      - name: Verify Compose runtime isolation
+        run: |
+          container_id="$(docker compose ps -q gearbeacon)"
+          test -n "$container_id"
+          test "$(docker inspect --format='{{.Config.User}}' "$container_id")" = 'node'
+          test "$(docker inspect --format='{{.HostConfig.ReadonlyRootfs}}' "$container_id")" = 'true'
+          docker inspect --format='{{json .HostConfig.CapDrop}}' "$container_id" | grep --quiet 'ALL'
+          docker inspect --format='{{json .HostConfig.SecurityOpt}}' "$container_id" | grep --quiet 'no-new-privileges:true'
+          docker exec "$container_id" sh -c 'test ! -w /app && test -w /data && test -w /tmp'
       - name: Container logs on failure
         if: failure()
         run: docker compose logs
@@ -169,4 +178,4 @@ jobs:
         shell: bash
         env:
           EXPECTED_BUILD_COMMIT: ${{ github.sha }}
-        run: node scripts/standalone-smoke.mjs dist/standalone/GearBeacon-v1.0.0-*/
+        run: node scripts/standalone-smoke.mjs dist/standalone/GearBeacon-v1.0.1-*/

@@ -162,8 +162,8 @@ try {
   await assertAccessible('Owner setup screen');
   await evaluate(`(() => {
     document.getElementById('setupToken').value = 'v19-browser-setup-token';
-    document.getElementById('authPassword').value = 'V1.0.0 browser owner password';
-    document.getElementById('authPasswordConfirm').value = 'V1.0.0 browser owner password';
+    document.getElementById('authPassword').value = 'V1.0.1 browser owner password';
+    document.getElementById('authPasswordConfirm').value = 'V1.0.1 browser owner password';
     document.getElementById('authForm').requestSubmit();
   })()`);
   await waitForBrowser("!document.getElementById('appShell').classList.contains('hidden') && app.products.length >= 5", 'Authenticated dashboard did not load');
@@ -422,7 +422,7 @@ try {
   await evaluate("document.getElementById('closeProductDialog').click(); document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabData').click()");
   await waitForBrowser("!document.getElementById('settingsPanelData').hidden && document.getElementById('settingsPanelNotifications').hidden", 'Data settings tab failed');
   const recoverySettings = await evaluate("({ activityRetention:document.getElementById('configEventRetention').value, secondaryDirectory:document.getElementById('configSecondaryBackupDir').value, encrypted:document.getElementById('configSecondaryEncrypted').checked, hasPrimaryTest:Boolean(document.getElementById('testPrimaryBackup')), hasSecondaryTest:Boolean(document.getElementById('testSecondaryBackup')) })");
-  assert(recoverySettings.activityRetention === '365' && recoverySettings.secondaryDirectory === '' && !recoverySettings.encrypted && recoverySettings.hasPrimaryTest && recoverySettings.hasSecondaryTest, `V1.0.0 recovery settings are incomplete: ${JSON.stringify(recoverySettings)}`);
+  assert(recoverySettings.activityRetention === '365' && recoverySettings.secondaryDirectory === '' && !recoverySettings.encrypted && recoverySettings.hasPrimaryTest && recoverySettings.hasSecondaryTest, `V1.0.1 recovery settings are incomplete: ${JSON.stringify(recoverySettings)}`);
   const browserBackup = await evaluate(`(async () => {
     const backup = await api('/api/data/export/encrypted', { method:'POST', body:JSON.stringify({ passphrase:'browser backup passphrase' }) });
     const preview = await api('/api/data/preview', { method:'POST', body:JSON.stringify({ backup, passphrase:'browser backup passphrase' }) });
@@ -461,7 +461,7 @@ try {
 
   await evaluate("document.getElementById('logoutBtn').click()");
   await waitForBrowser("!document.getElementById('authGate').classList.contains('hidden')", 'Browser logout did not return to the owner gate');
-  await evaluate("(() => { document.getElementById('authPassword').value='V1.0.0 browser owner password'; document.getElementById('authForm').requestSubmit(); })()");
+  await evaluate("(() => { document.getElementById('authPassword').value='V1.0.1 browser owner password'; document.getElementById('authForm').requestSubmit(); })()");
   await waitForBrowser("!document.getElementById('appShell').classList.contains('hidden') && app.auth.authenticated", 'Browser login after logout failed');
   await evaluate("document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabSecurity').click()");
   await waitForBrowser("document.querySelectorAll('#sessionList [data-revoke-session]').length >= 1", 'Authenticated session management did not render');

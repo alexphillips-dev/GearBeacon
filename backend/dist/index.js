@@ -1,4 +1,4 @@
-// GearBeacon V1.0.0 backend
+// GearBeacon V1.0.1 backend
 // Private, owner-operated stock monitoring for local and self-hosted installs.
 // @ts-nocheck
 const http = require('node:http');
@@ -12,7 +12,7 @@ const { AsyncLocalStorage } = require('node:async_hooks');
 const { URL } = require('node:url');
 const { DatabaseSync } = require('node:sqlite');
 const { renderEmail, buildMimeEmail, numericPrice } = require('./email');
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.0.1';
 const DATABASE_SCHEMA_VERSION = 7;
 const STORE_BASE = 'https://store.ui.com';
 const REGIONS = {
@@ -3659,26 +3659,45 @@ function safeEqualText(left, right) {
     const b = crypto.createHash('sha256').update(String(right)).digest();
     return crypto.timingSafeEqual(a, b);
 }
-function passwordHash(password) {
+const PASSWORD_HASH_VERSION = 'scrypt-v2';
+const PASSWORD_HASH_PROFILES = Object.freeze({
+    'scrypt-v1': Object.freeze({ N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }),
+    'scrypt-v2': Object.freeze({ N: 16384, r: 8, p: 5, maxmem: 64 * 1024 * 1024 }),
+});
+function passwordHash(password, version = PASSWORD_HASH_VERSION) {
     if (typeof password !== 'string' || password.length < 12 || password.length > 1024) {
         throw new Error('Owner password must be between 12 and 1024 characters.');
     }
+    const profile = PASSWORD_HASH_PROFILES[version];
+    if (!profile)
+        throw new Error('Unsupported owner password hash version.');
     const salt = crypto.randomBytes(16);
-    const hash = crypto.scryptSync(password, salt, 64, { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
-    return `scrypt-v1$${salt.toString('base64')}$${hash.toString('base64')}`;
+    const hash = crypto.scryptSync(password, salt, 64, profile);
+    return `${version}$${salt.toString('base64')}$${hash.toString('base64')}`;
 }
 function verifyPassword(password, stored) {
     try {
         const [version, saltText, hashText] = String(stored || '').split('$');
-        if (version !== 'scrypt-v1' || !saltText || !hashText)
+        const profile = PASSWORD_HASH_PROFILES[version];
+        if (!profile || !saltText || !hashText)
             return false;
         const expected = Buffer.from(hashText, 'base64');
-        const actual = crypto.scryptSync(String(password || ''), Buffer.from(saltText, 'base64'), expected.length, { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
+        if (expected.length !== 64)
+            return false;
+        const actual = crypto.scryptSync(String(password || ''), Buffer.from(saltText, 'base64'), expected.length, profile);
         return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
     }
     catch {
         return false;
     }
+}
+function upgradeOwnerPasswordHash(password, credential) {
+    if (!credential || String(credential.password_hash || '').startsWith(`${PASSWORD_HASH_VERSION}$`))
+        return false;
+    const now = isoNow();
+    db.prepare('UPDATE owner_credentials SET password_hash=?,updated_at=? WHERE id=1 AND password_hash=?')
+        .run(passwordHash(password), now, credential.password_hash);
+    return true;
 }
 function ownerCredential() {
     return db.prepare('SELECT password_hash,created_at,updated_at FROM owner_credentials WHERE id=1').get() || null;
@@ -3877,15 +3896,54 @@ function apiStatus() {
         ...monitor,
     };
 }
-function requestHost(req) {
-    if (requestFromLoopbackProxy(req)) {
-        const forwarded = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim();
-        if (forwarded)
-            return forwarded.toLowerCase();
+function parseRequestAuthority(value) {
+    if (Array.isArray(value))
+        return null;
+    const text = String(value || '').trim();
+    if (!text || /[\s,\\/?#@]/.test(text))
+        return null;
+    try {
+        const parsed = new URL(`http://${text}`);
+        if (parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash)
+            return null;
+        return { host: parsed.host.toLowerCase(), hostname: parsed.hostname.toLowerCase() };
     }
-    return String(req.headers.host || '').toLowerCase();
+    catch {
+        return null;
+    }
 }
-function allowedRequestOrigin(req) {
+function configuredProxyAuthorities() {
+    const values = [PUBLIC_BASE_URL, ...ALLOWED_ORIGINS];
+    return new Set(values.flatMap((value) => {
+        try {
+            return [new URL(value).host.toLowerCase()];
+        }
+        catch {
+            return [];
+        }
+    }));
+}
+function validatedRequestHost(req) {
+    const direct = parseRequestAuthority(req.headers.host);
+    if (!direct)
+        return null;
+    if (ACCESS_MODE === 'local') {
+        return isLoopbackHost(direct.hostname) ? direct.host : null;
+    }
+    if (requestFromLoopbackProxy(req)) {
+        const forwardedValue = req.headers['x-forwarded-host'];
+        const forwarded = forwardedValue ? parseRequestAuthority(forwardedValue) : null;
+        if (forwardedValue && !forwarded)
+            return null;
+        const effective = forwarded || direct;
+        const configured = configuredProxyAuthorities();
+        if (configured.has(effective.host) || isLoopbackHost(effective.hostname))
+            return effective.host;
+        return null;
+    }
+    return direct.host;
+}
+function allowedRequestOrigin(req, requestHost) {
     const origin = String(req.headers.origin || '').trim();
     if (!origin)
         return { allowed: true, origin: null };
@@ -3893,7 +3951,9 @@ function allowedRequestOrigin(req) {
         return { allowed: true, origin };
     try {
         const parsed = new URL(origin);
-        if (parsed.host.toLowerCase() === requestHost(req))
+        if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password)
+            return { allowed: false, origin };
+        if (parsed.host.toLowerCase() === requestHost)
             return { allowed: true, origin };
         if (PUBLIC_BASE_URL && new URL(PUBLIC_BASE_URL).origin === parsed.origin)
             return { allowed: true, origin };
@@ -3901,8 +3961,7 @@ function allowedRequestOrigin(req) {
     catch { }
     return { allowed: false, origin };
 }
-function securityHeaders(req) {
-    const origin = String(req.headers.origin || '').trim();
+function securityHeaders(req, allowedOrigin = null) {
     return {
         'X-Content-Type-Options': 'nosniff',
         'X-Frame-Options': 'DENY',
@@ -3912,7 +3971,7 @@ function securityHeaders(req) {
         'Cross-Origin-Resource-Policy': 'same-origin',
         'Content-Security-Policy': "default-src 'self'; connect-src 'self'; img-src 'self' data: https://ui.com https://*.ui.com; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
         ...(requestUsesHttps(req) ? { 'Strict-Transport-Security': 'max-age=31536000' } : {}),
-        ...(origin ? { 'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Credentials': 'true', Vary: 'Origin' } : {}),
+        ...(allowedOrigin ? { 'Access-Control-Allow-Origin': allowedOrigin, 'Access-Control-Allow-Credentials': 'true', Vary: 'Origin' } : {}),
     };
 }
 function commonResponseHeaders(res) {
@@ -4078,10 +4137,14 @@ async function handleApi(req, res, url) {
             return sendJson(res, err.statusCode || 429, { error: err.message });
         }
         const body = await readJsonBody(req);
-        if (!verifyPassword(body?.password, ownerCredential()?.password_hash)) {
+        const credential = ownerCredential();
+        if (!verifyPassword(body?.password, credential?.password_hash)) {
             recordLoginFailure(req);
             writeAppLog('warn', 'security', 'Rejected owner sign-in.', { remoteAddress: requestAddress(req) });
             return sendJson(res, 401, { error: 'The owner password is incorrect.' });
+        }
+        if (upgradeOwnerPasswordHash(body.password, credential)) {
+            writeAppLog('info', 'security', 'Owner password hash was upgraded after a successful sign-in.', { remoteAddress: requestAddress(req) });
         }
         clearLoginFailures(req);
         const created = createSession(req);
@@ -4603,11 +4666,18 @@ async function handleRegionApi(req, res, url) {
 }
 const server = http.createServer(async (req, res) => {
     try {
-        const origin = allowedRequestOrigin(req);
+        const requestHost = validatedRequestHost(req);
         res.gearbeaconHeaders = securityHeaders(req);
+        if (!requestHost)
+            return sendJson(res, 421, { error: 'Request host is not allowed.' });
+        const origin = allowedRequestOrigin(req, requestHost);
+        res.gearbeaconHeaders = securityHeaders(req, origin.allowed ? origin.origin : null);
         if (!origin.allowed)
             return sendJson(res, 403, { error: 'Request origin is not allowed.' });
-        const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+        const requestTarget = String(req.url || '/');
+        if (!requestTarget.startsWith('/') || requestTarget.startsWith('//'))
+            return sendJson(res, 400, { error: 'Request target is invalid.' });
+        const url = new URL(requestTarget, `http://${requestHost}`);
         if (url.pathname === '/healthz')
             return sendJson(res, 200, { ok: true, name: 'GearBeacon', version: APP_VERSION });
         if (url.pathname === '/readyz') {
@@ -4626,7 +4696,7 @@ const server = http.createServer(async (req, res) => {
             return sendText(res, 404, 'Not found');
         }
         const body = fs.readFileSync(file);
-        res.writeHead(200, { 'Content-Type': contentType(file), 'Content-Length': body.length, 'Cache-Control': 'no-cache', ...commonResponseHeaders(res) });
+        res.writeHead(200, { ...commonResponseHeaders(res), 'Content-Type': contentType(file), 'Content-Length': body.length, 'Cache-Control': 'no-cache' });
         res.end(body);
     }
     catch (err) {
@@ -4639,6 +4709,12 @@ const server = http.createServer(async (req, res) => {
             res.end();
     }
 });
+server.headersTimeout = 15_000;
+server.requestTimeout = 30_000;
+server.timeout = 120_000;
+server.keepAliveTimeout = 5_000;
+server.maxHeadersCount = 64;
+server.maxRequestsPerSocket = 100;
 async function start() {
     if (!isLoopbackHost(BIND_HOST) && ACCESS_MODE === 'local' && !ALLOW_INSECURE_REMOTE) {
         throw new Error('Refusing to expose an unauthenticated local-mode server on a non-loopback address. Use GEARBEACON_ACCESS_MODE=private or explicitly set GEARBEACON_ALLOW_INSECURE_REMOTE=1.');

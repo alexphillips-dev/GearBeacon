@@ -15,7 +15,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\install-windows-service.ps1
 ```
 
-The installer copies GearBeacon to `%ProgramFiles%\GearBeacon`, stores data under `%ProgramData%\GearBeacon`, and registers a `SYSTEM` startup task with restart behavior. It uses private authenticated mode. Windows Firewall should allow TCP 8787 only on the Private profile and only from intended subnets.
+The installer copies administrator-owned application files to `%ProgramFiles%\GearBeacon`, stores protected writable data under `%ProgramData%\GearBeacon`, and registers a limited `LocalService` startup task with restart behavior. It uses private authenticated mode. Windows Firewall should allow TCP 8787 only on the Private profile and only from intended subnets. A secondary network backup destination must grant the service identity explicit access.
 
 ```powershell
 .\uninstall-windows-service.ps1
@@ -29,7 +29,7 @@ Uninstall preserves `%ProgramData%\GearBeacon`. Add `-RemoveData` only when perm
 sudo ./install-macos-service.sh
 ```
 
-This installs `/usr/local/lib/gearbeacon`, creates a system LaunchDaemon, stores data in `/Library/Application Support/GearBeacon`, and writes process output to `/var/log/gearbeacon.log`. The package is currently unsigned, so macOS may require an explicit owner approval until signing and notarization certificates are configured.
+This installs root-owned application files in `/usr/local/lib/gearbeacon`, creates the hidden `_gearbeacon` service account and a LaunchDaemon that runs as that account, and stores protected writable data and process output in `/Library/Application Support/GearBeacon`. The package is currently unsigned, so macOS may require an explicit owner approval until signing and notarization certificates are configured.
 
 ```bash
 sudo ./uninstall-macos-service.sh
@@ -43,7 +43,7 @@ Add `--remove-data` only to delete the preserved application data.
 sudo ./install-linux-service.sh
 ```
 
-This creates an unprivileged `gearbeacon` system account, installs the application in `/opt/gearbeacon`, stores data in `/var/lib/gearbeacon`, and starts a hardened systemd unit. Read the setup token with:
+This creates an unprivileged `gearbeacon` system account, installs root-owned application files in `/opt/gearbeacon`, stores protected writable data in `/var/lib/gearbeacon`, and starts a capability-free hardened systemd unit. Read the setup token with:
 
 ```bash
 sudo journalctl -u gearbeacon
@@ -64,7 +64,7 @@ docker compose up -d
 docker compose logs gearbeacon
 ```
 
-Compose uses the published GHCR image when available and can build the checkout. It maps only host loopback, requires owner authentication inside the container, and stores SQLite, primary backups, and the separate notification encryption key in `gearbeacon-data`.
+Compose uses the published GHCR image when available and can build the checkout. It maps only host loopback, requires owner authentication inside the container, and stores SQLite, primary backups, and the separate notification encryption key in `gearbeacon-data`. The application runs as an unprivileged user with a read-only root filesystem, all Linux capabilities dropped, no-new-privileges, a PID limit, and a constrained in-memory `/tmp`.
 
 For recovery from a lost Docker volume or host disk, mount a second destination and configure it in Settings → Data:
 
@@ -185,6 +185,6 @@ Use **Run diagnostics** after initial setup and whenever storage, notifications,
 
 ## Release candidates
 
-Before a stable release, manually run the **Candidate packages** workflow with a matching version such as `1.0.0-rc.1` to build downloadable Actions artifacts without creating a public release. It uses the same locked packaging jobs as tag publication, then extracts and starts each native package and validates the source package. Each archive includes a checksum and SPDX JSON SBOM and receives a GitHub artifact attestation.
+Before a stable release, manually run the **Candidate packages** workflow with a matching version such as `1.0.1-rc.1` to build downloadable Actions artifacts without creating a public release. It uses the same locked packaging jobs as tag publication, then extracts and starts each native package and validates the source package. Each archive includes a checksum and SPDX JSON SBOM and receives a GitHub artifact attestation.
 
-Prerelease tags such as `v1.0.0-rc.1` must point to `dev`, publish only prerelease-specific container tags, and never replace the stable `latest` image. Stable tags such as `v1.0.0` must point to protected `main` and pass exact-commit CI, security, version, changelog, manifest, package, container, SBOM, and provenance gates. Complete the repository's stable release checklist—including real installs, updates, rollbacks, and a 24–48 hour soak—before creating the stable tag.
+Prerelease tags such as `v1.0.1-rc.1` must point to `dev`, publish only prerelease-specific container tags, and never replace the stable `latest` image. Stable tags such as `v1.0.1` must point to protected `main` and pass exact-commit CI, security, version, changelog, manifest, package, container, SBOM, and provenance gates. Complete the repository's stable release checklist—including real installs, updates, rollbacks, and a 24–48 hour soak—before creating the stable tag.

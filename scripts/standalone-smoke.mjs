@@ -21,7 +21,7 @@ try {
     try { const response = await fetch(`http://127.0.0.1:${port}/api/status`); if (response.ok) { status = await response.json(); break; } } catch {}
     await delay(100);
   }
-  if (status?.version !== '1.0.0' || status?.storage?.schemaVersion !== 7) {
+  if (status?.version !== '1.0.1' || status?.storage?.schemaVersion !== 7) {
     const detail = spawnError ? `spawn error: ${spawnError.message}` : exit ? `process exited: ${JSON.stringify(exit)}` : 'startup timed out after 30 seconds';
     throw new Error(`Standalone did not start correctly (${detail}): ${JSON.stringify(status)}`);
   }

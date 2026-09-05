@@ -2,6 +2,17 @@
 
 The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. The first release promoted to `main` is V1.0.0.
 
+## V1.0.1 — Security hardening
+
+- Added strict Host and forwarded-host validation before routing, including loopback-only local-mode enforcement and exact reverse-proxy authority checks to resist DNS rebinding.
+- Added regression coverage for hostile Host and forwarded-host values, Origin reflection, API cache control, and automatic legacy password-hash migration.
+- Upgraded new owner-password hashes to a stronger versioned scrypt profile and transparently rehashes valid legacy `scrypt-v1` credentials after sign-in.
+- Bounded HTTP header, request, keep-alive, header-count, and per-socket request resources while retaining explicit `no-store` API responses.
+- Changed Windows and macOS service installation from privileged execution to dedicated low-privilege identities, kept Linux application files root-owned, and expanded systemd sandboxing.
+- Made the Compose runtime read-only and capability-free with no-new-privileges, a PID limit, and a constrained temporary filesystem while keeping `/data` writable.
+- Added an executable security contract for service identities, container isolation, HTTP/KDF settings, Dependabot targeting, and full-SHA GitHub Action pinning.
+- Targeted automated dependency updates at `dev` and expanded repository-level secret-scanning and Actions restrictions.
+
 ## V1.0.0 — First stable self-hosted release
 
 - Promoted GearBeacon's complete pre-1.0 development line into its first stable release for Windows, macOS, Linux, servers, NAS hosts, and Docker.

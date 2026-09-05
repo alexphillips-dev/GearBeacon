@@ -17,7 +17,7 @@ body:
     id: version
     attributes:
       label: GearBeacon version
-      placeholder: "1.0.0 or a dev commit SHA"
+      placeholder: "1.0.1, 1.0.0, or a dev commit SHA"
     validations:
       required: true
 

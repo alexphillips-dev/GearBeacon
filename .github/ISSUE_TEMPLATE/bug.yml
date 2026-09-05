@@ -19,7 +19,7 @@ body:
     attributes:
       label: GearBeacon version
       description: Find this in Settings > General or Operations > Build information.
-      placeholder: "1.0.0 or a dev commit SHA"
+      placeholder: "1.0.1, 1.0.0, or a dev commit SHA"
     validations:
       required: true
 
