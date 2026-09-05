@@ -38,7 +38,25 @@ function safeEmailUrl(value) {
 
 function numericPrice(value) {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
-  const parsed = Number.parseFloat(String(value || '').replace(/[^0-9,.-]/g, '').replace(/,/g, ''));
+  const compact = String(value || '').replace(/[^0-9,.-]/g, '');
+  const negative = compact.startsWith('-');
+  const unsigned = compact.replace(/-/g, '');
+  if (!/[0-9]/.test(unsigned)) return null;
+  const lastComma = unsigned.lastIndexOf(',');
+  const lastDot = unsigned.lastIndexOf('.');
+  let decimal = '';
+  if (lastComma >= 0 && lastDot >= 0) decimal = lastComma > lastDot ? ',' : '.';
+  else {
+    const separator = lastComma >= 0 ? ',' : lastDot >= 0 ? '.' : '';
+    if (separator) {
+      const fractionLength = unsigned.length - unsigned.lastIndexOf(separator) - 1;
+      if (fractionLength === 1 || fractionLength === 2) decimal = separator;
+    }
+  }
+  const decimalAt = decimal ? unsigned.lastIndexOf(decimal) : -1;
+  const whole = (decimalAt >= 0 ? unsigned.slice(0, decimalAt) : unsigned).replace(/[.,]/g, '') || '0';
+  const fraction = decimalAt >= 0 ? unsigned.slice(decimalAt + 1).replace(/[.,]/g, '') : '';
+  const parsed = Number.parseFloat(`${negative ? '-' : ''}${whole}${fraction ? `.${fraction}` : ''}`);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
@@ -384,4 +402,4 @@ async function buildMimeEmail(event, input) {
   return { ...rendered, message, warnings, attachments:attachments.length };
 }
 
-module.exports = { renderEmail, buildMimeEmail, emailKind, htmlEscape, cleanHeader, validInlineImageUrl };
+module.exports = { renderEmail, buildMimeEmail, emailKind, htmlEscape, cleanHeader, validInlineImageUrl, numericPrice };
