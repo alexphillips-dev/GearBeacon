@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       package_version:
-        description: Prerelease version, for example 0.1.10-rc.1
+        description: Prerelease version, for example 1.0.0-rc.1
         required: true
         type: string
 

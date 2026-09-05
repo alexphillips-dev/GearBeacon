@@ -1,6 +1,16 @@
 # GearBeacon changelog
 
-The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. The first release promoted to `main` will be V1.0.0.
+The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. The first release promoted to `main` is V1.0.0.
+
+## V1.0.0 — First stable self-hosted release
+
+- Promoted GearBeacon's complete pre-1.0 development line into its first stable release for Windows, macOS, Linux, servers, NAS hosts, and Docker.
+- Ships a private, single-owner web dashboard with responsive mobile-browser support and no required GearBeacon cloud account, subscription, analytics, or telemetry.
+- Monitors the US, Canada, Europe, and UK UniFi Stores with catalog validation, last-known-good preservation, confirmed destructive transitions, immediate restock detection, and explicit unlisted status.
+- Includes regional watchlists and imports, product rules, searchable evidence-backed activity and price history, durable notifications, grouping, retries, quiet hours, and daily digests.
+- Protects owner access and integration secrets with authenticated sessions, CSRF and origin checks, secure proxy handling, encrypted local credentials, and privacy-redacted support bundles.
+- Includes upgrade-safe SQLite migrations, validated primary and secondary backups, encrypted exports, non-destructive restore tests, diagnostics, release checksums, SBOMs, and build provenance.
+- Meets the project's tested keyboard, focus, reduced-motion, dark/light theme, 200% zoom, compact activity, image-loading, and 390-pixel responsive-layout contracts.
 
 ## V0.1.10 — Release readiness, accessibility, and trust
 

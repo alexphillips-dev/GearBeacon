@@ -1,4 +1,4 @@
-// GearBeacon V0.1.10 backend
+// GearBeacon V1.0.0 backend
 // Private, owner-operated stock monitoring for local and self-hosted installs.
 // @ts-nocheck
 const http = require('node:http');
@@ -12,7 +12,7 @@ const { AsyncLocalStorage } = require('node:async_hooks');
 const { URL } = require('node:url');
 const { DatabaseSync } = require('node:sqlite');
 const { renderEmail, buildMimeEmail } = require('./email');
-const APP_VERSION = '0.1.10';
+const APP_VERSION = '1.0.0';
 const DATABASE_SCHEMA_VERSION = 7;
 const STORE_BASE = 'https://store.ui.com';
 const REGIONS = {
