@@ -102,7 +102,10 @@ async function expectStartupFailure(extra, expected) {
 async function fetchJson(path, options = {}, expected = 200) {
   const response = await fetch(base + path, {
     ...options,
-    headers:{ 'Content-Type':'application/json', ...(options.headers || {}) },
+    // A fault test repeatedly replaces the server process on the same port.
+    // Do not let the client's pooled keep-alive socket outlive that process,
+    // especially on Windows where socket teardown can lag child exit.
+    headers:{ 'Content-Type':'application/json', Connection:'close', ...(options.headers || {}) },
   });
   const body = await response.json().catch(() => ({}));
   if (response.status !== expected) throw new Error(`${path}: expected HTTP ${expected}, got ${response.status}: ${body.error || JSON.stringify(body)}`);
@@ -191,9 +194,13 @@ try {
   await post('/api/mock/product/unas-pro', { status:'Available', price:'$450.00' });
   assert((await post('/api/check')).pendingChanges >= 1, 'Price change did not enter pending confirmation before restart.');
   await stopServer();
+  const persisted = new DatabaseSync(databaseFile, { readOnly:true });
+  const pendingBeforeRestart = persisted.prepare("SELECT candidate_json,observations FROM pending_transitions WHERE region='us' AND slug='unas-pro' AND kind='price'").get();
+  persisted.close();
+  assert(pendingBeforeRestart?.candidate_json === JSON.stringify({ price:'$450.00' }) && Number(pendingBeforeRestart.observations) === 1, 'Pending price evidence was not durable before restart.');
   await startServer({ GEARBEACON_MOCK_OVERRIDES_JSON:JSON.stringify({ 'unas-pro':persistentOverrides['unas-pro'] }) });
   const confirmed = await fetchJson('/api/activity?type=price_change&search=unas-pro');
-  assert(confirmed.count === 1 && confirmed.events[0].confirmation?.observations === 2, 'Pending transition did not survive restart and confirm with persisted evidence.');
+  assert(confirmed.count === 1 && confirmed.events[0].confirmation?.observations === 2, `Pending transition did not survive restart and confirm with persisted evidence: ${JSON.stringify({ count:confirmed.count, confirmation:confirmed.events[0]?.confirmation || null })}`);
 
   // A future delivery job must remain queued across restart.
   let config = await fetchJson('/api/config');
