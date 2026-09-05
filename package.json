@@ -15,6 +15,6 @@
   "devDependencies": {
     "axe-core": "4.13.0",
     "postject": "1.0.0-alpha.6",
-    "typescript": "5.8.3"
+    "typescript": "7.0.2"
   }
 }
