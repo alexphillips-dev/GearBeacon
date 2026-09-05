@@ -1,5 +1,11 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Report a security vulnerability
+  - name: Report a security vulnerability privately
     url: https://github.com/alexphillips-dev/GearBeacon/security/advisories/new
-    about: Send security findings privately instead of opening a public issue.
+    about: Never disclose suspected vulnerabilities, credentials, private URLs, or exploit details in a public issue.
+  - name: Read the GearBeacon documentation
+    url: https://github.com/alexphillips-dev/GearBeacon/blob/main/README.md
+    about: Review features, installation choices, configuration, notifications, data safety, and update guidance.
+  - name: Read the deployment guide
+    url: https://github.com/alexphillips-dev/GearBeacon/blob/main/deploy/README.md
+    about: See service, Docker, private-network, reverse-proxy, update, rollback, and recovery instructions.

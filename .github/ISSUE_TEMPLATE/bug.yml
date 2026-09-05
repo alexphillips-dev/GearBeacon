@@ -1,55 +1,142 @@
 name: Bug report
-description: Report a reproducible GearBeacon problem without private data.
-title: '[Bug]: '
-labels: [bug]
+description: Report a reproducible GearBeacon problem that is not specific to Store monitoring or notification delivery.
+title: "[Bug]: "
+labels:
+  - bug
+  - needs-triage
 body:
   - type: markdown
     attributes:
-      value: Do not post vulnerabilities, credentials, private URLs, backups, or unredacted logs. Use private vulnerability reporting for security issues.
+      value: |
+        Thanks for helping improve GearBeacon.
+
+        **Do not post security vulnerabilities, passwords, tokens, owner sessions, notification endpoints, private URLs, databases, backups, `secrets.key`, or unredacted logs.** Use the repository's private vulnerability-reporting link for security findings.
+
+        For incorrect product availability or catalog data, use **Store or monitoring problem**. For delivery-channel failures, use **Notification problem**.
+
   - type: input
     id: version
     attributes:
       label: GearBeacon version
-      placeholder: 1.10.0 or a commit SHA
+      description: Find this in Settings > General or Operations > Build information.
+      placeholder: "1.0.0 or a dev commit SHA"
     validations:
       required: true
+
   - type: dropdown
-    id: deployment
+    id: installation
     attributes:
-      label: Deployment
+      label: Installation method
       options:
-        - Docker Compose
-        - Windows standalone
-        - macOS standalone
-        - Linux standalone
+        - Windows standalone package
+        - macOS standalone package
+        - Linux standalone package
+        - Docker Compose or container
         - Source checkout
+        - Other
     validations:
       required: true
-  - type: textarea
-    id: behavior
+
+  - type: input
+    id: environment
     attributes:
-      label: What happened?
-      description: Include the expected behavior and the actual result.
+      label: Host and browser
+      description: Include operating system/version, CPU architecture, and browser/version when relevant.
+      placeholder: "Windows 11 x64 with Chrome 140; Ubuntu 24.04 ARM64 with Firefox 142; etc."
     validations:
       required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected area
+      options:
+        - Watchlist
+        - Browse catalog
+        - Activity and product history
+        - Settings
+        - Data, backup, or recovery
+        - Operations or diagnostics
+        - Owner access or sessions
+        - Updates
+        - Responsive layout or accessibility
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: access_mode
+    attributes:
+      label: Access mode
+      options:
+        - Local
+        - Private LAN or VPN
+        - Same-host reverse proxy
+        - Unsure
+    validations:
+      required: true
+
   - type: textarea
     id: reproduction
     attributes:
-      label: Reproduction steps
-      placeholder: '1. Open...'
+      label: Steps to reproduce
+      description: Provide the smallest repeatable sequence, including any relevant non-secret settings.
+      placeholder: |
+        1. Open ...
+        2. Select ...
+        3. Observe ...
     validations:
       required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should GearBeacon have done?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead? Include the exact safe error text when available.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: How often does it happen?
+      options:
+        - Every time
+        - Often
+        - Sometimes
+        - Once
+        - Unsure
+    validations:
+      required: true
+
   - type: textarea
     id: diagnostics
     attributes:
-      label: Redacted diagnostics
-      description: Share only the minimum relevant, reviewed output. Never attach a database or secrets.key.
+      label: Redacted diagnostics or screenshots
+      description: Share only the minimum relevant output after reviewing it. Never attach a database, backup, secrets.key, or complete environment file.
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: Additional context
+      description: Mention whether it worked previously, any recent update, and any workaround you found.
+
   - type: checkboxes
     id: checks
     attributes:
-      label: Safety check
+      label: Submission checklist
       options:
-        - label: I removed credentials, private URLs, personal data, owner-session data, and notification endpoints.
+        - label: I searched existing open and closed issues for this problem.
+          required: true
+        - label: I removed credentials, tokens, private URLs, personal data, local paths, owner-session data, and notification endpoints.
           required: true
         - label: This is not a security vulnerability.
           required: true

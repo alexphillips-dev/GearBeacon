@@ -1,0 +1,112 @@
+name: Store or monitoring problem
+description: Report incorrect UniFi Store catalog data, availability, pricing, images, regions, or change detection.
+title: "[Monitoring]: "
+labels:
+  - bug
+  - monitoring
+  - needs-triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form when GearBeacon disagrees with a public regional UniFi Store page or when a catalog check is degraded.
+
+        **Do not include UniFi account information, cookies, credentials, private URLs, databases, backups, or unredacted logs.** GearBeacon reads public Store catalogs and does not use a UniFi account.
+
+  - type: input
+    id: version
+    attributes:
+      label: GearBeacon version
+      placeholder: "1.0.0 or a dev commit SHA"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: region
+    attributes:
+      label: Store region
+      options:
+        - United States
+        - Canada
+        - Europe
+        - United Kingdom
+        - Multiple regions
+    validations:
+      required: true
+
+  - type: input
+    id: product
+    attributes:
+      label: Product name and SKU or slug
+      placeholder: "Dream Machine Pro — UDM-Pro"
+    validations:
+      required: true
+
+  - type: input
+    id: store_url
+    attributes:
+      label: Public UniFi Store URL
+      description: Use only the public product or catalog URL for the affected region. Do not paste account or checkout links.
+      placeholder: "https://store.ui.com/..."
+
+  - type: dropdown
+    id: problem_type
+    attributes:
+      label: Problem type
+      options:
+        - Availability does not match the Store
+        - Price does not match the Store
+        - Product is missing or incorrectly unlisted
+        - Product name, SKU, category, or link is incorrect
+        - Product image is missing or incorrect
+        - False or missing Activity event
+        - Pending confirmation does not resolve
+        - Region check is degraded or failing
+        - Rate limiting or retry behavior
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: store_observation
+    attributes:
+      label: What the regional Store shows
+      description: Include availability, price/currency, status text, and the time observed with timezone.
+    validations:
+      required: true
+
+  - type: textarea
+    id: gearbeacon_observation
+    attributes:
+      label: What GearBeacon shows
+      description: Include the current value, last checked/changed time, and any pending-confirmation or health message.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Explain where you looked in Browse, Watchlist, Activity, the product drawer, or Operations.
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted monitoring evidence
+      description: Add only the relevant redacted Operations/check result or screenshot. Do not attach the complete support bundle unless you have reviewed it.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checklist
+      options:
+        - label: I confirmed the public Store page is for the same region selected in GearBeacon.
+          required: true
+        - label: I included the observation time and timezone because Store availability can change quickly.
+          required: true
+        - label: I removed credentials, cookies, private URLs, personal data, local paths, and notification endpoints.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true

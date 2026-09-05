@@ -1,0 +1,108 @@
+name: Notification problem
+description: Report alert delivery, formatting, scheduling, retry, digest, or notification-channel problems.
+title: "[Notification]: "
+labels:
+  - bug
+  - notifications
+  - needs-triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for SMTP email, ntfy, Discord, Gotify, generic webhook, browser notification, scheduling, queue, or digest problems.
+
+        **Never post passwords, tokens, webhook URLs, ntfy topics, email addresses, owner sessions, private dashboard URLs, complete headers, or unredacted logs.** Replace private values with clear placeholders.
+
+  - type: input
+    id: version
+    attributes:
+      label: GearBeacon version
+      placeholder: "1.0.0 or a dev commit SHA"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: channel
+    attributes:
+      label: Notification channel
+      options:
+        - SMTP email
+        - ntfy
+        - Discord
+        - Gotify
+        - Generic webhook
+        - Browser notification
+        - Multiple channels
+        - Scheduling, quiet hours, cooldown, or digest
+    validations:
+      required: true
+
+  - type: dropdown
+    id: event_type
+    attributes:
+      label: Event type
+      options:
+        - Test notification
+        - Restock
+        - Sellout
+        - Price or target-price change
+        - Status change
+        - New product
+        - All activity updates
+        - Operational warning
+        - Daily digest or grouped delivery
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: installation
+    attributes:
+      label: Installation and host
+      placeholder: "Docker on Ubuntu 24.04 x64; Windows standalone; etc."
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected delivery or presentation
+      description: Explain when, where, and how the alert should have appeared.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+      description: Include the safe status shown in Settings or Operations and whether the queue says pending, delivered, failed, held, muted, or digested.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Include the relevant enabled event setting, per-product override, quiet-hours/digest state, and test result without exposing secrets.
+    validations:
+      required: true
+
+  - type: textarea
+    id: redacted_error
+    attributes:
+      label: Redacted error and delivery evidence
+      description: Share the minimum relevant error, retry count, timestamp/timezone, or screenshot. Remove endpoints, addresses, message IDs, credentials, tokens, and private URLs.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checklist
+      options:
+        - label: I tried the channel's test action and described its result.
+          required: true
+        - label: I checked the notification preference, product override, quiet hours, cooldown, and digest settings that apply.
+          required: true
+        - label: I removed credentials, tokens, endpoints, email addresses, private URLs, message IDs, personal data, and owner-session information.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true

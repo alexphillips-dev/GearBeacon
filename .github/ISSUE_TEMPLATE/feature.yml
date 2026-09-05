@@ -1,29 +1,95 @@
 name: Feature request
 description: Propose a focused improvement for private, self-hosted GearBeacon installations.
-title: '[Feature]: '
-labels: [enhancement]
+title: "[Feature]: "
+labels:
+  - enhancement
+  - needs-triage
 body:
+  - type: markdown
+    attributes:
+      value: |
+        GearBeacon is a private, single-owner, self-hosted web application. It does not require a GearBeacon or UniFi cloud login, collect telemetry, automate purchasing, or provide a native mobile app.
+
+        Describe the problem first so the proposal can be evaluated across Windows, macOS, Linux, NAS, Docker, and mobile browsers.
+
   - type: textarea
     id: problem
     attributes:
-      label: Problem to solve
-      description: Describe the user need rather than only the proposed interface.
+      label: Problem or use case
+      description: What are you trying to accomplish, and who would benefit?
+      placeholder: "When I ..., I need ..., because ..."
     validations:
       required: true
+
   - type: textarea
     id: proposal
     attributes:
       label: Proposed behavior
+      description: Explain how you would expect the feature to work from setup through normal use.
     validations:
       required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Primary area
+      options:
+        - Watchlist
+        - Browse catalog or monitoring
+        - Activity or history
+        - Notifications
+        - Data, backup, or recovery
+        - Installation or deployment
+        - Operations or diagnostics
+        - Security or privacy
+        - Responsive layout or accessibility
+        - Developer or release tooling
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployments
+    attributes:
+      label: Relevant installations
+      multiple: true
+      options:
+        - Windows
+        - macOS
+        - Linux or NAS
+        - Docker
+        - All installations
+    validations:
+      required: true
+
   - type: textarea
     id: alternatives
     attributes:
       label: Alternatives considered
-  - type: checkboxes
-    id: scope
+      description: Describe any current workaround or other approach you considered.
+
+  - type: textarea
+    id: privacy_security
     attributes:
-      label: Project fit
+      label: Privacy, security, and data impact
+      description: Note any new credentials, network access, stored data, external services, or permissions the feature might require. Write "None known" if it adds none.
+    validations:
+      required: true
+
+  - type: textarea
+    id: examples
+    attributes:
+      label: Examples or mockups
+      description: Add redacted screenshots, sketches, or links that clarify the request. Do not include private installation details.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checklist
       options:
-        - label: This preserves private, self-hosted operation without requiring a GearBeacon cloud account.
+        - label: I searched existing open and closed issues for this request.
+          required: true
+        - label: I understand that GearBeacon is intended to remain private, self-hosted, single-owner, and web-based.
+          required: true
+        - label: I removed credentials, private URLs, personal data, and other installation-specific secrets.
           required: true

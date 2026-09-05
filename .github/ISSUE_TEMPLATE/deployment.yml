@@ -1,0 +1,106 @@
+name: Installation or deployment help
+description: Ask for help with standalone packages, services, Docker, private access, or same-host reverse proxies.
+title: "[Deployment]: "
+labels:
+  - support
+  - deployment
+  - needs-triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        GearBeacon is intended for a local computer, trusted LAN/private VPN, or authenticated same-host HTTPS reverse proxy. Do not publish local mode directly to the internet.
+
+        **Do not post passwords, setup tokens, cookies, certificates/private keys, private URLs or addresses, notification endpoints, environment files, databases, backups, `secrets.key`, or unredacted logs.** Use private vulnerability reporting for suspected security problems.
+
+  - type: input
+    id: version
+    attributes:
+      label: GearBeacon version
+      placeholder: "1.0.0 or a dev commit SHA"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Installation method
+      options:
+        - Windows standalone or service
+        - macOS standalone or LaunchDaemon
+        - Linux standalone or systemd service
+        - Docker Compose
+        - Other container or NAS interface
+        - Source checkout
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: Platform and CPU architecture
+      placeholder: "Windows 11 x64; macOS 15 ARM64; Ubuntu 24.04 x64; Synology ARM64; etc."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: access_mode
+    attributes:
+      label: Intended access mode
+      options:
+        - Local computer only
+        - Trusted LAN
+        - Private VPN
+        - Same-host HTTPS reverse proxy
+        - Unsure
+    validations:
+      required: true
+
+  - type: input
+    id: proxy_or_nas
+    attributes:
+      label: Reverse proxy, VPN, container, or NAS platform
+      description: When relevant, name the software and version without including private addresses.
+      placeholder: "Caddy 2.10, Nginx, Tailscale, Docker 28, Synology DSM, Unraid, etc."
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to set up?
+      description: Describe the desired end state and how you intend to reach GearBeacon.
+    validations:
+      required: true
+
+  - type: textarea
+    id: attempted
+    attributes:
+      label: What have you tried?
+      description: List the documented steps or commands you followed, replacing private values with placeholders.
+    validations:
+      required: true
+
+  - type: textarea
+    id: result
+    attributes:
+      label: What happened?
+      description: Include the exact safe error and whether the process/container/service is running.
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Include only the relevant reviewed output. Do not paste a complete environment file, Compose override, support bundle, or proxy configuration containing private values.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checklist
+      options:
+        - label: I reviewed the README and deployment guide for this installation method.
+          required: true
+        - label: I removed credentials, tokens, cookies, keys, private URLs/addresses, local paths, endpoints, environment values, and personal data.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true
