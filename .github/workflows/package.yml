@@ -65,7 +65,7 @@ jobs:
           PACKAGE_DIR=$(find dist/standalone -mindepth 1 -maxdepth 1 -type d | head -1)
           node scripts/standalone-smoke.mjs "$PACKAGE_DIR"
       - id: syft
-        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.21.0
+        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2.21.0.24.2
         with:
           syft-version: v1.51.1
       - name: Archive, inventory, and rehearse Unix package
@@ -128,7 +128,7 @@ jobs:
       - run: npm run test
       - run: npm run test:browser
       - id: syft
-        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.21.0
+        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2.21.0.24.2
         with:
           syft-version: v1.51.1
       - name: Archive, inventory, and rehearse source package
