@@ -54,13 +54,33 @@ async function startServer(extra = {}) {
   await waitForStatus();
 }
 
+function waitForChildExit(current, timeoutMs) {
+  if (current.exitCode !== null) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (exited) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      current.off('exit', onExit);
+      resolve(exited);
+    };
+    const onExit = () => finish(true);
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    timer.unref();
+    current.once('exit', onExit);
+  });
+}
+
 async function stopServer() {
   if (!child) return;
   const current = child;
   child = null;
-  if (current.exitCode === null) current.kill('SIGINT');
-  await Promise.race([new Promise((resolve) => current.once('exit', resolve)), delay(3000)]);
-  if (current.exitCode === null) current.kill('SIGKILL');
+  if (current.exitCode !== null) return;
+  current.kill('SIGINT');
+  if (await waitForChildExit(current, 3000)) return;
+  current.kill('SIGKILL');
+  if (!await waitForChildExit(current, 3000)) throw new Error('GearBeacon fault-test server did not exit after SIGKILL.');
 }
 
 async function expectStartupFailure(extra, expected) {
