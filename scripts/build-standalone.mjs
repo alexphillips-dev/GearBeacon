@@ -23,10 +23,10 @@ const bundledMainFile = join(tmpdir(), `gearbeacon-standalone-main-${process.pid
 
 const indexSource = readFileSync(join(root, 'backend', 'dist', 'index.js'), 'utf8');
 const emailSource = readFileSync(join(root, 'backend', 'dist', 'email.js'), 'utf8');
-const emailRequire = "const { renderEmail, buildMimeEmail } = require('./email');";
+const emailRequire = "const { renderEmail, buildMimeEmail, numericPrice } = require('./email');";
 if (!indexSource.includes(emailRequire)) throw new Error('Standalone bundling could not find the GearBeacon email module import.');
 const bundledEmailModule = [
-  'const { renderEmail, buildMimeEmail } = (() => {',
+  'const { renderEmail, buildMimeEmail, numericPrice } = (() => {',
   '  const module = { exports: {} };',
   '  const exports = module.exports;',
   emailSource,
