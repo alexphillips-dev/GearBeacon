@@ -114,15 +114,23 @@
 
     <section id="watchlist" class="page active" role="tabpanel" aria-labelledby="tabWatchlist">
       <div class="section-heading">
-        <div><h2>Your watchlist</h2><p>Restocks on these products trigger GearBeacon alerts.</p></div>
+        <div><h2>Your watchlist</h2><p>Watch exact variants, set availability and price conditions, and organize your gear.</p></div>
         <div class="watch-heading-actions"><button id="openWatchImport" class="primary" type="button">Import watchlist</button></div>
       </div>
       <div class="watch-toolbar" aria-label="Watchlist filters">
         <input id="watchSearch" type="search" placeholder="Search watchlist" autocomplete="off" aria-label="Search watchlist" />
-        <select id="watchStatus" aria-label="Filter watchlist by status"><option value="all">All statuses</option><option value="in">In stock</option><option value="out">Unavailable</option><option value="paused">Paused</option></select>
+        <select id="watchStatus" aria-label="Filter watchlist by status"><option value="all">All statuses</option><option value="in">In stock</option><option value="out">Unavailable</option><option value="paused">Paused</option><option value="purchased">Purchased</option><option value="wanted">Still wanted</option></select>
+        <select id="watchCollection" aria-label="Filter watchlist by collection"><option value="all">All collections</option><option value="none">Uncollected</option></select>
         <select id="watchCategory" aria-label="Filter watchlist by category"><option value="all">All categories</option></select>
         <select id="watchSort" aria-label="Sort watchlist"><option value="changed">Recently changed</option><option value="added">Recently added</option><option value="name">Name</option><option value="price-low">Price: low to high</option><option value="price-high">Price: high to low</option><option value="availability">Availability</option></select>
         <button id="resetWatchFilters" class="filter-reset hidden" type="button">Reset filters</button>
+      </div>
+      <div class="collection-toolbar">
+        <button id="selectVisibleWatches" type="button">Select visible watches</button>
+        <details class="collection-manager"><summary>Manage collections</summary>
+          <form id="collectionForm" class="collection-form"><label class="field"><span>New collection name</span><input id="collectionName" maxlength="80" required autocomplete="off" /></label><button class="primary" type="submit">Create collection</button></form>
+          <div id="collectionList"></div><p id="collectionResult" role="status" aria-live="polite"></p>
+        </details>
       </div>
       <div id="bulkActions" class="bulk-actions hidden"><strong id="bulkCount">0 selected</strong><select id="bulkPauseDuration" aria-label="Bulk pause duration"><option value="60">Pause 1 hour</option><option value="1440">Pause 1 day</option><option value="10080">Pause 1 week</option><option value="0">Pause until resumed</option></select><button id="bulkPause">Pause</button><button id="bulkResume">Resume</button><button id="bulkRemove" class="danger-button">Remove</button><button id="bulkClear" class="ghost">Clear selection</button></div>
       <div id="watchGrid" class="grid watch-grid"></div>
@@ -197,7 +205,7 @@
         <div class="settings-grid">
         <article class="settings-card">
           <div class="settings-card-head">
-            <div><span class="settings-kicker">Application</span><h3>GearBeacon <span id="settingsVersion">V1.0.1</span></h3></div>
+            <div><span class="settings-kicker">Application</span><h3>GearBeacon <span id="settingsVersion">V1.1.0</span></h3></div>
             <span id="schemaBadge" class="settings-badge">SQLite</span>
           </div>
           <p>Your watched products live in a persistent SQLite database outside the GearBeacon application folder.</p>
@@ -383,7 +391,7 @@
     </section>
 
     <footer>
-      <span>GearBeacon V1.0.1 · Private self-hosted monitoring</span>
+      <span>GearBeacon V1.1.0 · Private self-hosted monitoring</span>
       <span id="notifyStatus"></span>
     </footer>
   </main>

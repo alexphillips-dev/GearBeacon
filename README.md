@@ -8,7 +8,7 @@ GearBeacon is a private, self-hosted Ubiquiti and UniFi Store inventory monitor.
 
 There is no GearBeacon cloud account, hosted database, public registration, subscription, analytics, or telemetry. GearBeacon is independent and is not affiliated with or endorsed by Ubiquiti Inc.
 
-GearBeacon `1.0.0` is the first stable self-hosted release. The `dev` branch is currently `1.0.1`, a security-hardening update that is validated before promotion to `main`.
+GearBeacon `1.0.0` is the first stable self-hosted release. The `dev` branch is currently `1.1.0`, the precision monitoring and smart watchlist update under development before promotion to `main`.
 
 ## What it does
 
@@ -20,6 +20,8 @@ GearBeacon `1.0.0` is the first stable self-hosted release. The `dev` branch is 
 - Shows a focused product view with current availability, store details, first/last-seen times, price history, and recent changes.
 - Keeps durable, searchable activity with evidence, delivery outcomes, date/type/region filters, pagination, and CSV or JSON export.
 - Supports per-product alert overrides, price-drop and target-price rules, immediate restocks, and temporary or indefinite pauses.
+- Watches exact product variants by SKU, color, length, or pack size, with independent availability, prices, history, and direct variant links.
+- Combines availability and target-price conditions, previews alert decisions, organizes watches into collections, and retains purchased watches with alerts stopped.
 - Searches, filters, sorts, selects, pauses, resumes, and removes watched products in bulk.
 - Delivers browser, ntfy, Discord, Gotify, SMTP email, or generic webhook alerts.
 - Queues delivery durably, retries failures with exponential backoff, and supports grouping, cooldowns, quiet hours, and daily digests.
@@ -139,6 +141,22 @@ A product omitted from two consecutive complete catalogs becomes **Unlisted** ra
 
 ## Notifications
 
+### Exact watches, conditions, and collections
+
+Open a product from Browse and use **Watch a specific variant** to choose a SKU, color, length, or pack size. **Any variant** keeps the original product-level watch behavior. Each exact variant has its own history and confirmation evidence; a selected variant can restock even while another remains available. Variant choices depend on the public regional catalog. Explicit `?variant=` Store links and known variant SKUs retain their selection during import; an unknown explicit variant is reported for review.
+
+After watching an item, set a target price and enable **Alert when available at or below the target price** to combine both conditions. This replaces the separate restock and price-change choices for that watch. A qualifying restock alerts immediately; a price reaching the target while available needs the normal two complete observations. The rule alerts once per qualifying period and rearms after confirmed observations no longer meet the condition. For an Any variant watch, stock and price must match on the same variant. Its notification identifies that matching variant. Prices use the selected Store's currency and the catalog display price; shipping, taxes not already included in that price, and checkout surcharges are not calculated.
+
+**Preview rule & notification** evaluates the unsaved rule without recording activity or delivering an alert. Existing quiet hours, digests, cooldowns, and immediate-restock settings still apply. **All activity updates**, when enabled, continues to override event filters and combined conditions; the preview calls this out. Purchased watches remain stopped.
+
+Use **Watchlist > Manage collections** to create, rename, or delete regional collections. Assign a watch to one or more collections from its alert rules. Filter by collection, then **Select visible watches** to pause or resume those watches in bulk. Collections reference the same watch: overlapping collections do not duplicate notifications, and deleting a collection preserves its watches and history. Independently watching both Any variant and an exact variant creates two separate watches with their own rules.
+
+**Purchased** retains the watch, its rules, and its history while stopping subsequent alerts and cancelling its pending or failed delivery jobs. A delivery already in progress may finish. **Still wanted** restores the saved rules, including any existing pause. Use the Purchased or Still wanted status filters to review these items.
+
+Upgrading to 1.1.0 creates a validated safety backup before schema v8. Existing watches remain Any variant and existing rules keep their behavior until the combined condition is explicitly enabled. New format-v4 recovery exports include exact variants, collections, purchased state, and condition state; older exports remain supported. Keep the pre-upgrade backup for rollback: 1.0.x cannot use a schema-v8 database or a format-v4 export. Stop the service and restore a compatible pre-upgrade backup with its matching encryption key before running the older application.
+
+### Delivery settings
+
 Channel configuration, delivery timing, previews, and individual test buttons are in Settings. A channel can be configured but independently disabled. Restock alerts for watched products are enabled by default; sellout, price, status, and new-product alerts are opt-in. The separate **All activity updates** option alerts for every new Activity feed entry, including changes to unwatched products, and overrides the individual event filters while enabled. It is disabled by default to avoid unexpected notification volume.
 
 Each watched product can inherit those global event choices or override them. Product rules can limit price notifications to drops, wait for a target price, pause alerts, or force restocks to deliver immediately. Immediate restocks bypass quiet hours and digest scheduling. Other queued events can be held until quiet hours end, collected for the next daily digest, and suppressed during a configurable per-product event cooldown.
@@ -242,6 +260,7 @@ Only liveness, readiness, and authentication bootstrap routes work without an ow
 - `/api/auth/*`, `/api/onboarding/complete` — owner access and setup
 - `/api/config`, `/api/config/validate` — sanitized configuration and validation
 - `/api/products`, `/api/products/:slug`, `/api/watchlist`, `/api/watch/*`, `/api/watch/import`, `/api/watch/import/preview`, `/api/events`, `/api/check` — regional monitor data, watchlist importing, details, history, and per-product rules
+- `/api/collections`, `/api/collections/:id`, `/api/watch/:slug/collections`, `/api/watch/:slug/preview` — regional collections, membership, and previews of unsaved watch conditions
 - `/api/activity`, `/api/activity/:id`, `/api/activity/export` — searchable confirmed activity, evidence, pagination, and CSV/JSON export
 - `/api/notifications/*` — preferences, scheduling preview, individual tests, queue retry, and delivery history
 - `/api/operations`, `/api/operations/diagnostics`, `/api/operations/support-bundle`, `/api/logs` — operational status, installation diagnostics, redacted support data, and filtered logs
@@ -249,6 +268,8 @@ Only liveness, readiness, and authentication bootstrap routes work without an ow
 - `/api/update/check`, `/api/update/prepare` — manual release information and validated preparation
 
 ## Development and verification
+
+API clients should treat a returned `slug` as an opaque watch identity and URL-encode it in route parameters. Exact variants additionally expose `parentSlug`, `variantId`, `variantSlug`, and `sku`; use the returned `url` for the Store link. The default product list includes parent products and watched variants. Add `includeVariants=1` to retrieve every retained variant. Product details return the parent and variant choices. Existing parent identities remain valid.
 
 ```bash
 npm ci
@@ -262,9 +283,9 @@ docker compose build
 
 CI exercises fresh installs and backup-protected upgrades from V0.1.5–V0.1.7 on Windows, macOS, and Linux; confirmation and unlisting behavior; searchable/exportable activity; primary and encrypted-secondary restore tests; diagnostics and support-bundle redaction; deterministic rate-limit, partial-catalog, restart, storage, key, 500-product, and 10k-activity fault scenarios; real Chrome workflows with axe WCAG scans, keyboard/focus behavior, reduced motion, persistent filters, reset states, offline recovery, copy actions, responsive widths, both themes, product images, rules, scheduling and bulk actions; integration-secret encryption; every notification mock; webhook signing; SMTP STARTTLS; authentication, CSRF, Host/origin, secure-cookie, and forwarded-header behavior; update-helper safety; launcher syntax; real Docker Compose isolation and startup; amd64/arm64 containers; and native standalone packages. CodeQL scans source, while Trivy fails closed on repository secrets and high/critical container vulnerabilities.
 
-Before a stable release, run **Candidate packages** manually with a matching prerelease version such as `1.0.1-rc.1` to create retained Actions artifacts without publishing a release. It uses the exact reusable packaging jobs used by a tag, extracts every archive, starts every native executable, validates the source archive, generates SBOMs, and records attestations.
+Before a stable release, run **Candidate packages** manually with a matching prerelease version such as `1.1.0-rc.1` to create retained Actions artifacts without publishing a release. It uses the exact reusable packaging jobs used by a tag, extracts every archive, starts every native executable, validates the source archive, generates SBOMs, and records attestations.
 
-Prerelease tags such as `v1.0.1-rc.1` must point to a commit on `dev` and never move the stable container `latest` tag. Stable tags such as `v1.0.1` must point to the reviewed commit on protected `main`. Publication also requires successful CI and security workflows at the exact SHA, consistent version/changelog/manifest data, checksummed and rehearsed packages, amd64/arm64 images, SBOMs, and provenance. The GitHub release stays a draft until those steps succeed. Use the [stable release checklist](.github/RELEASE_CHECKLIST.md) for real installation, upgrade, rollback, accessibility, and 24–48 hour soak evidence.
+Prerelease tags such as `v1.1.0-rc.1` must point to a commit on `dev` and never move the stable container `latest` tag. Stable tags such as `v1.1.0` must point to the reviewed commit on protected `main`. Publication also requires successful CI and security workflows at the exact SHA, consistent version/changelog/manifest data, checksummed and rehearsed packages, amd64/arm64 images, SBOMs, and provenance. The GitHub release stays a draft until those steps succeed. Use the [stable release checklist](.github/RELEASE_CHECKLIST.md) for real installation, upgrade, rollback, accessibility, and 24–48 hour soak evidence.
 
 ## Project layout
 

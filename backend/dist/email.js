@@ -175,7 +175,7 @@ function detailRows(event, options) {
     if (options.detailLevel === 'compact')
         return '';
     const rows = [
-        ['SKU', event.slug || 'Unavailable'],
+        ['SKU', event.sku || event.slug || 'Unavailable'],
         ['Category', event.category || 'Unavailable'],
         ['Store', regionLabel(event, options.regions)],
         ['Detected', formatDetectedAt(event, options.timeZone)],
@@ -271,8 +271,8 @@ function textForEvent(event, options) {
         lines.push(`Price: ${event.price}${event.previousPrice ? ` (was ${event.previousPrice})` : ''}`);
     if (options.priceCalculations && moneyDelta(event))
         lines.push(moneyDelta(event));
-    if (event.slug)
-        lines.push(`SKU: ${event.slug}`);
+    if (event.sku || event.slug)
+        lines.push(`SKU: ${event.sku || event.slug}`);
     if (event.category)
         lines.push(`Category: ${event.category}`);
     lines.push(`Store: ${regionLabel(event, options.regions)}`);

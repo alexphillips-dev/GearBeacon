@@ -40,6 +40,8 @@ const app = {
   pendingProductSlug: initialDeepLink.get('product') || null,
   status: null,
   products: [],
+  collections: [],
+  pendingWatchCollection:typeof savedUiState.watch?.collection === 'string' ? savedUiState.watch.collection : 'all',
   events: [],
   activity: { events:[], count:0, page:1, pages:1, limit:50, loaded:false },
   dataInfo: null,
@@ -91,7 +93,7 @@ function persistUiState() {
   const state = {
     activeTab:app.activeTab,
     browse:{ search:$('search')?.value || '', category:app.browseCategory },
-    watch:{ search:$('watchSearch')?.value || '', status:$('watchStatus')?.value || 'all', category:app.pendingWatchCategory || $('watchCategory')?.value || 'all', sort:$('watchSort')?.value || 'changed' },
+    watch:{ search:$('watchSearch')?.value || '', status:$('watchStatus')?.value || 'all', category:app.pendingWatchCategory || $('watchCategory')?.value || 'all', sort:$('watchSort')?.value || 'changed', collection:app.pendingWatchCollection || $('watchCollection').value || 'all' },
     activity:{ search:$('activitySearch')?.value || '', scope:app.pendingActivityRegion || $('activityRegion')?.value || 'all', type:$('activityType')?.value || 'all', delivery:$('activityDelivery')?.value || 'all', from:$('activityFrom')?.value || '', to:$('activityTo')?.value || '' },
   };
   try { localStorage.setItem(UI_STATE_KEY, JSON.stringify(state)); } catch {}
@@ -268,7 +270,7 @@ async function enterApp() {
   await refresh();
   await Promise.all([refreshDataInfo(), refreshNotificationPreferences(), refreshSessions(), refreshConfiguration(), refreshOperations()]);
   if (!app.auth?.onboardingComplete) showWizard();
-  else if (app.pendingProductSlug && app.products.some((product) => product.slug === app.pendingProductSlug)) {
+  else if (app.pendingProductSlug) {
     const slug = app.pendingProductSlug;
     app.pendingProductSlug = null;
     activateTab('browse');
@@ -335,14 +337,16 @@ function priceNumber(value) {
   return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
 }
 function watchPaused(p) {
+  if (p.watchRule?.purchasedAt) return true;
   const until = p.watchRule?.pausedUntil;
   return p.watchRule?.enabled === false || until === 'indefinite' || Boolean(until && new Date(until).getTime() > Date.now());
 }
 function ruleSummary(p) {
+  if (p.watchRule?.purchasedAt) return '<span class="rule-chip">Purchased · alerts stopped</span>';
   if (watchPaused(p)) return '<span class="rule-chip paused">Alerts paused</span>';
   const rule = p.watchRule || {};
   const chips = [];
-  if (rule.targetPrice !== null && rule.targetPrice !== undefined) chips.push(`Target $${Number(rule.targetPrice).toFixed(2)}`);
+  if (rule.targetPrice !== null && rule.targetPrice !== undefined) chips.push(`${rule.availableUnderTarget ? 'Available at' : 'Target'} ${Number(rule.targetPrice).toFixed(2)} ${app.status?.region === 'eu' ? 'EUR' : app.status?.region === 'uk' ? 'GBP' : app.status?.region === 'ca' ? 'CAD' : 'USD'}`);
   else if (rule.priceDropOnly) chips.push('Price drops');
   if (rule.immediateRestock) chips.push('Immediate restock');
   return (chips.length ? chips : ['Global alert rules']).map((text) => `<span class="rule-chip">${escapeHtml(text)}</span>`).join('');
@@ -394,15 +398,17 @@ function watchCard(p) {
   const changedRecently = p.lastChangedAt && Date.now() - new Date(p.lastChangedAt).getTime() < 7 * 24 * 60 * 60 * 1000;
   return `<article class="card watch-card${watchPaused(p) ? ' paused' : ''}" data-product-card="${escapeHtml(p.slug)}">
     <label class="watch-select"><input type="checkbox" data-watch-select="${escapeHtml(p.slug)}" ${app.selectedWatch.has(p.slug) ? 'checked' : ''}/><span>Select ${escapeHtml(p.name)}</span></label>
-    <button class="watch-image media-shell product-detail-trigger" type="button" data-product-detail="${escapeHtml(p.slug)}">${imageMarkup(p)}</button>
+    <button class="watch-image media-shell product-detail-trigger" type="button" data-product-detail="${escapeHtml(p.slug)}" aria-label="View ${escapeHtml(p.name)}">${imageMarkup(p)}</button>
     <div class="card-top"><span class="badge ${badgeClass}">${badgeText}</span><span class="meta">${escapeHtml(p.category)}</span></div>
     <button class="product-name-button" type="button" data-product-detail="${escapeHtml(p.slug)}"><h3>${escapeHtml(p.name)}</h3></button>
-    <div class="meta">${escapeHtml(p.slug)}</div>
+    <div class="meta">${escapeHtml(p.sku || p.slug)}${p.variantId ? '' : ' · Any variant'}</div>
     <div class="price">${escapeHtml(p.price || 'Price unavailable')}</div>
     <div class="detail">${escapeHtml(productDetail(p))}${changedRecently ? ' · changed recently' : ''}</div>
     <div class="rule-chips">${ruleSummary(p)}</div>
+    <div class="rule-chips">${(p.collections || []).map((id) => app.collections.find((collection) => collection.id === id)).filter(Boolean).map((collection) => `<span class="rule-chip">${escapeHtml(collection.name)}</span>`).join('')}</div>
     <div class="card-actions">
       <button data-product-detail="${escapeHtml(p.slug)}">Alert rules</button>
+      <button data-purchased="${escapeHtml(p.slug)}">${p.watchRule?.purchasedAt ? 'Still wanted' : 'Purchased'}</button>
       <button class="watching" data-watch="${escapeHtml(p.slug)}">Remove</button>
     </div>
   </article>`;
@@ -411,7 +417,7 @@ function storeCard(p) {
   const statusClass = p.unlisted ? 'out unlisted' : p.inStock ? 'in' : p.comingSoon ? 'soon' : 'out sold-out';
   const status = p.unlisted ? 'Unlisted' : p.inStock ? 'In stock' : p.comingSoon ? 'Coming soon' : 'Sold out';
   return `<article class="store-card" data-product-card="${escapeHtml(p.slug)}">
-    <button class="store-image media-shell product-detail-trigger" type="button" data-product-detail="${escapeHtml(p.slug)}">${imageMarkup(p)}</button>
+    <button class="store-image media-shell product-detail-trigger" type="button" data-product-detail="${escapeHtml(p.slug)}" aria-label="View ${escapeHtml(p.name)}">${imageMarkup(p)}</button>
     <div class="store-card-body">
       <div class="store-card-heading">
         <button type="button" data-product-detail="${escapeHtml(p.slug)}" class="store-product-link"><h3>${escapeHtml(p.name)}</h3></button>
@@ -439,7 +445,7 @@ function renderCategoryTabs() {
   const tabs = categories();
   if (!tabs.includes(app.browseCategory)) app.browseCategory = 'All';
   $('categoryTabs').innerHTML = tabs.map((category) => {
-    const count = category === 'All' ? app.products.length : app.products.filter((p) => p.category === category).length;
+    const count = app.products.filter((p) => !p.variantId && (category === 'All' || p.category === category)).length;
     return `<button class="store-category-tab ${app.browseCategory === category ? 'active' : ''}" data-category="${escapeHtml(category)}" role="tab" aria-selected="${app.browseCategory === category}">${escapeHtml(category)} <span>${count}</span></button>`;
   }).join('');
 }
@@ -454,6 +460,11 @@ function filteredWatchlist() {
     if (status === 'in' && !p.inStock) return false;
     if (status === 'out' && p.inStock) return false;
     if (status === 'paused' && !watchPaused(p)) return false;
+    if (status === 'purchased' && !p.watchRule?.purchasedAt) return false;
+    if (status === 'wanted' && p.watchRule?.purchasedAt) return false;
+    const collection = $('watchCollection').value;
+    if (collection === 'none' && p.collections?.length) return false;
+    if (!['all','none'].includes(collection) && !p.collections?.includes(collection)) return false;
     return true;
   });
   products.sort((a, b) => {
@@ -467,16 +478,21 @@ function filteredWatchlist() {
   return products;
 }
 function renderWatchFilters(watched) {
+  const collection = app.pendingWatchCollection || $('watchCollection').value || 'all';
+  $('watchCollection').innerHTML = '<option value="all">All collections</option><option value="none">Uncollected</option>' + app.collections.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join('');
+  $('watchCollection').value = ['all','none',...app.collections.map((item) => item.id)].includes(collection) ? collection : 'all';
+  app.pendingWatchCollection = null;
   const selected = app.pendingWatchCategory || $('watchCategory').value || 'all';
   const choices = [...new Set(watched.map((p) => p.category).filter(Boolean))].sort();
   $('watchCategory').innerHTML = '<option value="all">All categories</option>' + choices.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join('');
   $('watchCategory').value = choices.includes(selected) ? selected : 'all';
   if (choices.includes(selected) || watched.length) app.pendingWatchCategory = null;
 }
-function watchFiltersActive() { return Boolean($('watchSearch').value.trim() || $('watchStatus').value !== 'all' || $('watchCategory').value !== 'all' || $('watchSort').value !== 'changed'); }
+function watchFiltersActive() { return Boolean($('watchSearch').value.trim() || $('watchStatus').value !== 'all' || $('watchCategory').value !== 'all' || $('watchSort').value !== 'changed' || $('watchCollection').value !== 'all'); }
 function browseFiltersActive() { return Boolean($('search').value.trim() || app.browseCategory !== 'All'); }
 function activityFiltersActive() { return Boolean($('activitySearch').value.trim() || $('activityRegion').value !== 'all' || $('activityType').value !== 'all' || $('activityDelivery').value !== 'all' || $('activityFrom').value || $('activityTo').value); }
 function resetWatchFilters() {
+  $('watchCollection').value = 'all'; app.pendingWatchCollection = null;
   $('watchSearch').value = ''; $('watchStatus').value = 'all'; $('watchCategory').value = 'all'; $('watchSort').value = 'changed'; app.pendingWatchCategory = null;
   persistUiState(); renderProducts(true);
 }
@@ -497,7 +513,7 @@ function renderProducts(force = false) {
   const watched = filteredWatchlist();
   $('watchCount').textContent = allWatched.length;
   if ($('settingsWatchCount')) $('settingsWatchCount').textContent = `${allWatched.length} product${allWatched.length === 1 ? '' : 's'}`;
-  const watchKey = JSON.stringify([watched.map((p) => [p.slug,p.status,p.price,p.lastChangedAt,p.watchRule]), [...app.selectedWatch]]);
+  const watchKey = JSON.stringify([watched.map((p) => [p.slug,p.status,p.price,p.lastChangedAt,p.watchRule,p.collections]), app.collections, [...app.selectedWatch]]);
   if (force || watchKey !== app.watchRenderKey) {
     $('watchGrid').innerHTML = watched.map(watchCard).join('');
     app.watchRenderKey = watchKey;
@@ -516,6 +532,7 @@ function renderProducts(force = false) {
   renderCategoryTabs();
   const q = $('search').value.trim().toLowerCase();
   const filtered = app.products.filter((p) => {
+    if (p.variantId) return false;
     const categoryMatch = app.browseCategory === 'All' || p.category === app.browseCategory;
     const searchMatch = !q || `${p.name} ${p.slug} ${p.category}`.toLowerCase().includes(q);
     return categoryMatch && searchMatch;
@@ -560,7 +577,7 @@ function renderWatchImportPreview(preview) {
   $('watchImportResults').innerHTML = preview.items.length ? preview.items.map((item) => {
     const selectable = item.status === 'addable';
     const title = item.name || item.input;
-    const details = item.slug ? `${item.slug} · ${item.detail}` : item.detail;
+    const details = item.slug ? `${item.sku || item.slug} · ${item.detail}` : item.detail;
     return `<div class="watch-import-result ${escapeHtml(item.status)}" title="Source: ${escapeHtml(item.input)}">
       ${selectable ? `<input type="checkbox" data-import-slug="${escapeHtml(item.slug)}" aria-label="Add ${escapeHtml(title)}" checked />` : `<span class="watch-import-result-marker" aria-hidden="true">${escapeHtml(marker[item.status] || '·')}</span>`}
       <div class="watch-import-result-copy"><strong>${escapeHtml(title)}</strong><small>${escapeHtml(details)}</small></div>
@@ -677,6 +694,8 @@ function renderProductDialog(details) {
   app.currentProductDetails = details;
   const p = details.product;
   const rule = p.watchRule || {};
+  const variantSelector = details.variants?.length ? `<label class="field variant-picker"><span>Watch a specific variant</span><select data-variant-selector aria-label="Product variant"><option value="${escapeHtml(p.parentSlug || p.slug)}" ${!p.variantId ? 'selected' : ''}>Any variant</option>${details.variants.map((variant) => `<option value="${escapeHtml(variant.slug)}" ${variant.slug === p.slug ? 'selected' : ''}>${escapeHtml(variant.variantTitle)} · ${escapeHtml(variant.sku)} · ${escapeHtml(variant.price || 'Price unavailable')} · ${variant.unlisted ? 'Unlisted' : variant.inStock ? 'In stock' : 'Unavailable'}</option>`).join('')}</select></label>` : '';
+  const collectionFields = `<fieldset class="watch-collection-choices"><legend>Collections</legend>${(details.collections || []).map((collection) => `<label><input type="checkbox" name="collection" value="${escapeHtml(collection.id)}" ${(p.collections || []).includes(collection.id) ? 'checked' : ''} /> ${escapeHtml(collection.name)}</label>`).join('') || '<p>Create collections from Watchlist > Manage collections.</p>'}</fieldset>`;
   $('productDialogCategory').textContent = `${p.category} · ${String(p.region || app.currentRegion || '').toUpperCase()}`;
   $('productDialogTitle').textContent = p.name;
   const currentPause = rule.pausedUntil && rule.pausedUntil !== 'indefinite' ? `<option value="existing:${escapeHtml(rule.pausedUntil)}" selected>Paused until ${escapeHtml(new Date(rule.pausedUntil).toLocaleString())}</option>` : '';
@@ -685,44 +704,68 @@ function renderProductDialog(details) {
     <div class="form-row">${ruleSelect('restock','Restock alerts',rule.restock)}${ruleSelect('soldOut','Sold-out alerts',rule.soldOut)}${ruleSelect('priceChange','Price-change alerts',rule.priceChange)}${ruleSelect('statusChange','Other status alerts',rule.statusChange)}</div>
     <div class="form-row"><label class="field"><span>Target price</span><input name="targetPrice" type="number" min="0" step="0.01" value="${rule.targetPrice ?? ''}" placeholder="No target" /></label><label class="field"><span>Pause alerts</span><select name="pause"><option value="active" ${!rule.pausedUntil ? 'selected' : ''}>Active</option>${currentPause}<option value="60">For 1 hour</option><option value="1440">For 1 day</option><option value="10080">For 1 week</option><option value="indefinite" ${rule.pausedUntil === 'indefinite' ? 'selected' : ''}>Until resumed</option></select></label></div>
     <div class="inline-checks"><label><input name="priceDropOnly" type="checkbox" ${rule.priceDropOnly ? 'checked' : ''}/> Only alert when price drops</label><label><input name="immediateRestock" type="checkbox" ${rule.immediateRestock ? 'checked' : ''}/> Deliver restocks immediately</label></div>
-    <div class="settings-actions wrap"><button class="primary" type="submit">Save alert rules</button><button type="button" data-watch="${escapeHtml(p.slug)}">Remove from watchlist</button></div>
-    <div class="settings-result hidden" data-rule-result></div>
+    <div class="inline-checks"><label><input name="availableUnderTarget" type="checkbox" ${rule.availableUnderTarget ? 'checked' : ''} /> Alert when available at or below the target price</label></div>
+    <p class="rule-help">This condition alerts on a qualifying restock or a confirmed price reaching the target while available. It replaces the separate restock and price-change choices. Prices use this Store region's currency and exclude checkout costs.</p>
+    ${collectionFields}
+    <div class="settings-actions wrap"><button class="primary" type="submit">Save alert rules</button><button type="button" data-preview-rule>Preview rule & notification</button><button type="button" data-purchased="${escapeHtml(p.slug)}">${rule.purchasedAt ? 'Still wanted' : 'Mark purchased'}</button><button type="button" data-watch="${escapeHtml(p.slug)}">Remove from watchlist</button></div>
+    ${rule.purchasedAt ? '<p class="rule-help">Purchased: alerts are stopped. Mark this watch as still wanted to enable it again.</p>' : ''}
+    <div class="settings-result hidden" data-rule-result role="status" aria-live="polite"></div>
   </form>` : `<div class="product-watch-prompt"><p>Add this product to your watchlist to configure its alert rules.</p><button class="primary button-link" data-watch="${escapeHtml(p.slug)}">Watch this product</button></div>`;
   const changes = details.history.slice(0, 12).map((item) => `<div class="product-change"><span class="connection-dot ${item.inStock ? 'enabled' : ''}"></span><div><strong>${escapeHtml(item.changeType.replaceAll('-', ' '))}</strong><small>${escapeHtml(item.status || 'Unknown')}${item.price ? ` · ${escapeHtml(item.price)}` : ''}</small></div><time>${escapeHtml(relativeTime(item.observedAt))}</time></div>`).join('');
-  $('productDialogBody').innerHTML = `<div class="product-hero"><div class="product-hero-image media-shell">${imageMarkup(p, 'product-image')}</div><div><div class="product-status-row"><span class="badge ${p.inStock ? 'in' : p.comingSoon ? 'soon' : 'out'}">${p.unlisted ? 'Unlisted' : p.inStock ? 'In stock' : p.comingSoon ? 'Coming soon' : 'Sold out'}</span><strong>${escapeHtml(p.price || 'Price unavailable')}</strong></div><div class="product-sku-row"><p>${escapeHtml(p.slug)}</p><button class="copy-button" type="button" data-copy-text="${escapeHtml(p.slug)}" data-copy-label="SKU">Copy SKU</button></div><dl class="settings-details"><div><dt>Store region</dt><dd>${escapeHtml(String(p.region || app.currentRegion || '').toUpperCase())}</dd></div><div><dt>First observed</dt><dd>${escapeHtml(relativeTime(details.firstObservedAt))}</dd></div><div><dt>Last checked</dt><dd>${escapeHtml(relativeTime(p.lastSeenAt))}</dd></div><div><dt>Last changed</dt><dd>${escapeHtml(relativeTime(details.lastChangedAt))}</dd></div><div><dt>History retention</dt><dd>${details.historyRetentionDays} days</dd></div></dl><div class="product-link-actions"><a class="button-link" href="${escapeHtml(p.url)}" target="_blank" rel="noopener">Open UniFi Store ↗</a><button class="copy-button" type="button" data-copy-text="${escapeHtml(p.url)}" data-copy-label="Store link">Copy link</button></div></div></div>
-    ${ruleForm}<section class="product-history"><h3>Price history</h3>${historyChart(details.history)}<h3>Recent changes</h3><div class="product-change-list">${changes || '<div class="history-empty">No changes recorded yet.</div>'}</div></section>`;
+  $('productDialogBody').innerHTML = `<div class="product-hero"><div class="product-hero-image media-shell">${imageMarkup(p, 'product-image')}</div><div><div class="product-status-row"><span class="badge ${p.inStock ? 'in' : p.comingSoon ? 'soon' : 'out'}">${p.unlisted ? 'Unlisted' : p.inStock ? 'In stock' : p.comingSoon ? 'Coming soon' : 'Sold out'}</span><strong>${escapeHtml(p.price || 'Price unavailable')}</strong></div><div class="product-sku-row"><p>${escapeHtml(p.sku || p.slug)}</p><button class="copy-button" type="button" data-copy-text="${escapeHtml(p.sku || p.slug)}" data-copy-label="SKU">Copy SKU</button></div><dl class="settings-details"><div><dt>Store region</dt><dd>${escapeHtml(String(p.region || app.currentRegion || '').toUpperCase())}</dd></div><div><dt>First observed</dt><dd>${escapeHtml(relativeTime(details.firstObservedAt))}</dd></div><div><dt>Last checked</dt><dd>${escapeHtml(relativeTime(p.lastSeenAt))}</dd></div><div><dt>Last changed</dt><dd>${escapeHtml(relativeTime(details.lastChangedAt))}</dd></div><div><dt>History retention</dt><dd>${details.historyRetentionDays} days</dd></div></dl><div class="product-link-actions"><a class="button-link" href="${escapeHtml(p.url)}" target="_blank" rel="noopener">Open UniFi Store ↗</a><button class="copy-button" type="button" data-copy-text="${escapeHtml(p.url)}" data-copy-label="Store link">Copy link</button></div></div></div>
+    ${variantSelector}${ruleForm}<section class="product-history"><h3>Price history</h3>${historyChart(details.history)}<h3>Recent changes</h3><div class="product-change-list">${changes || '<div class="history-empty">No changes recorded yet.</div>'}</div></section>`;
   wireProductImages($('productDialogBody'));
 }
 
 async function openProductDialog(slug, preserveFocus = false) {
-  if (!preserveFocus) app.lastFocusedProduct = document.activeElement;
+  const request = (app.productRequest || 0) + 1;
+  app.productRequest = request;
+  if (!preserveFocus) { app.lastFocusedProduct = document.activeElement; app.lastFocusedProductSlug = slug; }
   $('productDialog').classList.remove('hidden');
   document.body.classList.add('dialog-open');
   $('productDialogTitle').textContent = 'Loading product…';
   $('productDialogBody').innerHTML = '<div class="dialog-loading">Loading product history and alert rules…</div>';
   $('closeProductDialog').focus();
-  try { renderProductDialog(await api(`/api/products/${encodeURIComponent(slug)}`)); }
+  try { const details = await api(`/api/products/${encodeURIComponent(slug)}`); if (app.productRequest === request) renderProductDialog(details); }
   catch (err) { $('productDialogBody').innerHTML = `<div class="settings-result error">${escapeHtml(err.message)}</div>`; }
 }
 
 function closeProductDialog() {
+  app.productRequest = (app.productRequest || 0) + 1;
   $('productDialog').classList.add('hidden');
   document.body.classList.remove('dialog-open');
   app.currentProductDetails = null;
-  app.lastFocusedProduct?.focus?.();
+  const original = app.lastFocusedProduct;
+  const replacement = document.querySelector(`.page.active [data-product-detail="${CSS.escape(app.lastFocusedProductSlug || '')}"]`);
+  (original?.isConnected ? original : replacement || document.querySelector('.tabs [aria-selected="true"]'))?.focus();
 }
 
-async function saveProductRule(form) {
+function readProductRule(form) {
   const readOverride = (name) => { const value = form.elements[name].value; return value === 'inherit' ? null : value === 'true'; };
   const pause = form.elements.pause.value;
   const pausedUntil = pause === 'active' ? null : pause === 'indefinite' ? 'indefinite' : pause.startsWith('existing:') ? pause.slice(9) : new Date(Date.now() + Number(pause) * 60000).toISOString();
-  const rule = { restock:readOverride('restock'), soldOut:readOverride('soldOut'), priceChange:readOverride('priceChange'), statusChange:readOverride('statusChange'), targetPrice:form.elements.targetPrice.value || null, priceDropOnly:form.elements.priceDropOnly.checked, immediateRestock:form.elements.immediateRestock.checked, pausedUntil };
+  return { restock:readOverride('restock'), soldOut:readOverride('soldOut'), priceChange:readOverride('priceChange'), statusChange:readOverride('statusChange'), targetPrice:form.elements.targetPrice.value || null, priceDropOnly:form.elements.priceDropOnly.checked, immediateRestock:form.elements.immediateRestock.checked, availableUnderTarget:form.elements.availableUnderTarget.checked, pausedUntil };
+}
+
+async function previewProductRule(form) {
+  const result = form.querySelector('[data-rule-result]');
+  result.classList.remove('hidden'); result.textContent = 'Checking this rule…';
+  try {
+    const preview = await api(`/api/watch/${encodeURIComponent(form.dataset.ruleSlug)}/preview`, { method:'POST', body:JSON.stringify({ rule:readProductRule(form) }) });
+    result.textContent = `${preview.description} ${preview.allActivity ? 'All activity updates is enabled and overrides event conditions. ' : ''}${preview.decision.allowed ? 'A restock at the currently displayed price would qualify.' : `A restock at the currently displayed price would not alert (${preview.decision.reason.replaceAll('-', ' ')}).`} Channels: ${preview.configuredChannels.join(', ') || 'No server channels configured'}. Notification preview: ${preview.copy.title} — ${preview.copy.body}`;
+  } catch (err) { result.textContent = err.message; }
+}
+
+async function saveProductRule(form) {
+  const rule = readProductRule(form);
   const resultBox = form.querySelector('[data-rule-result]');
   const button = form.querySelector('button[type="submit"]');
   button.disabled = true; button.textContent = 'Saving…';
   try {
     const result = await api(`/api/watch/${encodeURIComponent(form.dataset.ruleSlug)}/rules`, { method:'PUT', body:JSON.stringify({ rule }) });
-    const product = app.products.find((item) => item.slug === form.dataset.ruleSlug); if (product) product.watchRule = result.rule;
+    const membership = await api(`/api/watch/${encodeURIComponent(form.dataset.ruleSlug)}/collections`, { method:'PUT', body:JSON.stringify({ collections:[...form.querySelectorAll('[name="collection"]:checked')].map((input) => input.value) }) });
+    app.collections = membership.collections;
+    const product = app.products.find((item) => item.slug === form.dataset.ruleSlug); if (product) Object.assign(product, membership.product, { watchRule:result.rule });
     renderProducts(true); await openProductDialog(form.dataset.ruleSlug, true); toast('Product alert rules saved');
   } catch (err) { resultBox.classList.remove('hidden'); resultBox.textContent = err.message; button.disabled = false; button.textContent = 'Save alert rules'; }
 }
@@ -1607,6 +1650,8 @@ async function refresh() {
     app.reconnectPending = false;
     app.status = status;
     app.products = products.products || [];
+    app.collections = products.collections || [];
+    renderCollections();
     maybeBrowserNotify(events.events || []);
     app.events = events.events || [];
     renderStatus(); renderProducts(); renderEvents(); renderSettings(); renderEmailPreviewProducts();
@@ -1629,7 +1674,7 @@ async function refresh() {
 }
 
 async function toggleWatch(slug) {
-  const product = app.products.find((p) => p.slug === slug);
+  const product = app.products.find((p) => p.slug === slug) || (app.currentProductDetails?.product.slug === slug ? app.currentProductDetails.product : null);
   if (!product) return;
   try {
     if (product.watched) {
@@ -1638,10 +1683,49 @@ async function toggleWatch(slug) {
     } else {
       const result = await api('/api/watch', { method:'POST', body:JSON.stringify({ slug }) });
       Object.assign(product, result.product || {}, { watched:true });
+      if (!app.products.some((item) => item.slug === slug)) app.products.push(product);
     }
     renderProducts(true);
     toast(product.watched ? `Watching ${product.name}` : `Stopped watching ${product.name}`);
     if (!$('productDialog').classList.contains('hidden')) openProductDialog(slug, true);
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+function renderCollections() {
+  const key = JSON.stringify(app.collections);
+  if (key === app.collectionsRenderKey) return;
+  app.collectionsRenderKey = key;
+  $('collectionList').innerHTML = app.collections.map((collection) => `<div class="collection-row" data-collection-row="${escapeHtml(collection.id)}"><label class="field"><span>${collection.slugs.length} watch${collection.slugs.length === 1 ? '' : 'es'}</span><input value="${escapeHtml(collection.name)}" maxlength="80" aria-label="Rename ${escapeHtml(collection.name)}" /></label><button type="button" data-rename-collection="${escapeHtml(collection.id)}">Rename</button><button type="button" data-delete-collection="${escapeHtml(collection.id)}">Delete</button></div>`).join('') || '<p>No collections yet.</p>';
+}
+
+async function changeCollection(action, id = null) {
+  try {
+    const row = id ? document.querySelector(`[data-collection-row="${id}"]`) : null;
+    const name = action === 'create' ? $('collectionName').value : row?.querySelector('input').value;
+    if (action === 'delete' && !window.confirm('Delete this collection? Its watches and history will be kept.')) return;
+    const result = await api(id ? `/api/collections/${encodeURIComponent(id)}` : '/api/collections', { method:action === 'create' ? 'POST' : action === 'delete' ? 'DELETE' : 'PUT', ...(action !== 'delete' ? { body:JSON.stringify({ name }) } : {}) });
+    app.collections = result.collections;
+    if (action === 'create') $('collectionName').value = '';
+    await refresh();
+    $('collectionResult').textContent = action === 'create' ? 'Collection created. Assign watches from their alert rules.' : action === 'delete' ? 'Collection deleted. Watches retained.' : 'Collection renamed.';
+    if (action === 'rename') document.querySelector(`[data-rename-collection="${id}"]`)?.focus();
+    else $('collectionName').focus();
+  } catch (err) { $('collectionResult').textContent = err.message; }
+}
+
+async function markPurchased(slug) {
+  const product = app.products.find((item) => item.slug === slug);
+  if (!product) return;
+  const action = product.watchRule?.purchasedAt ? 'wanted' : 'purchased';
+  try {
+    const result = await api('/api/watch/bulk', { method:'POST', body:JSON.stringify({ action, slugs:[slug] }) });
+    Object.assign(product, result.products[0]);
+    renderProducts(true);
+    if (app.currentProductDetails?.product.slug === slug) {
+      await openProductDialog(slug, true);
+      document.querySelector('#productDialogBody [data-purchased]')?.focus();
+    } else (document.querySelector(`#watchGrid [data-purchased="${CSS.escape(slug)}"]`) || $('watchStatus')).focus();
+    toast(action === 'purchased' ? 'Marked purchased. Alerts stopped; history retained.' : 'Marked as still wanted. Saved alert rules apply.');
   } catch (err) { toast(err.message, 'error'); }
 }
 
@@ -1661,6 +1745,14 @@ async function bulkWatchAction(action) {
 }
 
 document.addEventListener('click', (event) => {
+  const purchased = event.target.closest('[data-purchased]');
+  if (purchased) { markPurchased(purchased.dataset.purchased); return; }
+  const preview = event.target.closest('[data-preview-rule]');
+  if (preview) { previewProductRule(preview.closest('form')); return; }
+  const rename = event.target.closest('[data-rename-collection]');
+  if (rename) { changeCollection('rename', rename.dataset.renameCollection); return; }
+  const removeCollection = event.target.closest('[data-delete-collection]');
+  if (removeCollection) { changeCollection('delete', removeCollection.dataset.deleteCollection); return; }
   const copy = event.target.closest('[data-copy-text]');
   if (copy) { event.preventDefault(); copyText(copy.dataset.copyText, copy.dataset.copyLabel || 'Text'); return; }
   const imageRetry = event.target.closest('[data-image-retry]');
@@ -1693,6 +1785,8 @@ document.addEventListener('click', (event) => {
   if (retry) api('/api/notifications/retry-failed', { method:'POST' }).then((result) => { toast(`${result.queued} failed deliveries queued`); refreshOperations(); }).catch((err) => toast(err.message, 'error'));
 });
 document.addEventListener('change', (event) => {
+  const variant = event.target.closest('[data-variant-selector]');
+  if (variant) { openProductDialog(variant.value, true).then(() => document.querySelector('[data-variant-selector]')?.focus()); return; }
   const selection = event.target.closest('[data-watch-select]');
   if (!selection) return;
   if (selection.checked) app.selectedWatch.add(selection.dataset.watchSelect); else app.selectedWatch.delete(selection.dataset.watchSelect);
@@ -1780,7 +1874,9 @@ window.addEventListener('scroll', updateToTopVisibility, { passive:true });
 window.addEventListener('resize', updateToTopVisibility);
 let browseSearchTimer = null;
 $('search').addEventListener('input', () => { clearTimeout(browseSearchTimer); browseSearchTimer = setTimeout(() => { app.browseVisibleCount = 48; persistUiState(); renderProducts(true); }, 180); });
-for (const id of ['watchSearch','watchStatus','watchCategory','watchSort']) $(id).addEventListener(id === 'watchSearch' ? 'input' : 'change', () => { persistUiState(); renderProducts(true); });
+for (const id of ['watchSearch','watchStatus','watchCategory','watchSort','watchCollection']) $(id).addEventListener(id === 'watchSearch' ? 'input' : 'change', () => { persistUiState(); renderProducts(true); });
+$('collectionForm').addEventListener('submit', (event) => { event.preventDefault(); changeCollection('create'); });
+$('selectVisibleWatches').addEventListener('click', () => { app.selectedWatch = new Set(filteredWatchlist().map((product) => product.slug)); renderProducts(true); });
 $('resetWatchFilters').addEventListener('click', resetWatchFilters);
 $('resetWatchEmpty').addEventListener('click', resetWatchFilters);
 $('resetBrowseFilters').addEventListener('click', resetBrowseFilters);

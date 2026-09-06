@@ -218,10 +218,22 @@ button.ghost { background: transparent; }
 .rule-chips { display:flex; flex-wrap:wrap; gap:5px; margin-top:10px; }
 .rule-chip { border:1px solid var(--border); border-radius:99px; padding:4px 7px; color:var(--muted); font-size:9px; }
 .rule-chip.paused { border-color:var(--warn); color:var(--warn); }
-.watch-toolbar { display:grid; grid-template-columns:minmax(180px,1.5fr) repeat(3,minmax(140px,1fr)) auto; gap:8px; margin-bottom:12px; }
+.watch-toolbar { display:grid; grid-template-columns:minmax(140px,1.5fr) repeat(4,minmax(100px,1fr)) auto; gap:8px; margin-bottom:12px; }
+.collection-toolbar { display:flex; flex-wrap:wrap; align-items:flex-start; gap:12px; margin-bottom:16px; }
+.collection-manager { flex:1; min-width:0; border:1px solid var(--border); border-radius:10px; padding:10px; }
+.collection-manager summary { cursor:pointer; }
+.collection-form,.collection-row { display:flex; flex-wrap:wrap; align-items:end; gap:8px; margin-top:12px; }
+.collection-form .field,.collection-row .field { flex:1; min-width:140px; }
+.collection-form input,.collection-row input,.variant-picker select { width:100%; min-width:0; max-width:100%; }
+.variant-picker { min-width:0; margin-bottom:12px; }
+.watch-collection-choices { display:flex; flex-wrap:wrap; gap:12px; min-width:0; border:1px solid var(--border); border-radius:8px; margin:14px 0; padding:12px; }
+.watch-collection-choices label { display:flex; align-items:center; gap:6px; overflow-wrap:anywhere; }
+.watch-collection-choices input { width:auto; }
+.rule-help { color:var(--muted); font-size:12px; line-height:1.6; }
+.collection-row,.collection-manager,.rule-chips,.settings-result { overflow-wrap:anywhere; }
 .watch-toolbar input,.watch-toolbar select,.bulk-actions select { min-width:0; border:1px solid var(--border); background:var(--input-bg); color:var(--text); border-radius:9px; padding:9px 10px; }
 .filter-reset { align-self:stretch; white-space:nowrap; color:var(--muted); }
-.bulk-actions { display:flex; align-items:center; gap:8px; padding:10px 12px; margin-bottom:12px; border:1px solid var(--accent); border-radius:11px; background:var(--accent-soft); }
+.bulk-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:10px 12px; margin-bottom:12px; border:1px solid var(--accent); border-radius:11px; background:var(--accent-soft); }
 .bulk-actions strong { margin-right:auto; font-size:12px; }
 .bulk-actions button,.bulk-actions select { padding:7px 10px; font-size:11px; }
 .danger-button { color:var(--bad); }

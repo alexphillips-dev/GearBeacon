@@ -2,6 +2,19 @@
 
 The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. The first release promoted to `main` is V1.0.0.
 
+## V1.1.0 — Precision monitoring and smart watchlists
+
+- Added exact variant watches with stable regional identities, actual SKUs, variant images and Store links, independent stock/price history, and separate persisted confirmation evidence. Existing product watches retain their Any variant scope.
+- Preserved explicit variant selections when importing Store URLs and matched exact variant SKUs. Unknown explicit variants are rejected without silently selecting the parent product.
+- Added an opt-in available-at-target condition that combines stock and price, alerts on qualifying restocks or confirmed price changes, and persists its matching state to prevent duplicate alerts after price confirmation or restart. Any variant conditions can match a specific variant while another remains available.
+- Added server-evaluated rule and notification previews with regional currency, configured channels, and an explicit explanation of the All activity updates override.
+- Added regional watchlist collections with create, rename, delete, membership editing, persistent filters, and selection of visible watches for bulk pause/resume. Multiple collections reference one watch without duplicating its delivery jobs.
+- Added Purchased and Still wanted actions that retain watches, rules, and history while stopping future alerts and cancelling pending or failed jobs for purchased watches.
+- Added backup-protected schema-v8 migration and format-v4 recovery exports carrying collections, purchased watches, exact variants, and condition state. Earlier backup formats remain importable; downgrading requires restoring a pre-upgrade backup.
+- Prevented partial or structurally invalid variant catalogs from advancing confirmation evidence, improved image-button accessible names, and retained responsive and keyboard operation for the new controls.
+- Redacted product identities, variant metadata, collection data, and pending product observations from support bundles while retaining operational counts and health evidence.
+- Added deterministic variant, rule, collection, restart, and recovery regression coverage, browser coverage for the complete owner flow, and exact-variant validation in the four-region live catalog canary.
+
 ## V1.0.1 — Security hardening
 
 - Added strict Host and forwarded-host validation before routing, including loopback-only local-mode enforcement and exact reverse-proxy authority checks to resist DNS rebinding.

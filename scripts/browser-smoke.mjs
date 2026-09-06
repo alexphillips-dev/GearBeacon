@@ -162,8 +162,8 @@ try {
   await assertAccessible('Owner setup screen');
   await evaluate(`(() => {
     document.getElementById('setupToken').value = 'v19-browser-setup-token';
-    document.getElementById('authPassword').value = 'V1.0.1 browser owner password';
-    document.getElementById('authPasswordConfirm').value = 'V1.0.1 browser owner password';
+    document.getElementById('authPassword').value = 'V1.1.0 browser owner password';
+    document.getElementById('authPasswordConfirm').value = 'V1.1.0 browser owner password';
     document.getElementById('authForm').requestSubmit();
   })()`);
   await waitForBrowser("!document.getElementById('appShell').classList.contains('hidden') && app.products.length >= 5", 'Authenticated dashboard did not load');
@@ -422,7 +422,7 @@ try {
   await evaluate("document.getElementById('closeProductDialog').click(); document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabData').click()");
   await waitForBrowser("!document.getElementById('settingsPanelData').hidden && document.getElementById('settingsPanelNotifications').hidden", 'Data settings tab failed');
   const recoverySettings = await evaluate("({ activityRetention:document.getElementById('configEventRetention').value, secondaryDirectory:document.getElementById('configSecondaryBackupDir').value, encrypted:document.getElementById('configSecondaryEncrypted').checked, hasPrimaryTest:Boolean(document.getElementById('testPrimaryBackup')), hasSecondaryTest:Boolean(document.getElementById('testSecondaryBackup')) })");
-  assert(recoverySettings.activityRetention === '365' && recoverySettings.secondaryDirectory === '' && !recoverySettings.encrypted && recoverySettings.hasPrimaryTest && recoverySettings.hasSecondaryTest, `V1.0.1 recovery settings are incomplete: ${JSON.stringify(recoverySettings)}`);
+  assert(recoverySettings.activityRetention === '365' && recoverySettings.secondaryDirectory === '' && !recoverySettings.encrypted && recoverySettings.hasPrimaryTest && recoverySettings.hasSecondaryTest, `V1.1.0 recovery settings are incomplete: ${JSON.stringify(recoverySettings)}`);
   const browserBackup = await evaluate(`(async () => {
     const backup = await api('/api/data/export/encrypted', { method:'POST', body:JSON.stringify({ passphrase:'browser backup passphrase' }) });
     const preview = await api('/api/data/preview', { method:'POST', body:JSON.stringify({ backup, passphrase:'browser backup passphrase' }) });
@@ -461,7 +461,7 @@ try {
 
   await evaluate("document.getElementById('logoutBtn').click()");
   await waitForBrowser("!document.getElementById('authGate').classList.contains('hidden')", 'Browser logout did not return to the owner gate');
-  await evaluate("(() => { document.getElementById('authPassword').value='V1.0.1 browser owner password'; document.getElementById('authForm').requestSubmit(); })()");
+  await evaluate("(() => { document.getElementById('authPassword').value='V1.1.0 browser owner password'; document.getElementById('authForm').requestSubmit(); })()");
   await waitForBrowser("!document.getElementById('appShell').classList.contains('hidden') && app.auth.authenticated", 'Browser login after logout failed');
   await evaluate("document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabSecurity').click()");
   await waitForBrowser("document.querySelectorAll('#sessionList [data-revoke-session]').length >= 1", 'Authenticated session management did not render');
@@ -485,7 +485,57 @@ try {
   await evaluate("window.dispatchEvent(new Event('online'))");
   await waitForBrowser("!app.browserOffline && document.getElementById('toast').textContent === 'Connection restored' && document.getElementById('toast').classList.contains('success')", 'Reconnect state did not confirm recovery');
 
-  console.log(`BROWSER SMOKE PASSED: ${process.platform} · setup/auth · WCAG axe scans · keyboard/focus/reduced-motion · persistent navigation/filters · resettable empty states · offline recovery · copy actions · unclipped navigation · dark/light · images · watch/rules/bulk/import · compact searchable activity/evidence · email settings/preview/deep-link · backup/import · diagnostics/operations · responsive`);
+  // Precision watch workflows use browser controls, real API calls, and isolated mock data.
+  await evaluate("activateTab('watchlist'); document.querySelector('.collection-manager').open=true; document.getElementById('collectionName').value='Camera project'; document.getElementById('collectionForm').requestSubmit()");
+  await waitForBrowser("app.collections.some((item) => item.name === 'Camera project')", 'Collection creation failed');
+  await assertAccessible('Collection manager');
+  await evaluate("activateTab('browse'); resetBrowseFilters(); document.getElementById('tabBrowse').focus(); openProductDialog('uvc-g5-ptz')");
+  await waitForBrowser("document.querySelector('[data-variant-selector]')?.options.length === 3", 'Variant choices did not render');
+  await evaluate("(() => { const picker=document.querySelector('[data-variant-selector]'); picker.value='uvc-g5-ptz::mock-black'; picker.dispatchEvent(new Event('change',{bubbles:true})); })()");
+  await waitForBrowser("app.currentProductDetails?.product.variantId === 'mock-black' && document.activeElement.matches('[data-variant-selector]')", 'Variant selection did not restore keyboard focus');
+  assert(await evaluate("document.getElementById('productDialogBody').textContent.includes('MOCK-G5-PTZ-B') && document.querySelector('.product-link-actions a').href.includes('variant=uvc-g5-ptz-black')"), 'Variant SKU or exact Store link is incorrect');
+  await evaluate("document.querySelector('.product-watch-prompt [data-watch]').click()");
+  await waitForBrowser("document.getElementById('productRuleForm') && app.currentProductDetails?.product.watched", 'Exact variant watch could not be added');
+  await evaluate("(() => { const form=document.getElementById('productRuleForm'); form.elements.targetPrice.value='320'; form.elements.availableUnderTarget.checked=true; form.querySelector('[name=collection]').checked=true; form.querySelector('[data-preview-rule]').click(); })()");
+  await waitForBrowser("/Black.*320 USD/.test(document.querySelector('[data-rule-result]')?.textContent || '')", 'Combined rule preview did not describe the selected variant and regional target');
+  await evaluate("document.getElementById('productRuleForm').requestSubmit()");
+  await waitForBrowser("app.products.find((item) => item.slug === 'uvc-g5-ptz::mock-black')?.watchRule?.availableUnderTarget && app.currentProductDetails?.product.collections.length === 1", 'Combined rule or collection membership was not saved');
+  for (const theme of ['dark','light']) {
+    await evaluate(`applyTheme(${JSON.stringify(theme)})`);
+    // Match the existing theme scan: measure settled colors after CSS transitions.
+    await delay(250);
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width:390,height:844,screenWidth:390,screenHeight:844,deviceScaleFactor:1,mobile:false });
+    assert(await evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1 && document.querySelector('.product-dialog-panel').scrollWidth <= document.querySelector('.product-dialog-panel').clientWidth + 1"), `Variant rule dialog overflows at 390px in ${theme}`);
+    await assertAccessible(`Variant rule dialog ${theme}`);
+  }
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width:640,height:450,screenWidth:1280,screenHeight:900,deviceScaleFactor:2,mobile:false });
+  assert(await evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), 'Precision controls overflow at 200% equivalent zoom');
+  await evaluate("document.querySelector('#productDialogBody [data-purchased]').click()");
+  await waitForBrowser("app.currentProductDetails?.product.watchRule?.purchasedAt && document.activeElement.matches('[data-purchased]')", 'Purchased action did not stop alerts and restore focus');
+  await evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
+  await waitForBrowser("document.getElementById('productDialog').classList.contains('hidden')", 'Variant dialog did not close with Escape');
+  assert(await evaluate("document.activeElement === document.getElementById('tabBrowse')"), 'Variant dialog did not restore its original trigger focus');
+  await evaluate("activateTab('watchlist'); resetWatchFilters(); const picker=document.getElementById('watchCollection'); picker.value=app.collections.find((item) => item.name === 'Camera project').id; picker.dispatchEvent(new Event('change',{bubbles:true}))");
+  assert(await evaluate("document.querySelectorAll('#watchGrid .watch-card').length === 1 && /Purchased/.test(document.getElementById('watchGrid').textContent)"), 'Collection filter or purchased marker failed');
+  await evaluate("document.querySelector('#watchGrid [data-purchased]').click()");
+  await waitForBrowser("!app.products.find((item) => item.slug === 'uvc-g5-ptz::mock-black').watchRule.purchasedAt", 'Still wanted did not clear purchased state');
+  await evaluate("document.getElementById('selectVisibleWatches').click(); document.getElementById('bulkPause').click()");
+  await waitForBrowser("app.products.find((item) => item.slug === 'uvc-g5-ptz::mock-black').watchRule.pausedUntil", 'Collection bulk pause failed');
+  assert(await evaluate("!app.products.find((item) => item.slug === 'u7-pro-xgs').watchRule.pausedUntil"), 'Collection bulk pause changed an unrelated watch');
+  await evaluate("document.getElementById('selectVisibleWatches').click(); document.getElementById('bulkResume').click()");
+  await waitForBrowser("!app.products.find((item) => item.slug === 'uvc-g5-ptz::mock-black').watchRule.pausedUntil", 'Collection bulk resume failed');
+  await evaluate("document.querySelector('.collection-manager').open=true; document.querySelector('[data-collection-row] input').value='Renamed cameras'; document.querySelector('[data-rename-collection]').click()");
+  await waitForBrowser("app.collections.some((item) => item.name === 'Renamed cameras')", 'Collection rename failed');
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width:390,height:844,screenWidth:390,screenHeight:844,deviceScaleFactor:1,mobile:false });
+  assert(await evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), 'Collection manager overflows on mobile');
+  await assertAccessible('Mobile collections and precision watchlist');
+  const selectedCollection = await evaluate("document.getElementById('watchCollection').value");
+  await cdp.send('Page.reload');
+  await waitForBrowser(`app.products.some((item) => item.slug === 'uvc-g5-ptz::mock-black') && document.getElementById('watchCollection').value === ${JSON.stringify(selectedCollection)}`, 'Collection filter did not survive reload');
+  await evaluate("window.confirm=() => true; document.querySelector('.collection-manager').open=true; document.querySelector('[data-delete-collection]').click()");
+  await waitForBrowser("app.collections.length === 0", 'Collection deletion failed');
+  assert(await evaluate("app.products.some((item) => item.slug === 'uvc-g5-ptz::mock-black' && item.watched)"), 'Collection deletion removed its watch');
+  console.log(`BROWSER SMOKE PASSED: ${process.platform} · setup/auth · WCAG axe scans · keyboard/focus/reduced-motion · persistent navigation/filters · resettable empty states · offline recovery · copy actions · unclipped navigation · dark/light · images · watch/rules/bulk/import · exact variants/combined preview/collections/purchased · compact searchable activity/evidence · email settings/preview/deep-link · backup/import · diagnostics/operations · responsive`);
 } catch (error) {
   if (serverOutput.length) process.stderr.write(`\nGearBeacon server output:\n${serverOutput.join('').slice(-12000)}\n`);
   throw error;

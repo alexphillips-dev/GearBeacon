@@ -1,4 +1,4 @@
-// GearBeacon V1.0.1 backend
+// GearBeacon V1.1.0 backend
 // Private, owner-operated stock monitoring for local and self-hosted installs.
 // @ts-nocheck
 
@@ -14,8 +14,8 @@ const { URL } = require('node:url');
 const { DatabaseSync } = require('node:sqlite');
 const { renderEmail, buildMimeEmail, numericPrice } = require('./email');
 
-const APP_VERSION = '1.0.1';
-const DATABASE_SCHEMA_VERSION = 7;
+const APP_VERSION = '1.1.0';
+const DATABASE_SCHEMA_VERSION = 8;
 const STORE_BASE = 'https://store.ui.com';
 const REGIONS = {
   us: { label: 'United States', path: 'us/en', currency: 'USD', origin: STORE_BASE },
@@ -247,6 +247,8 @@ const DEFAULT_WATCH_RULE = Object.freeze({
   targetPrice: null,
   immediateRestock: false,
   pausedUntil: null,
+  availableUnderTarget: false,
+  purchasedAt: null,
 });
 
 function priceValue(value) {
@@ -262,6 +264,13 @@ function normalizeWatchRule(input, base = DEFAULT_WATCH_RULE) {
   }
   if (typeof value.priceDropOnly === 'boolean') normalized.priceDropOnly = value.priceDropOnly;
   if (typeof value.immediateRestock === 'boolean') normalized.immediateRestock = value.immediateRestock;
+  if (typeof value.availableUnderTarget === 'boolean') normalized.availableUnderTarget = value.availableUnderTarget;
+  if (value.purchasedAt === null) normalized.purchasedAt = null;
+  else if (value.purchasedAt !== undefined) {
+    const purchased = new Date(value.purchasedAt);
+    if (Number.isNaN(purchased.valueOf())) throw new Error('Purchased time must be a valid date and time.');
+    normalized.purchasedAt = purchased.toISOString();
+  }
   if (value.targetPrice === null || value.targetPrice === '') normalized.targetPrice = null;
   else if (value.targetPrice !== undefined) {
     const target = Number(value.targetPrice);
@@ -275,6 +284,7 @@ function normalizeWatchRule(input, base = DEFAULT_WATCH_RULE) {
     if (Number.isNaN(paused.valueOf())) throw new Error('Pause end must be a valid date and time.');
     normalized.pausedUntil = paused.toISOString();
   }
+  if (normalized.availableUnderTarget && normalized.targetPrice === null) throw new Error('Set a target price for the available-at-target condition.');
   return normalized;
 }
 
@@ -285,14 +295,23 @@ function watchRule(slug, region = currentRegion()) {
 }
 
 function saveWatchRule(slug, input, region = currentRegion()) {
-  const next = normalizeWatchRule(input, watchRule(slug, region));
+  const previous = watchRule(slug, region);
+  const next = normalizeWatchRule(input, previous);
+  if (tableExists('watch_condition_state') && (next.availableUnderTarget !== previous.availableUnderTarget || next.targetPrice !== previous.targetPrice)) {
+    db.prepare('DELETE FROM watch_condition_state WHERE region=? AND slug=?').run(region, slug);
+  }
   db.prepare(`INSERT INTO watch_rules(region,slug,rule_json,updated_at) VALUES(?,?,?,?)
     ON CONFLICT(region,slug) DO UPDATE SET rule_json=excluded.rule_json,updated_at=excluded.updated_at`)
     .run(region, slug, JSON.stringify(next), isoNow());
+  if (next.purchasedAt && !previous.purchasedAt) {
+    db.prepare("UPDATE notification_queue SET status='cancelled',updated_at=? WHERE region=? AND status IN ('pending','failed') AND json_extract(payload_json,'$.slug')=?")
+      .run(isoNow(), region, slug);
+  }
   return next;
 }
 
 function rulePaused(rule, at = Date.now()) {
+  if (rule.purchasedAt) return true;
   if (!rule.enabled || rule.pausedUntil === 'indefinite') return true;
   return Boolean(rule.pausedUntil && new Date(rule.pausedUntil).getTime() > at);
 }
@@ -650,6 +669,25 @@ const MIGRATIONS = [
     `,
   },
 ];
+
+// New migrations are appended; product and variant identities share the tested
+// regional persistence/history pipeline, while collection membership is separate.
+MIGRATIONS.push({ version:8, name:'precision-watches-and-collections', sql:`
+  CREATE TABLE watch_condition_state (
+    region TEXT NOT NULL, slug TEXT NOT NULL, matched INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(region,slug)
+  );
+  CREATE TABLE watch_collections (
+    region TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL COLLATE NOCASE,
+    created_at TEXT NOT NULL, PRIMARY KEY(region,id), UNIQUE(region,name)
+  );
+  CREATE TABLE watch_collection_members (
+    region TEXT NOT NULL, collection_id TEXT NOT NULL, slug TEXT NOT NULL,
+    PRIMARY KEY(region,collection_id,slug),
+    FOREIGN KEY(region,collection_id) REFERENCES watch_collections(region,id) ON DELETE CASCADE,
+    FOREIGN KEY(region,slug) REFERENCES watchlist(region,slug) ON DELETE CASCADE
+  );
+` });
 
 function runMigrations() {
   // Bootstrap the migration ledger before querying it on a brand-new database.
@@ -1205,7 +1243,7 @@ const monitors = Object.fromEntries(ACTIVE_REGIONS.map((region) => [region, {
   lastSuccessAt: null,
   nextCheckAt: null,
   lastError: null,
-  productCount: Object.keys(states[region].products).length,
+  productCount: Object.values(states[region].products).filter((product) => !product.variantId).length,
   cycle: 0,
   consecutiveFailures: 0,
   lastDurationMs: null,
@@ -1255,10 +1293,16 @@ function mockCatalogSource() {
 
 function mockCatalog() {
   const region = currentRegion();
-  return mockCatalogSource().filter((p) => mockOverrides[p.slug]?.present !== false).map((p) => {
+  return mockCatalogSource().filter((p) => mockOverrides[p.slug]?.present !== false).flatMap((p) => {
     const override = mockOverrides[p.slug] || {};
     const status = override.status || p.status;
-    return {
+    if (Array.isArray(override.variants) || p.slug === 'uvc-g5-ptz') {
+      return normalizeCatalogEntries({ ...p, title:p.name, _category:p.category, variants:override.variants || [
+        { id:'mock-black', slug:'uvc-g5-ptz-black', sku:'MOCK-G5-PTZ-B', title:'Black', status, displayPrice:override.price ?? p.price },
+        { id:'mock-white', slug:'uvc-g5-ptz-white', sku:'MOCK-G5-PTZ-W', title:'White', status:'Available', displayPrice:'$329.00' },
+      ] });
+    }
+    return [{
       ...p,
       price: override.price === undefined ? p.price : override.price,
       status,
@@ -1270,7 +1314,7 @@ function mockCatalog() {
       url: `${REGIONS[region].origin}/${REGIONS[region].path}/products/${p.slug}`,
       region,
       lastSeenAt: isoNow(),
-    };
+    }];
   });
 }
 
@@ -1498,6 +1542,44 @@ function normalizeProduct(product) {
   };
 }
 
+function normalizeCatalogEntries(product) {
+  const visible = (Array.isArray(product.variants) ? product.variants : []).filter((variant) => variant && variant.isVisibleInStore !== false);
+  const parent = normalizeProduct({ ...product, variants:visible });
+  const variants = [];
+  const seen = new Set();
+  for (const variant of Array.isArray(product.variants) ? product.variants : []) {
+    if (!variant || variant.isVisibleInStore === false) continue;
+    const id = String(variant.id || variant.slug || variant.sku || '');
+    const variantSlug = String(variant.slug || variant.sku || '').toLowerCase();
+    if (!id || !variantSlug || !/^[a-z0-9-]+$/i.test(id) || !/^[a-z0-9-]+$/i.test(variantSlug) || typeof variant.status !== 'string' || !variant.status) {
+      monitor.partialErrors.push('A catalog variant was missing its identity or status.');
+      continue;
+    }
+    if (seen.has(id)) {
+      monitor.partialErrors.push('A catalog product contained duplicate variant identities.');
+      continue;
+    }
+    seen.add(id);
+    const sku = String(variant.displaySku || variant.sku || variantSlug).slice(0, 200);
+    const title = String(variant.title || sku).slice(0, 200);
+    const imageIds = new Set(variant.productMediaItemIds || variant.galleryItemIds || []);
+    const gallery = (Array.isArray(product.gallery) ? product.gallery : product.gallery?.items || []).filter((item) => imageIds.has(item.id));
+    const status = typeof variant.status === 'string' ? variant.status : 'Unknown';
+    variants.push({
+      ...parent, slug:`${parent.slug}::${id}`, parentSlug:parent.slug,
+      variantId:id, variantSlug, variantTitle:title, sku,
+      imageUrl:firstImage({ images:gallery.map((item) => item.data || item) }) || firstImage(variant) || parent.imageUrl,
+      name:`${parent.name} · ${title}`, price:firstPrice({ variants:[variant] }),
+      status, inStock:status === 'Available', comingSoon:status === 'ComingSoon',
+      restockEtaAt:minIso([variant.restockEtaAt]), soldOutAt:maxIso([variant.soldOutAt]),
+      url:`${parent.url}?variant=${encodeURIComponent(variantSlug)}`,
+    });
+  }
+  // Parent watches keep their pre-1.1 meaning; exact watches use independent keys.
+  parent.variantKeys = variants.map((variant) => variant.slug);
+  return [parent, ...variants];
+}
+
 async function fetchCatalogWithBuild(buildId) {
   const results = await Promise.allSettled(CATEGORIES.map((category) => fetchCategory(buildId, category)));
   let saw404 = false;
@@ -1522,7 +1604,7 @@ async function fetchCatalogWithBuild(buildId) {
   monitor.partialErrors = errors.slice(0, 8);
   const deduped = new Map();
   raw.forEach((p) => { if (p.slug) deduped.set(p.slug, p); });
-  return [...deduped.values()].map(normalizeProduct);
+  return [...deduped.values()].flatMap(normalizeCatalogEntries);
 }
 
 async function fetchCatalog() {
@@ -1606,6 +1688,10 @@ function createEvent(type, previous, current, watchedAtDetection, confirmation =
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     type,
     slug: current.slug,
+    parentSlug: current.parentSlug || null,
+    variantId: current.variantId || null,
+    variantTitle: current.variantTitle || null,
+    sku: current.sku || current.slug,
     name: current.name,
     category: current.category,
     imageUrl: current.imageUrl || null,
@@ -1694,16 +1780,26 @@ function notificationCopy(event) {
   };
 }
 
-function notificationDecision(event, prefs = notificationPreferences()) {
+function notificationDecision(event, prefs = notificationPreferences(), ruleOverride = null) {
   if (event.type === 'test' || event.type === 'operational') return { allowed: true, reason: 'immediate', rule: { ...DEFAULT_WATCH_RULE } };
+  const rule = ruleOverride || (event.watchedAtDetection ? watchRule(event.slug, event.region || currentRegion()) : { ...DEFAULT_WATCH_RULE });
+  if (event.watchedAtDetection && rule.purchasedAt) return { allowed:false, reason:'purchased', rule };
   if (prefs.allActivity) {
-    const rule = event.watchedAtDetection ? watchRule(event.slug, event.region || currentRegion()) : { ...DEFAULT_WATCH_RULE };
     return { allowed: true, reason: 'all-activity-enabled', rule };
   }
+  // Variant baseline discovery is recorded in history, not broadcast as a new product.
+  if (event.type === 'new_product' && event.variantId) return { allowed:false, reason:'variant-baseline', rule };
   if (event.type === 'new_product') return { allowed: Boolean(prefs.newProduct), reason: prefs.newProduct ? 'enabled' : 'disabled', rule: { ...DEFAULT_WATCH_RULE } };
   if (!event.watchedAtDetection) return { allowed: false, reason: 'not-watched', rule: { ...DEFAULT_WATCH_RULE } };
-  const rule = watchRule(event.slug, event.region || currentRegion());
   if (rulePaused(rule)) return { allowed: false, reason: 'paused', rule };
+  if (rule.availableUnderTarget && ['restock', 'price_change'].includes(event.type)) {
+    if (event.conditionSuppressed) return { allowed:false, reason:event.conditionSuppressionReason || 'condition-already-matched', rule };
+    const current = priceValue(event.price);
+    const previous = priceValue(event.previousPrice);
+    const qualifies = event.inStock === true && current !== null && current <= rule.targetPrice;
+    const entering = event.type === 'restock' || previous === null || previous > rule.targetPrice || event.conditionEntered;
+    return { allowed:qualifies && entering, reason:qualifies && entering ? 'available-at-target' : 'condition-not-met', rule };
+  }
   const preferenceKey = ({ restock: 'restock', sold_out: 'soldOut', price_change: 'priceChange', status_change: 'statusChange' })[event.type];
   if (!preferenceKey) return { allowed: false, reason: 'unsupported-event', rule };
   let enabled = rule[preferenceKey] === null ? Boolean(prefs[preferenceKey]) : Boolean(rule[preferenceKey]);
@@ -2185,7 +2281,7 @@ function eventServerAlertSummary(event, decision, queueRows = [], logRows = []) 
     return { state:attempts ? 'retrying' : mode === 'digest' ? 'digest' : mode === 'after-quiet-hours' ? 'quiet' : 'queued', label, detail:`${explanation}${channelText ? ` through ${channelText}` : ''}.`, channels, mode, deliverAt:next };
   }
   if (sentChannels.length || statuses.has('sent')) return { state:'sent', label:'Sent', detail:`Server alert sent${channelText ? ` through ${channelText}` : ''}.`, channels, mode:event.serverAlert?.mode || null, deliverAt:event.serverAlert?.deliverAt || null };
-  if (statuses.has('cancelled')) return { state:'muted', label:'Cancelled', detail:'Server delivery was cancelled because the channel was disabled or incomplete.', channels, mode:event.serverAlert?.mode || null, deliverAt:event.serverAlert?.deliverAt || null };
+  if (statuses.has('cancelled')) return { state:'muted', label:'Cancelled', detail:decision.reason === 'purchased' ? 'Pending delivery was cancelled when this watch was marked purchased.' : 'Server delivery was cancelled by a watch or channel change.', channels, mode:event.serverAlert?.mode || null, deliverAt:event.serverAlert?.deliverAt || null };
 
   const snapshot = event.serverAlert;
   if (snapshot?.state === 'no-channel') return { state:'no-channel', label:'No channel', detail:'This event matched your alert rules, but no server notification channel was configured.', channels:[], mode:snapshot.mode || null, deliverAt:snapshot.deliverAt || null };
@@ -2194,6 +2290,9 @@ function eventServerAlertSummary(event, decision, queueRows = [], logRows = []) 
     const reasons = {
       'not-watched':'The product was not watched when this change was detected.',
       paused:'Alerts for this product were paused when the change was detected.',
+      purchased:'This watch was marked purchased; its alerts are stopped.',
+      'condition-not-met':'Availability and price did not meet this watch condition.',
+      'condition-already-matched':'This watch already alerted for the current qualifying availability.',
       disabled:'This event type was disabled by your alert rules.',
       cooldown:'The alert was suppressed by the configured cooldown.',
       'unsupported-event':'This event type does not send server alerts.',
@@ -2320,6 +2419,45 @@ function recordMonitorCheck(outcome, startedAt, detail = null) {
   db.prepare('DELETE FROM monitor_checks WHERE id NOT IN (SELECT id FROM monitor_checks ORDER BY id DESC LIMIT 2000)').run();
 }
 
+function applyCombinedWatchConditions(events, prefs) {
+  if (prefs.allActivity || monitor.partialErrors.length) return;
+  const stockEvents = events.filter((event) => ['restock','price_change'].includes(event.type));
+  for (const slug of state.watchlist) {
+    const rule = watchRule(slug);
+    if (!rule.availableUnderTarget) continue;
+    const product = state.products[slug];
+    if (!product) continue;
+    const variants = !product.variantId ? Object.values(state.products).filter((item) => item.parentSlug === slug) : [];
+    const qualifies = (item) => item && !item.unlisted && item.inStock === true && priceValue(item.price) !== null && priceValue(item.price) <= rule.targetPrice;
+    const candidates = stockEvents.filter((event) => variants.length ? event.parentSlug === slug && event.slug !== slug : event.slug === slug);
+    const candidate = candidates.find(qualifies);
+    const matched = Boolean(db.prepare('SELECT matched FROM watch_condition_state WHERE region=? AND slug=?').get(currentRegion(), slug)?.matched);
+    // Rearm only from confirmed values. A fast restock may use the observed
+    // price before its separate price-change confirmation arrives.
+    const qualifyingNow = Boolean(candidate) || (variants.length ? variants.some(qualifies) : qualifies(product));
+    for (const event of stockEvents.filter((item) => item.slug === slug)) {
+      event.conditionSuppressed = true;
+      event.conditionSuppressionReason = matched ? 'condition-already-matched' : 'condition-not-met';
+    }
+    if (candidate && !matched && !rulePaused(rule)) {
+      let alert = candidate;
+      if (variants.length) {
+        // An Any variant watch can qualify while the parent's availability is
+        // unchanged. Capture the matching variant and its exact Store URL.
+        alert = { ...candidate, id:crypto.randomUUID(), slug, sourceSlug:candidate.slug, watchedAtDetection:true, watchScope:'any-variant', targetPrice:rule.targetPrice, immediateRestock:rule.immediateRestock };
+        events.push(alert);
+      }
+      alert.conditionSuppressed = false;
+      alert.conditionEntered = true;
+      alert.alertKind = alert.type === 'price_change' ? 'target_price' : alert.type;
+      alert.triggerReason = `Available at or below the ${rule.targetPrice} ${REGIONS[currentRegion()].currency} target.`;
+      delete alert.serverAlert;
+    }
+    db.prepare('INSERT INTO watch_condition_state(region,slug,matched) VALUES(?,?,?) ON CONFLICT(region,slug) DO UPDATE SET matched=excluded.matched')
+      .run(currentRegion(), slug, qualifyingNow ? 1 : 0);
+  }
+}
+
 async function checkStore(reason = 'timer') {
   if (monitor.checking) return { skipped: true, reason: 'already checking' };
   const startedAt = Date.now();
@@ -2333,9 +2471,10 @@ async function checkStore(reason = 'timer') {
 
   try {
     const catalog = await fetchCatalog();
-    const knownCount = Object.values(state.products).filter((product) => !product.unlisted).length;
-    if (!MOCK_MODE && knownCount >= 20 && catalog.length < Math.max(10, Math.floor(knownCount * MIN_CATALOG_RATIO))) {
-      throw new Error(`Catalog health guard rejected ${catalog.length} products; previous baseline has ${knownCount}. No stock state was changed.`);
+    const catalogCount = catalog.filter((product) => !product.variantId).length;
+    const knownCount = Object.values(state.products).filter((product) => !product.unlisted && !product.variantId).length;
+    if (!MOCK_MODE && knownCount >= 20 && catalogCount < Math.max(10, Math.floor(knownCount * MIN_CATALOG_RATIO))) {
+      throw new Error(`Catalog health guard rejected ${catalogCount} products; previous baseline has ${knownCount}. No stock state was changed.`);
     }
 
     const incoming = {};
@@ -2343,12 +2482,11 @@ async function checkStore(reason = 'timer') {
     const prefs = notificationPreferences();
     const watch = new Set(state.watchlist);
     const hadBaseline = knownCount > 0;
-    const queueEvent = (event) => {
-      recordEvent(event);
-      if (shouldNotifyEvent(event, prefs)) notifications.push(event);
-    };
+    const detectedEvents = [];
+    const queueEvent = (event) => { detectedEvents.push(event); };
 
-    for (const product of catalog) {
+    // Partial catalogs never advance evidence or replace confirmed values.
+    for (const product of monitor.partialErrors.length ? [] : catalog) {
       const previous = state.products[product.slug];
       if (!previous) {
         clearPendingTransitions(product.slug);
@@ -2357,7 +2495,7 @@ async function checkStore(reason = 'timer') {
         product.unlisted = false;
         incoming[product.slug] = product;
         recordProductObservation(product, 'discovered');
-        if (hadBaseline) {
+        if (hadBaseline && !product.variantId) {
           const event = createEvent('new_product', null, product, false);
           queueEvent(event);
         }
@@ -2368,6 +2506,12 @@ async function checkStore(reason = 'timer') {
       const changeTypes = [];
       let effective = {
         ...previous,
+        variantId:product.variantId || null,
+        variantSlug:product.variantSlug || null,
+        variantTitle:product.variantTitle || null,
+        parentSlug:product.parentSlug || null,
+        sku:product.sku || null,
+        variantKeys:product.variantKeys || [],
         name:product.name,
         category:product.category,
         imageUrl:product.imageUrl || previous.imageUrl || null,
@@ -2390,7 +2534,7 @@ async function checkStore(reason = 'timer') {
           clearPendingTransition(product.slug, 'availability');
           effective = { ...effective, inStock:true, status:product.status, comingSoon:product.comingSoon, restockEtaAt:product.restockEtaAt, soldOutAt:product.soldOutAt, unlisted:false };
           changeTypes.push('restock');
-          queueEvent(createEvent('restock', previous, effective, watchedAtDetection, {
+          queueEvent(createEvent('restock', previous, { ...effective, price:product.price }, watchedAtDetection, {
             policy:'restock-fast-path', kind:'availability', observations:1, required:1, firstObservedAt:product.lastSeenAt, confirmedAt:product.lastSeenAt,
           }));
         } else if (availabilityChanged) {
@@ -2457,7 +2601,14 @@ async function checkStore(reason = 'timer') {
 
     // Preserve last-known-good data for partial catalogs and pending changes.
     state.products = { ...state.products, ...incoming };
-    monitor.productCount = catalog.length;
+    applyCombinedWatchConditions(detectedEvents, prefs);
+    for (const event of detectedEvents) {
+      const decision = notificationDecision(event, prefs);
+      if (!decision.allowed) event.serverAlert = { recordedAt:event.detectedAt, state:'muted', reason:decision.reason };
+      recordEvent(event);
+      if (decision.allowed) notifications.push(event);
+    }
+    monitor.productCount = catalogCount;
     monitor.lastSuccessAt = isoNow();
     monitor.consecutiveFailures = 0;
     monitor.catalogHealth = monitor.partialErrors.length ? 'degraded' : 'healthy';
@@ -2519,7 +2670,32 @@ function productForApi(product) {
   if (!product) return null;
   const watched = state.watchlist.includes(product.slug);
   const watch = watched ? db.prepare('SELECT created_at FROM watchlist WHERE region=? AND slug=?').get(currentRegion(), product.slug) : null;
-  return { ...product, watched, watchedAt:watch?.created_at || null, watchRule:watched ? watchRule(product.slug) : null };
+  const collections = watched ? db.prepare('SELECT collection_id FROM watch_collection_members WHERE region=? AND slug=?').all(currentRegion(), product.slug).map((row) => row.collection_id) : [];
+  return { ...product, watched, watchedAt:watch?.created_at || null, watchRule:watched ? watchRule(product.slug) : null, collections };
+}
+
+function watchCollections(region = currentRegion()) {
+  return db.prepare('SELECT id,name,created_at AS createdAt FROM watch_collections WHERE region=? ORDER BY name COLLATE NOCASE').all(region)
+    .map((collection) => ({ ...collection, slugs:db.prepare('SELECT slug FROM watch_collection_members WHERE region=? AND collection_id=? ORDER BY slug').all(region, collection.id).map((row) => row.slug) }));
+}
+
+function collectionName(value) {
+  const name = typeof value === 'string' ? value.trim() : '';
+  if (!name || name.length > 80 || /[\x00-\x1f\x7f]/.test(name)) throw new Error('Collection names must contain 1 to 80 printable characters.');
+  return name;
+}
+
+function setWatchCollections(slug, ids, region = currentRegion()) {
+  if (!Array.isArray(ids) || ids.length > 50 || ids.some((id) => typeof id !== 'string')) throw new Error('Choose up to 50 collections.');
+  const unique = [...new Set(ids)];
+  if (unique.some((id) => !db.prepare('SELECT id FROM watch_collections WHERE region=? AND id=?').get(region, id))) throw new Error('Collection not found in this region.');
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.prepare('DELETE FROM watch_collection_members WHERE region=? AND slug=?').run(region, slug);
+    const insert = db.prepare('INSERT INTO watch_collection_members(region,collection_id,slug) VALUES(?,?,?)');
+    for (const id of unique) insert.run(region, id, slug);
+    db.exec('COMMIT');
+  } catch (err) { db.exec('ROLLBACK'); throw err; }
 }
 
 const WATCH_IMPORT_FIELD_ORDER = ['url', 'producturl', 'storeurl', 'slug', 'sku', 'product', 'model', 'modelnumber', 'identifier', 'name'];
@@ -2628,6 +2804,7 @@ function watchImportReference(value) {
   const input = String(value || '').trim();
   let candidate = input;
   let sourceRegion = null;
+  let variant = null;
   let invalidUrl = false;
   const urlCandidate = /^(?:https?:\/\/|(?:[a-z]{2}\.)?store\.ui\.com\/)/i.test(input) ? (/^https?:\/\//i.test(input) ? input : `https://${input}`) : null;
   if (urlCandidate) {
@@ -2640,12 +2817,13 @@ function watchImportReference(value) {
       sourceRegion = REGIONS[String(segments[0] || '').toLowerCase()] ? String(segments[0]).toLowerCase() : hostRegion;
       const productIndex = segments.lastIndexOf('products');
       candidate = productIndex >= 0 && segments[productIndex + 1] ? segments[productIndex + 1] : '';
+      variant = url.searchParams.has('variant') ? url.searchParams.get('variant') : null;
     } catch {
       invalidUrl = true;
       candidate = '';
     }
   }
-  return { input, identifier:normalizedWatchImportIdentifier(candidate), sourceRegion, invalidUrl };
+  return { input, identifier:normalizedWatchImportIdentifier(candidate), sourceRegion, invalidUrl, variant };
 }
 
 function previewWatchImport(content, fileName = '') {
@@ -2654,19 +2832,22 @@ function previewWatchImport(content, fileName = '') {
   const products = Object.values(state.products);
   const bySlug = new Map(products.map((product) => [String(product.slug).toLowerCase(), product]));
   const byName = new Map(products.map((product) => [normalizedWatchImportIdentifier(product.name), product]));
+  const bySku = new Map(products.filter((product) => product.sku).map((product) => [normalizedWatchImportIdentifier(product.sku), product]));
+  const byVariantSlug = new Map(products.filter((product) => product.variantSlug).map((product) => [normalizedWatchImportIdentifier(product.variantSlug), product]));
   const slugPrefixes = products.map((product) => String(product.slug).toLowerCase()).sort((a, b) => b.length - a.length);
   const seenProducts = new Set();
   const items = references.map((value, index) => {
     const reference = watchImportReference(value);
-    let product = bySlug.get(reference.identifier) || byName.get(reference.identifier) || null;
-    if (!product && reference.identifier) {
+    let product = bySlug.get(reference.identifier) || bySku.get(reference.identifier) || byVariantSlug.get(reference.identifier) || byName.get(reference.identifier) || null;
+    if (reference.variant !== null) product = products.find((item) => item.parentSlug === reference.identifier && item.variantSlug === reference.variant.toLowerCase()) || null;
+    if (!product && reference.identifier && reference.variant === null) {
       const prefix = slugPrefixes.find((slug) => reference.identifier.startsWith(`${slug}-`));
-      if (prefix) product = bySlug.get(prefix) || null;
+      if (prefix && !bySlug.get(prefix)?.variantKeys?.length) product = bySlug.get(prefix) || null;
     }
     const base = { id:index + 1, input:reference.input, identifier:reference.identifier || null, sourceRegion:reference.sourceRegion, destinationRegion:region };
     if (reference.invalidUrl) return { ...base, status:'unrecognized', label:'Unsupported URL', detail:'Only links from official regional UniFi Store hosts can be imported.' };
     if (!product) return { ...base, status:'unrecognized', label:'Not in catalog', detail:`No matching product is currently listed in the ${REGIONS[region].label} catalog. It may be discontinued or use a different identifier.` };
-    const productData = { slug:product.slug, name:product.name, category:product.category, price:product.price || null, imageUrl:product.imageUrl || null };
+    const productData = { slug:product.slug, sku:product.sku || product.slug, variantId:product.variantId || null, name:product.name, category:product.category, price:product.price || null, imageUrl:product.imageUrl || null };
     if (reference.sourceRegion && reference.sourceRegion !== region) return { ...base, ...productData, status:'region-mismatch', label:'Other region', detail:`This link is for ${REGIONS[reference.sourceRegion].label}. Switch GearBeacon to that Store region to import it.` };
     if (seenProducts.has(product.slug)) return { ...base, ...productData, status:'duplicate', label:'Duplicate', detail:'This product appears more than once in the import and will only be considered once.' };
     seenProducts.add(product.slug);
@@ -2691,11 +2872,14 @@ function previewWatchImport(content, fileName = '') {
 }
 
 function productDetailsForApi(slug) {
-  const product = state.products[slug];
+  const product = Object.hasOwn(state.products, slug) ? state.products[slug] : null;
   if (!product) return null;
   const history = productObservations(slug);
   return {
     product: productForApi(product),
+    variants:Object.values(state.products).filter((item) => item.parentSlug === (product.parentSlug || product.slug)).map(productForApi),
+    parent:product.parentSlug ? productForApi(state.products[product.parentSlug]) : null,
+    collections:watchCollections(),
     history,
     historyRetentionDays: HISTORY_RETENTION_DAYS,
     firstObservedAt: history.length ? history[history.length - 1].observedAt : product.firstDiscoveredAt || product.lastSeenAt || null,
@@ -3016,6 +3200,7 @@ async function runDiagnostics({ network = true } = {}) {
 
 function scrubSupportValue(value, key = '') {
   if (/password|secret|token|credential|session|cookie|authorization|path$|directory$|dir$/i.test(key)) return '[redacted]';
+  if (/^(?:name|slug|slugs|sku|variantId|variantSlug|variantTitle|variantKeys|parentSlug|sourceSlug|watchlist|watchRules|collections|collectionName|candidate|product|products|productHistory)$/i.test(key)) return '[redacted]';
   if (Array.isArray(value)) return value.map((item) => scrubSupportValue(item));
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, scrubSupportValue(item, name)]));
   if (typeof value === 'string') return value
@@ -3048,7 +3233,7 @@ function supportBundle() {
   const logs = db.prepare('SELECT level,source,message,detail_json,created_at FROM app_log ORDER BY id DESC LIMIT 500').all().map((row) => ({ ...row, detail:safeJsonParse(row.detail_json, null), detail_json:undefined }));
   return scrubSupportValue({
     format:'GearBeaconSupportBundle', formatVersion:1, generatedAt:isoNow(),
-    note:'Secrets, credentials, sessions, recipient addresses, and notification destinations are excluded or redacted.',
+    note:'Secrets, credentials, sessions, recipient addresses, notification destinations, and product/watch/collection data are excluded or redacted.',
     runtime:operationsSummary().runtime,
     configuration:safeConfig,
     operations:operationsSummary(),
@@ -3098,13 +3283,15 @@ function exportSnapshot() {
       events: db.prepare('SELECT data_json FROM events WHERE region=? ORDER BY detected_at').all(region)
         .map((row) => safeJsonParse(row.data_json, null)).filter(Boolean),
       watchRules,
+      collections:watchCollections(region),
+      conditionState:db.prepare('SELECT slug,matched FROM watch_condition_state WHERE region=?').all(region),
       productHistory: db.prepare(`SELECT slug,observed_at AS observedAt,change_type AS changeType,status,in_stock AS inStock,price_text AS price,price_value AS priceValue
         FROM product_observations WHERE region=? ORDER BY observed_at`).all(region).map((row) => ({ ...row, inStock:Boolean(row.inStock) })),
     };
   }
   return {
     format: 'GearBeaconBackup',
-    formatVersion: 3,
+    formatVersion: 4,
     exportedAt: isoNow(),
     appVersion: APP_VERSION,
     schemaVersion: schemaVersion(),
@@ -3156,13 +3343,15 @@ function normalizeImportedSnapshot(snapshot) {
   const isBackup = snapshot.format === 'GearBeaconBackup';
   const isLegacy = !snapshot.format && (Array.isArray(snapshot.watchlist) || snapshot.products || Array.isArray(snapshot.events));
   if (!isBackup && !isLegacy) throw new Error('This file is not a GearBeacon backup or legacy GearBeacon state file.');
-  if (isBackup && Number(snapshot.formatVersion || 0) > 3) throw new Error(`This backup format (${snapshot.formatVersion}) is newer than GearBeacon ${APP_VERSION} supports.`);
+  if (isBackup && Number(snapshot.formatVersion || 0) > 4) throw new Error(`This backup format (${snapshot.formatVersion}) is newer than GearBeacon ${APP_VERSION} supports.`);
   const normalizeRegion = (value) => ({
     watchlist: Array.isArray(value?.watchlist) ? value.watchlist.map(String).filter(Boolean) : [],
     watchCreatedAt: value?.watchCreatedAt && typeof value.watchCreatedAt === 'object' && !Array.isArray(value.watchCreatedAt) ? value.watchCreatedAt : {},
     products: value?.products && typeof value.products === 'object' && !Array.isArray(value.products) ? value.products : {},
     events: Array.isArray(value?.events) ? value.events.filter((event) => event && event.id).slice(-100000) : [],
     watchRules: value?.watchRules && typeof value.watchRules === 'object' && !Array.isArray(value.watchRules) ? value.watchRules : {},
+    collections:Array.isArray(value?.collections) ? value.collections : [],
+    conditionState:Array.isArray(value?.conditionState) ? value.conditionState : [],
     productHistory: Array.isArray(value?.productHistory) ? value.productHistory.filter((item) => item?.slug && item?.observedAt).slice(-100000) : [],
   });
   const regions = {};
@@ -3174,10 +3363,27 @@ function normalizeImportedSnapshot(snapshot) {
     const region = REGIONS[snapshot.region] ? snapshot.region : currentRegion();
     regions[region] = normalizeRegion(snapshot);
   }
+  validateSnapshotCollections(regions);
   return {
     regions,
     settings: snapshot.settings && typeof snapshot.settings === 'object' && !Array.isArray(snapshot.settings) ? snapshot.settings : {},
   };
+}
+
+function validateSnapshotCollections(regions) {
+  // Preview and restore both validate before making any changes to a region.
+  for (const regionState of Object.values(regions)) {
+    if (regionState.collections.length > 50) throw new Error('A region can contain at most 50 collections.');
+    const names = new Set(); const ids = new Set();
+    for (const collection of regionState.collections) {
+      if (!collection || typeof collection !== 'object') throw new Error('Backup contains an invalid collection.');
+      collection.name = collectionName(collection.name);
+      if (!/^[a-z0-9-]{1,80}$/i.test(collection.id || '') || ids.has(collection.id) || names.has(collection.name.toLowerCase())) throw new Error('Backup contains invalid or duplicate collections.');
+      if (!Array.isArray(collection.slugs) || collection.slugs.some((slug) => typeof slug !== 'string' || !regionState.watchlist.includes(slug))) throw new Error('Backup collection contains an unknown watch.');
+      ids.add(collection.id); names.add(collection.name.toLowerCase());
+    }
+    for (const rule of Object.values(regionState.watchRules)) normalizeWatchRule(rule);
+  }
 }
 
 function importSnapshot(snapshot) {
@@ -3197,6 +3403,16 @@ function importSnapshot(snapshot) {
     }
     db.prepare('DELETE FROM watch_rules WHERE region=?').run(region);
     for (const [slug, rule] of Object.entries(regionState.watchRules || {})) saveWatchRule(String(slug), rule, region);
+    db.prepare('DELETE FROM watch_collections WHERE region=?').run(region);
+    for (const collection of regionState.collections) {
+      const createdAt = collection.createdAt && !Number.isNaN(new Date(collection.createdAt).valueOf()) ? new Date(collection.createdAt).toISOString() : isoNow();
+      db.prepare('INSERT INTO watch_collections(region,id,name,created_at) VALUES(?,?,?,?)').run(region, collection.id, collection.name, createdAt);
+      for (const slug of new Set(collection.slugs)) db.prepare('INSERT INTO watch_collection_members(region,collection_id,slug) VALUES(?,?,?)').run(region, collection.id, slug);
+    }
+    db.prepare('DELETE FROM watch_condition_state WHERE region=?').run(region);
+    for (const item of regionState.conditionState) if (regionState.watchlist.includes(item?.slug)) {
+      db.prepare('INSERT OR REPLACE INTO watch_condition_state(region,slug,matched) VALUES(?,?,?)').run(region, item.slug, item.matched ? 1 : 0);
+    }
     db.prepare('DELETE FROM product_observations WHERE region=?').run(region);
     const addHistory = db.prepare(`INSERT INTO product_observations(region,slug,observed_at,change_type,status,in_stock,price_text,price_value) VALUES(?,?,?,?,?,?,?,?)`);
     for (const item of regionState.productHistory || []) {
@@ -3205,7 +3421,7 @@ function importSnapshot(snapshot) {
       addHistory.run(region, String(item.slug), observed.toISOString(), String(item.changeType || 'imported').slice(0, 80), item.status ? String(item.status) : null, item.inStock ? 1 : 0, item.price ? String(item.price) : null, priceValue(item.priceValue ?? item.price));
     }
     states[region] = loadState(region);
-    monitors[region].productCount = Object.keys(states[region].products).length;
+    monitors[region].productCount = Object.values(states[region].products).filter((product) => !product.variantId).length;
     watchCount += states[region].watchlist.length;
     eventCount += states[region].events.length;
     importedRegions.push(region);
@@ -3238,6 +3454,9 @@ function previewSnapshot(snapshot) {
     productCount: Object.keys(value.products).length,
     eventCount: value.events.length,
     historyCount: value.productHistory.length,
+    collectionCount:value.collections.length,
+    variantWatchCount:value.watchlist.filter((slug) => value.products[slug]?.variantId).length,
+    purchasedCount:value.watchlist.filter((slug) => value.watchRules[slug]?.purchasedAt).length,
   }));
   return { ok: true, regions, willImport: regions.filter((item) => item.configured).map((item) => item.region) };
 }
@@ -4104,10 +4323,57 @@ async function handleRegionApi(req, res, url) {
     const search = String(url.searchParams.get('search') || '').toLowerCase().trim();
     const watchOnly = url.searchParams.get('watchOnly') === '1';
     let products = Object.values(state.products).map(productForApi);
+    if (url.searchParams.get('includeVariants') !== '1') products = products.filter((p) => !p.variantId || p.watched);
     if (watchOnly) products = products.filter((p) => p.watched);
     if (search) products = products.filter((p) => `${p.name} ${p.slug} ${p.category}`.toLowerCase().includes(search));
     products.sort((a, b) => Number(b.watched) - Number(a.watched) || a.name.localeCompare(b.name));
-    return sendJson(res, 200, { products, count: products.length });
+    return sendJson(res, 200, { products, count: products.length, collections:watchCollections() });
+  }
+
+  if (url.pathname === '/api/collections' && req.method === 'GET') return sendJson(res, 200, { collections:watchCollections() });
+  if (url.pathname === '/api/collections' && req.method === 'POST') {
+    const body = await readJsonBody(req);
+    let name;
+    try { name = collectionName(body?.name); } catch (err) { return sendJson(res, 400, { error:err.message }); }
+    if (watchCollections().length >= 50) return sendJson(res, 400, { error:'A region can contain at most 50 collections.' });
+    if (db.prepare('SELECT id FROM watch_collections WHERE region=? AND name=? COLLATE NOCASE').get(currentRegion(), name)) return sendJson(res, 409, { error:'A collection with that name already exists.' });
+    const id = crypto.randomUUID();
+    db.prepare('INSERT INTO watch_collections(region,id,name,created_at) VALUES(?,?,?,?)').run(currentRegion(), id, name, isoNow());
+    return sendJson(res, 200, { ok:true, id, collections:watchCollections() });
+  }
+  if (url.pathname.startsWith('/api/collections/') && ['PUT','DELETE'].includes(req.method)) {
+    const id = decodeURIComponent(url.pathname.slice('/api/collections/'.length));
+    if (!db.prepare('SELECT id FROM watch_collections WHERE region=? AND id=?').get(currentRegion(), id)) return sendJson(res, 404, { error:'Collection not found in this region.' });
+    if (req.method === 'DELETE') db.prepare('DELETE FROM watch_collections WHERE region=? AND id=?').run(currentRegion(), id);
+    else {
+      const body = await readJsonBody(req);
+      let name;
+      try { name = collectionName(body?.name); } catch (err) { return sendJson(res, 400, { error:err.message }); }
+      if (db.prepare('SELECT id FROM watch_collections WHERE region=? AND name=? COLLATE NOCASE AND id<>?').get(currentRegion(), name, id)) return sendJson(res, 409, { error:'A collection with that name already exists.' });
+      db.prepare('UPDATE watch_collections SET name=? WHERE region=? AND id=?').run(name, currentRegion(), id);
+    }
+    return sendJson(res, 200, { ok:true, collections:watchCollections() });
+  }
+  if (req.method === 'PUT' && url.pathname.startsWith('/api/watch/') && url.pathname.endsWith('/collections')) {
+    const slug = decodeURIComponent(url.pathname.slice('/api/watch/'.length, -'/collections'.length));
+    if (!state.watchlist.includes(slug)) return sendJson(res, 404, { error:'Product is not on the watchlist.' });
+    const body = await readJsonBody(req);
+    try { setWatchCollections(slug, body?.collections); } catch (err) { return sendJson(res, 400, { error:err.message }); }
+    return sendJson(res, 200, { ok:true, product:productForApi(state.products[slug]), collections:watchCollections() });
+  }
+  if (req.method === 'POST' && url.pathname !== '/api/watch/import/preview' && url.pathname.startsWith('/api/watch/') && url.pathname.endsWith('/preview')) {
+    const slug = decodeURIComponent(url.pathname.slice('/api/watch/'.length, -'/preview'.length));
+    const product = Object.hasOwn(state.products, slug) ? state.products[slug] : null;
+    if (!product) return sendJson(res, 404, { error:'Product not found.' });
+    const body = await readJsonBody(req);
+    let rule;
+    try { rule = normalizeWatchRule(body?.rule || {}, watchRule(slug)); } catch (err) { return sendJson(res, 400, { error:err.message }); }
+    const event = { ...createEvent('restock', { ...product, inStock:false, status:'SoldOut' }, { ...product, inStock:true, status:'Available' }, true), conditionEntered:true };
+    const decision = notificationDecision(event, notificationPreferences(), rule);
+    const description = rule.purchasedAt ? 'Purchased: alerts are stopped until you mark this watch as still wanted.' : rule.availableUnderTarget
+      ? `Alert when ${product.name} becomes available at or below ${rule.targetPrice} ${REGIONS[currentRegion()].currency}, or its price reaches that target while available.`
+      : `Watch ${product.name} using the selected event settings${rule.targetPrice !== null ? ` and a price-change target of ${rule.targetPrice} ${REGIONS[currentRegion()].currency}` : ''}.`;
+    return sendJson(res, 200, { description, decision, delivery:deliveryPlan(event, rule), copy:notificationCopy(event), configuredChannels:CHANNEL_NAMES.filter(channelConfigured), allActivity:notificationPreferences().allActivity });
   }
 
   if (req.method === 'GET' && url.pathname === '/api/watchlist') {
@@ -4171,12 +4437,14 @@ async function handleRegionApi(req, res, url) {
     const body = await readJsonBody(req);
     const slug = String(body?.slug || '').trim();
     if (!slug) return sendJson(res, 400, { error: 'slug is required' });
-    if (!state.products[slug]) return sendJson(res, 404, { error:'Product not found in this region.' });
+    if (!Object.hasOwn(state.products, slug)) return sendJson(res, 404, { error:'Product not found in this region.' });
+    let rule;
+    try { rule = body?.rule ? normalizeWatchRule(body.rule, watchRule(slug)) : null; } catch (err) { return sendJson(res, 400, { error:err.message }); }
     if (!state.watchlist.includes(slug)) {
       db.prepare('INSERT INTO watchlist(region,slug,created_at) VALUES(?,?,?) ON CONFLICT(region,slug) DO NOTHING').run(currentRegion(), slug, isoNow());
       state.watchlist.push(slug);
     }
-    if (body?.rule) saveWatchRule(slug, body.rule);
+    if (rule) saveWatchRule(slug, rule);
     saveStateSoon();
     return sendJson(res, 200, { ok: true, product: productForApi(state.products[slug]), watchlist: state.watchlist });
   }
@@ -4186,7 +4454,7 @@ async function handleRegionApi(req, res, url) {
     const slugs = [...new Set((Array.isArray(body?.slugs) ? body.slugs : []).map(String).filter((slug) => state.watchlist.includes(slug)))].slice(0, 1000);
     const action = String(body?.action || '');
     if (!slugs.length) return sendJson(res, 400, { error:'Select at least one watched product.' });
-    if (!['pause', 'resume', 'remove'].includes(action)) return sendJson(res, 400, { error:'Bulk action must be pause, resume, or remove.' });
+    if (!['pause', 'resume', 'remove', 'purchased', 'wanted'].includes(action)) return sendJson(res, 400, { error:'Choose pause, resume, remove, purchased, or wanted.' });
     let pausedUntil = null;
     if (action === 'pause') {
       const minutes = Number(body?.minutes || 0);
@@ -4194,6 +4462,8 @@ async function handleRegionApi(req, res, url) {
       for (const slug of slugs) saveWatchRule(slug, { pausedUntil });
     } else if (action === 'resume') {
       for (const slug of slugs) saveWatchRule(slug, { enabled:true, pausedUntil:null });
+    } else if (action === 'purchased' || action === 'wanted') {
+      for (const slug of slugs) saveWatchRule(slug, { purchasedAt:action === 'purchased' ? isoNow() : null });
     } else {
       state.watchlist = state.watchlist.filter((slug) => !slugs.includes(slug));
       const removeWatch = db.prepare('DELETE FROM watchlist WHERE region=? AND slug=?');
@@ -4213,7 +4483,8 @@ async function handleRegionApi(req, res, url) {
     const slug = decodeURIComponent(url.pathname.slice('/api/watch/'.length, -'/rules'.length));
     if (!state.watchlist.includes(slug)) return sendJson(res, 404, { error:'Product is not on the watchlist.' });
     const body = await readJsonBody(req);
-    return sendJson(res, 200, { ok:true, slug, rule:saveWatchRule(slug, body?.rule || body || {}) });
+    try { return sendJson(res, 200, { ok:true, slug, rule:saveWatchRule(slug, body?.rule || body || {}) }); }
+    catch (err) { return sendJson(res, 400, { error:err.message }); }
   }
 
   if (req.method === 'DELETE' && url.pathname.startsWith('/api/watch/')) {
@@ -4294,7 +4565,8 @@ async function handleRegionApi(req, res, url) {
     const status = body?.status === undefined ? (mockOverrides[slug]?.status || source.status) : String(body.status);
     if (!['Available', 'SoldOut', 'ComingSoon'].includes(status)) return sendJson(res, 400, { error:'Mock status must be Available, SoldOut, or ComingSoon.' });
     const price = body?.price === undefined ? (mockOverrides[slug]?.price ?? source.price) : String(body.price);
-    mockOverrides[slug] = { status, price, present:body?.present !== false };
+    if (body?.variants !== undefined && (!Array.isArray(body.variants) || body.variants.length > 100)) return sendJson(res, 400, { error:'Provide at most 100 mock variants.' });
+    mockOverrides[slug] = { status, price, present:body?.present !== false, ...(body?.variants !== undefined ? { variants:body.variants } : {}) };
     return sendJson(res, 200, { ok:true, slug, ...mockOverrides[slug] });
   }
 

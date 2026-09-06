@@ -1,11 +1,11 @@
 {
   "name": "GearBeacon",
-  "latestVersion": "1.0.1",
+  "latestVersion": "1.1.0",
   "publishedAt": "2026-09-05T00:00:00Z",
   "downloadUrl": "https://github.com/alexphillips-dev/GearBeacon/releases",
   "releasePageUrl": "https://github.com/alexphillips-dev/GearBeacon/releases",
   "minimumSchemaVersion": 4,
-  "maximumSchemaVersion": 7,
+  "maximumSchemaVersion": 8,
   "minimumNodeVersion": "22.13.0",
-  "releaseNotes": "GearBeacon 1.0.1 hardens the private self-hosted monitor with DNS-rebinding and Host-header defenses, bounded HTTP connections, stronger versioned owner-password hashing with automatic legacy migration, least-privilege native services, read-only capability-free Docker defaults, pinned GitHub Actions enforcement, and expanded repository secret scanning."
+  "releaseNotes": "GearBeacon 1.1.0 adds exact variant watches, combined availability and target-price conditions, rule previews, regional watchlist collections, and purchased watches with preserved history. Includes the 1.0.1 security hardening and backup-protected schema-v8 upgrades."
 }

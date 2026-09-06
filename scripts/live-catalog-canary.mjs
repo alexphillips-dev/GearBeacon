@@ -90,7 +90,7 @@ try {
   const statuses = await waitForCatalogs();
   for (const status of statuses) {
     const region = status.region;
-    if (status.version !== '1.0.1' || status.mockMode || status.catalogHealth !== 'healthy' || status.lastError) {
+    if (status.version !== '1.1.0' || status.mockMode || status.catalogHealth !== 'healthy' || status.lastError) {
       throw new Error(`${region} catalog is not healthy: ${status.lastError || status.catalogHealth}`);
     }
     const result = await json(`/api/products?region=${encodeURIComponent(region)}`);
@@ -98,11 +98,19 @@ try {
       throw new Error(`${region} returned ${result.count ?? 'an unknown number of'} products; expected at least ${minimumProducts}.`);
     }
     result.products.forEach((product) => validateProduct(product, region));
+    const expanded = await json(`/api/products?region=${encodeURIComponent(region)}&includeVariants=1`);
+    const variants = expanded.products.filter((product) => product.variantId);
+    if (!variants.length) throw new Error(`${region} catalog did not retain any exact variants.`);
+    variants.forEach((variant) => {
+      validateProduct(variant, region);
+      if (!variant.sku || !variant.parentSlug || !variant.variantTitle || !variant.variantSlug || new URL(variant.url).searchParams.get('variant') !== variant.variantSlug) throw new Error(`${region} returned incomplete variant metadata.`);
+    });
+    if (new Set(expanded.products.map((product) => product.slug)).size !== expanded.products.length) throw new Error(`${region} returned duplicate product identities.`);
     const withImages = result.products.filter((product) => product.imageUrl).length;
     const withPrices = result.products.filter((product) => product.price).length;
     if (withImages < Math.ceil(result.count * 0.75)) throw new Error(`${region} image coverage fell below 75% (${withImages}/${result.count}).`);
     if (withPrices < Math.ceil(result.count * 0.5)) throw new Error(`${region} price coverage fell below 50% (${withPrices}/${result.count}).`);
-    console.log(`${region.toUpperCase()}: ${result.count} products, ${withImages} images, ${withPrices} prices, healthy.`);
+    console.log(`${region.toUpperCase()}: ${result.count} products, ${variants.length} exact variants, ${withImages} images, ${withPrices} prices, healthy.`);
   }
   console.log(`Live catalog canary passed for ${regions.length} regions without creating watchlist items or notification deliveries.`);
 } finally {
