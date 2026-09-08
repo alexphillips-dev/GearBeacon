@@ -3088,6 +3088,24 @@ function collectionName(value) {
         throw new Error('Collection names must contain 1 to 80 printable characters.');
     return name;
 }
+function collectionMembers(value) {
+    if (!Array.isArray(value) || value.length > 1000 || value.some((slug) => typeof slug !== 'string' || !state.watchlist.includes(slug)))
+        throw new Error('Choose up to 1000 products from this region\'s watchlist.');
+    return [...new Set(value)];
+}
+// Called inside the collection save transaction, without changing other collections.
+function saveCollectionMembers(id, slugs, additive = false) {
+    const region = currentRegion();
+    const existing = db.prepare('SELECT slug FROM watch_collection_members WHERE region=? AND collection_id=?').all(region, id).map((row) => row.slug);
+    const next = additive ? [...new Set([...existing, ...slugs])] : slugs;
+    if (existing.length === next.length && next.every((slug) => existing.includes(slug)))
+        return;
+    db.prepare('DELETE FROM watch_collection_members WHERE region=? AND collection_id=?').run(region, id);
+    const insert = db.prepare('INSERT INTO watch_collection_members(region,collection_id,slug) VALUES(?,?,?)');
+    for (const slug of next)
+        insert.run(region, id, slug);
+    baselineCollections(region, [id]);
+}
 function setWatchCollections(slug, ids, region = currentRegion()) {
     if (!Array.isArray(ids) || ids.length > 50 || ids.some((id) => typeof id !== 'string'))
         throw new Error('Choose up to 50 collections.');
@@ -4959,9 +4977,10 @@ async function handleRegionApi(req, res, url) {
         return sendJson(res, 200, { collections: watchCollections() });
     if (url.pathname === '/api/collections' && req.method === 'POST') {
         const body = await readJsonBody(req);
-        let name;
+        let name, slugs;
         try {
             name = collectionName(body?.name);
+            slugs = collectionMembers(body?.slugs ?? []);
         }
         catch (err) {
             return sendJson(res, 400, { error: err.message });
@@ -4971,7 +4990,16 @@ async function handleRegionApi(req, res, url) {
         if (db.prepare('SELECT id FROM watch_collections WHERE region=? AND name=? COLLATE NOCASE').get(currentRegion(), name))
             return sendJson(res, 409, { error: 'A collection with that name already exists.' });
         const id = crypto.randomUUID();
-        db.prepare('INSERT INTO watch_collections(region,id,name,created_at) VALUES(?,?,?,?)').run(currentRegion(), id, name, isoNow());
+        db.exec('BEGIN IMMEDIATE');
+        try {
+            db.prepare('INSERT INTO watch_collections(region,id,name,created_at) VALUES(?,?,?,?)').run(currentRegion(), id, name, isoNow());
+            saveCollectionMembers(id, slugs);
+            db.exec('COMMIT');
+        }
+        catch (err) {
+            db.exec('ROLLBACK');
+            throw err;
+        }
         return sendJson(res, 200, { ok: true, id, collections: watchCollections() });
     }
     if (url.pathname.startsWith('/api/collections/') && ['PUT', 'DELETE'].includes(req.method)) {
@@ -4984,10 +5012,14 @@ async function handleRegionApi(req, res, url) {
         }
         else {
             const body = await readJsonBody(req);
-            let name;
+            let name, slugs;
             const existing = db.prepare('SELECT name,notify_ready FROM watch_collections WHERE region=? AND id=?').get(currentRegion(), id);
             try {
                 name = collectionName(body?.name ?? existing.name);
+                if (body?.slugs !== undefined && body?.addSlugs !== undefined)
+                    throw new Error('Choose either replacement watches or watches to add.');
+                if (body?.slugs !== undefined || body?.addSlugs !== undefined)
+                    slugs = collectionMembers(body.slugs ?? body.addSlugs);
             }
             catch (err) {
                 return sendJson(res, 400, { error: err.message });
@@ -4996,10 +5028,20 @@ async function handleRegionApi(req, res, url) {
                 return sendJson(res, 400, { error: 'Collection notification setting must be true or false.' });
             if (db.prepare('SELECT id FROM watch_collections WHERE region=? AND name=? COLLATE NOCASE AND id<>?').get(currentRegion(), name, id))
                 return sendJson(res, 409, { error: 'A collection with that name already exists.' });
-            db.prepare('UPDATE watch_collections SET name=? WHERE region=? AND id=?').run(name, currentRegion(), id);
-            if (body?.notifyReady !== undefined && body.notifyReady !== Boolean(existing.notify_ready)) {
-                db.prepare('UPDATE watch_collections SET notify_ready=? WHERE region=? AND id=?').run(body.notifyReady ? 1 : 0, currentRegion(), id);
-                baselineCollections(currentRegion(), [id]);
+            db.exec('BEGIN IMMEDIATE');
+            try {
+                db.prepare('UPDATE watch_collections SET name=? WHERE region=? AND id=?').run(name, currentRegion(), id);
+                if (slugs !== undefined)
+                    saveCollectionMembers(id, slugs, body.addSlugs !== undefined);
+                if (body?.notifyReady !== undefined && body.notifyReady !== Boolean(existing.notify_ready)) {
+                    db.prepare('UPDATE watch_collections SET notify_ready=? WHERE region=? AND id=?').run(body.notifyReady ? 1 : 0, currentRegion(), id);
+                    baselineCollections(currentRegion(), [id]);
+                }
+                db.exec('COMMIT');
+            }
+            catch (err) {
+                db.exec('ROLLBACK');
+                throw err;
             }
         }
         return sendJson(res, 200, { ok: true, collections: watchCollections() });

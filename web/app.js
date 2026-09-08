@@ -1744,11 +1744,145 @@ async function toggleWatch(slug) {
   } catch (err) { toast(err.message, 'error'); }
 }
 
-function renderCollections() {
+function renderCollections(force = false) {
   const key = JSON.stringify(app.collections.map(({ id,name,slugs }) => ({ id,name,slugs })));
-  if (key === app.collectionsRenderKey) return;
+  if (!force && key === app.collectionsRenderKey) return;
   app.collectionsRenderKey = key;
-  $('collectionList').innerHTML = app.collections.map((collection) => `<div class="collection-row" data-collection-row="${escapeHtml(collection.id)}"><label class="field"><span>${collection.slugs.length} watch${collection.slugs.length === 1 ? '' : 'es'}</span><input value="${escapeHtml(collection.name)}" maxlength="80" aria-label="Rename ${escapeHtml(collection.name)}" /></label><button type="button" data-rename-collection="${escapeHtml(collection.id)}">Rename</button><button type="button" data-delete-collection="${escapeHtml(collection.id)}">Delete</button></div>`).join('') || '<p>No collections yet.</p>';
+  const focused = document.activeElement;
+  const focusId = focused?.dataset?.editCollection || focused?.dataset?.viewCollection;
+  const focusAction = focused?.hasAttribute('data-edit-collection') ? 'edit' : 'view';
+  $('collectionTotal').textContent = `${app.collections.length} collection${app.collections.length === 1 ? '' : 's'}`;
+  $('collectionEmpty').classList.toggle('hidden', app.collections.length > 0);
+  $('newCollection').classList.toggle('hidden', app.collections.length === 0);
+  $('collectionList').innerHTML = app.collections.map((collection) => `<article class="collection-row" data-collection-row="${escapeHtml(collection.id)}"><div class="collection-row-copy"><h3>${escapeHtml(collection.name)}</h3><p>${collection.slugs.length} watch${collection.slugs.length === 1 ? '' : 'es'}</p></div><div class="collection-row-actions"><button type="button" data-view-collection="${escapeHtml(collection.id)}" aria-label="View watches in ${escapeHtml(collection.name)}">View watches</button><button type="button" data-edit-collection="${escapeHtml(collection.id)}" aria-label="Edit ${escapeHtml(collection.name)}">Edit</button></div></article>`).join('');
+  if (focusId && !focused.isConnected) (document.querySelector(`[data-${focusAction}-collection="${CSS.escape(focusId)}"]`) || $('newCollection').offsetParent && $('newCollection') || $('firstCollection')).focus();
+}
+
+function collectionView(view) {
+  for (const [id, name] of [['collectionOverview','list'],['collectionBulk','bulk'],['collectionForm','edit'],['collectionDeleteConfirm','delete']]) $(id).classList.toggle('hidden', name !== view);
+  $('collectionResult').textContent = '';
+  $('collectionResult').classList.remove('error');
+}
+
+function openCollectionManager(bulk = false) {
+  app.collectionLastFocus = document.activeElement;
+  app.collectionRegion = app.currentRegion;
+  app.collectionBulkSlugs = bulk ? [...app.selectedWatch] : null;
+  app.collectionDraft = null;
+  $('collectionDialog').classList.remove('hidden');
+  document.body.classList.add('dialog-open');
+  document.querySelector('main').inert = true;
+  $('toTop').inert = true;
+  showCollectionOverview();
+}
+
+function closeCollectionManager() {
+  if (app.collectionBusy) return;
+  $('collectionDialog').classList.add('hidden');
+  document.body.classList.remove('dialog-open');
+  document.querySelector('main').inert = false;
+  $('toTop').inert = false;
+  app.collectionDraft = null;
+  const original = app.collectionLastFocus;
+  (original?.isConnected && original.offsetParent !== null ? original : $('openCollectionManager')).focus();
+}
+
+function showCollectionOverview(focusId = null) {
+  if (app.collectionBusy) return;
+  app.collectionDraft = null;
+  const bulk = app.collectionBulkSlugs;
+  collectionView(bulk ? 'bulk' : 'list');
+  $('collectionDialogTitle').textContent = bulk ? 'Add to collection' : 'Manage collections';
+  $('collectionDialogDescription').textContent = bulk ? `${bulk.length} selected watch${bulk.length === 1 ? '' : 'es'} · choose a project for your gear.` : 'Group your watched gear by project.';
+  renderCollections(true);
+  $('collectionDestination').innerHTML = app.collections.map((collection) => `<option value="${escapeHtml(collection.id)}">${escapeHtml(collection.name)}</option>`).join('');
+  $('collectionBulkForm').classList.toggle('hidden', !app.collections.length);
+  const target = bulk ? (app.collections.length ? $('collectionDestination') : $('newBulkCollection')) : focusId ? document.querySelector(`[data-edit-collection="${CSS.escape(focusId)}"]`) : null;
+  (target || (app.collections.length ? $('newCollection') : $('firstCollection'))).focus();
+}
+
+function editCollection(id = null) {
+  if (app.collectionBusy) return;
+  const collection = id ? app.collections.find((item) => item.id === id) : null;
+  if (id && !collection) return;
+  app.collectionDraft = { id, slugs:new Set(collection?.slugs || app.collectionBulkSlugs || []), products:app.products.filter((product) => product.watched).map((product) => ({ ...product })) };
+  collectionView('edit');
+  $('collectionDialogTitle').textContent = id ? 'Edit collection' : 'New collection';
+  $('collectionDialogDescription').textContent = 'Keep the gear for your next project together.';
+  $('collectionName').value = collection?.name || '';
+  $('collectionWatchSearch').value = '';
+  $('saveCollection').textContent = id ? 'Save changes' : 'Create collection';
+  $('collectionDeleteArea').classList.toggle('hidden', !id);
+  renderCollectionChoices();
+  $('collectionName').focus();
+}
+
+function renderCollectionChoices() {
+  const draft = app.collectionDraft;
+  if (!draft) return;
+  const search = $('collectionWatchSearch').value.trim().toLowerCase();
+  const products = draft.products.filter((product) => `${product.name} ${product.sku || ''} ${product.variantTitle || ''} ${product.slug}`.toLowerCase().includes(search)).sort((a,b) => a.name.localeCompare(b.name));
+  $('collectionSelection').textContent = `${draft.slugs.size} selected`;
+  $('collectionWatchChoices').innerHTML = products.map((product, index) => `<div class="collection-watch-option"><label for="collectionWatch${index}"><input id="collectionWatch${index}" type="checkbox" data-collection-watch="${escapeHtml(product.slug)}" ${draft.slugs.has(product.slug) ? 'checked' : ''}/><span class="collection-watch-copy"><strong>${escapeHtml(product.name)}</strong><small>${escapeHtml([product.variantTitle || (product.variantId ? '' : 'Any variant'),product.sku,product.price].filter(Boolean).join(' · '))}</small></span></label><button class="collection-watch-image media-shell" type="button" data-collection-image="${escapeHtml(product.slug)}" aria-label="Retry image for ${escapeHtml(product.name)}">${imageMarkup(product)}</button></div>`).join('') || `<p class="collection-no-watches">${draft.products.length ? 'No watches match your search.' : 'No watched products yet. You can save this collection empty and add watches after visiting Browse.'}</p>`;
+  wireProductImages($('collectionWatchChoices'));
+}
+
+async function commitCollection(method, id, body) {
+  if (app.collectionBusy) return null;
+  if (app.collectionRegion !== app.currentRegion) { $('collectionResult').textContent = 'The store region changed. Close and reopen the collection manager.'; return null; }
+  app.collectionBusy = true;
+  $('collectionResult').classList.remove('error');
+  $('collectionResult').textContent = method === 'DELETE' ? 'Deleting collection…' : 'Saving collection…';
+  const controls = [...$('collectionDialog').querySelectorAll('button,input,select')].map((control) => [control,control.disabled]);
+  controls.forEach(([control]) => { control.disabled = true; });
+  try {
+    const result = await api(id ? `/api/collections/${encodeURIComponent(id)}` : '/api/collections', { method, ...(body ? { body:JSON.stringify(body) } : {}) });
+    app.collections = result.collections;
+    for (const product of app.products) product.collections = app.collections.filter((collection) => collection.slugs.includes(product.slug)).map((collection) => collection.id);
+    renderCollections(); renderProducts(true);
+    return result;
+  } catch (err) {
+    $('collectionResult').classList.add('error');
+    $('collectionResult').textContent = err.message;
+    return null;
+  } finally {
+    app.collectionBusy = false;
+    controls.forEach(([control,disabled]) => { control.disabled = disabled; });
+  }
+}
+
+async function saveCollection() {
+  const draft = app.collectionDraft;
+  if (!draft) return;
+  const result = await commitCollection(draft.id ? 'PUT' : 'POST', draft.id, { name:$('collectionName').value, slugs:[...draft.slugs] });
+  if (!result) return;
+  if (app.collectionBulkSlugs) { app.selectedWatch.clear(); renderProducts(true); closeCollectionManager(); }
+  else showCollectionOverview(draft.id || result.id);
+  toast(draft.id ? 'Collection updated.' : 'Collection created.', 'success');
+}
+
+async function addSelectedToCollection() {
+  if (!app.collectionBulkSlugs?.length || !$('collectionDestination').value) return;
+  const result = await commitCollection('PUT', $('collectionDestination').value, { addSlugs:app.collectionBulkSlugs });
+  if (!result) return;
+  app.selectedWatch.clear(); renderProducts(true); closeCollectionManager();
+  toast('Selected watches added to the collection.', 'success');
+}
+
+function confirmCollectionDeletion() {
+  if (app.collectionBusy || !app.collectionDraft?.id) return;
+  collectionView('delete');
+  const collection = app.collections.find((item) => item.id === app.collectionDraft.id);
+  $('collectionDialogTitle').textContent = 'Delete collection';
+  $('collectionDeleteDescription').textContent = `“${collection?.name || 'This collection'}” will be deleted. Its watches, alert rules, and history will be kept.`;
+  $('cancelDeleteCollection').focus();
+}
+
+async function deleteCollection() {
+  const result = await commitCollection('DELETE', app.collectionDraft?.id);
+  if (!result) return;
+  showCollectionOverview();
+  toast('Collection deleted. Watches retained.', 'success');
 }
 
 function renderCollectionReadiness() {
@@ -1790,21 +1924,6 @@ async function openCollection(id, region) {
   $('watchCollection').value = id; persistUiState(); renderProducts(true); $('watchCollection').focus();
 }
 
-async function changeCollection(action, id = null) {
-  try {
-    const row = id ? document.querySelector(`[data-collection-row="${id}"]`) : null;
-    const name = action === 'create' ? $('collectionName').value : row?.querySelector('input').value;
-    if (action === 'delete' && !window.confirm('Delete this collection? Its watches and history will be kept.')) return;
-    const result = await api(id ? `/api/collections/${encodeURIComponent(id)}` : '/api/collections', { method:action === 'create' ? 'POST' : action === 'delete' ? 'DELETE' : 'PUT', ...(action !== 'delete' ? { body:JSON.stringify({ name }) } : {}) });
-    app.collections = result.collections;
-    if (action === 'create') $('collectionName').value = '';
-    await refresh();
-    $('collectionResult').textContent = action === 'create' ? 'Collection created. Assign watches from their alert rules.' : action === 'delete' ? 'Collection deleted. Watches retained.' : 'Collection renamed.';
-    if (action === 'rename') document.querySelector(`[data-rename-collection="${id}"]`)?.focus();
-    else $('collectionName').focus();
-  } catch (err) { $('collectionResult').textContent = err.message; }
-}
-
 async function markPurchased(slug) {
   const product = app.products.find((item) => item.slug === slug);
   if (!product) return;
@@ -1842,10 +1961,16 @@ document.addEventListener('click', (event) => {
   if (purchased) { markPurchased(purchased.dataset.purchased); return; }
   const preview = event.target.closest('[data-preview-rule]');
   if (preview) { previewProductRule(preview.closest('form')); return; }
-  const rename = event.target.closest('[data-rename-collection]');
-  if (rename) { changeCollection('rename', rename.dataset.renameCollection); return; }
-  const removeCollection = event.target.closest('[data-delete-collection]');
-  if (removeCollection) { changeCollection('delete', removeCollection.dataset.deleteCollection); return; }
+  const edit = event.target.closest('[data-edit-collection]');
+  if (edit) { editCollection(edit.dataset.editCollection); return; }
+  const viewCollection = event.target.closest('[data-view-collection]');
+  if (viewCollection) { closeCollectionManager(); openCollection(viewCollection.dataset.viewCollection, app.currentRegion); return; }
+  const collectionImage = event.target.closest('[data-collection-image]');
+  if (collectionImage) {
+    const product = app.collectionDraft?.products.find((item) => item.slug === collectionImage.dataset.collectionImage);
+    if (product?.imageUrl) { app.brokenImages.delete(product.imageUrl); collectionImage.innerHTML = imageMarkup(product); wireProductImages(collectionImage); }
+    return;
+  }
   const copy = event.target.closest('[data-copy-text]');
   if (copy) { event.preventDefault(); copyText(copy.dataset.copyText, copy.dataset.copyLabel || 'Text'); return; }
   const imageRetry = event.target.closest('[data-image-retry]');
@@ -1974,7 +2099,26 @@ window.addEventListener('resize', updateToTopVisibility);
 let browseSearchTimer = null;
 $('search').addEventListener('input', () => { clearTimeout(browseSearchTimer); browseSearchTimer = setTimeout(() => { app.browseVisibleCount = 48; persistUiState(); renderProducts(true); }, 180); });
 for (const id of ['watchSearch','watchStatus','watchCategory','watchSort','watchCollection']) $(id).addEventListener(id === 'watchSearch' ? 'input' : 'change', () => { persistUiState(); renderProducts(true); });
-$('collectionForm').addEventListener('submit', (event) => { event.preventDefault(); changeCollection('create'); });
+$('openCollectionManager').addEventListener('click', () => openCollectionManager());
+$('closeCollectionManager').addEventListener('click', closeCollectionManager);
+$('collectionBackdrop').addEventListener('click', closeCollectionManager);
+for (const id of ['newCollection','firstCollection','newBulkCollection']) $(id).addEventListener('click', () => editCollection());
+$('collectionForm').addEventListener('submit', (event) => { event.preventDefault(); saveCollection(); });
+$('cancelCollectionEdit').addEventListener('click', () => showCollectionOverview(app.collectionDraft?.id));
+$('collectionWatchSearch').addEventListener('input', renderCollectionChoices);
+$('collectionWatchChoices').addEventListener('change', (event) => {
+  const input = event.target.closest('[data-collection-watch]');
+  if (!input || !app.collectionDraft) return;
+  if (input.checked) app.collectionDraft.slugs.add(input.dataset.collectionWatch);
+  else app.collectionDraft.slugs.delete(input.dataset.collectionWatch);
+  $('collectionSelection').textContent = `${app.collectionDraft.slugs.size} selected`;
+});
+$('bulkAddCollection').addEventListener('click', () => openCollectionManager(true));
+$('collectionBulkForm').addEventListener('submit', (event) => { event.preventDefault(); addSelectedToCollection(); });
+$('cancelCollectionBulk').addEventListener('click', closeCollectionManager);
+$('askDeleteCollection').addEventListener('click', confirmCollectionDeletion);
+$('cancelDeleteCollection').addEventListener('click', () => { collectionView('edit'); $('collectionDialogTitle').textContent = 'Edit collection'; $('askDeleteCollection').focus(); });
+$('confirmDeleteCollection').addEventListener('click', deleteCollection);
 $('selectVisibleWatches').addEventListener('click', () => { app.selectedWatch = new Set(filteredWatchlist().map((product) => product.slug)); renderProducts(true); });
 $('resetWatchFilters').addEventListener('click', resetWatchFilters);
 $('resetWatchEmpty').addEventListener('click', resetWatchFilters);
@@ -2007,7 +2151,7 @@ $('closeActivityDialog').addEventListener('click', closeActivityDialog);
 $('activityDialogBackdrop').addEventListener('click', closeActivityDialog);
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Tab') {
-    const dialog = [$('setupWizard'), $('watchImportDialog'), $('activityDialog'), $('productDialog')].find((item) => item && !item.classList.contains('hidden'));
+    const dialog = [$('setupWizard'), $('collectionDialog'), $('watchImportDialog'), $('activityDialog'), $('productDialog')].find((item) => item && !item.classList.contains('hidden'));
     if (dialog) {
       const focusable = [...dialog.querySelectorAll('button:not(:disabled):not([tabindex="-1"]),a[href]:not([tabindex="-1"]),input:not(:disabled):not([tabindex="-1"]),select:not(:disabled):not([tabindex="-1"]),textarea:not(:disabled):not([tabindex="-1"]),[tabindex]:not([tabindex="-1"])')].filter((item) => item.offsetParent !== null);
       if (focusable.length) {
@@ -2019,7 +2163,8 @@ document.addEventListener('keydown', (event) => {
     return;
   }
   if (event.key !== 'Escape') return;
-  if (!$('watchImportDialog').classList.contains('hidden')) closeWatchImport();
+  if (!$('collectionDialog').classList.contains('hidden')) closeCollectionManager();
+  else if (!$('watchImportDialog').classList.contains('hidden')) closeWatchImport();
   else if (!$('activityDialog').classList.contains('hidden')) closeActivityDialog();
   else if (!$('productDialog').classList.contains('hidden')) closeProductDialog();
 });

@@ -4,6 +4,7 @@ The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. 
 
 ## V1.2.0 — Stock insights and collection readiness
 
+- Redesigned Manage collections as a focused dialog beside Import watchlist, with a guided empty state, collection counts, and View watches/Edit actions. Create and edit collections with a searchable watch picker, thumbnails, and variant details; add selected watches to existing or new collections from the bulk toolbar. Saves update the name and membership together, cancellation keeps existing data, and deletion explains that watches, rules, and history remain.
 - Added an Activity page-size selector with 20 entries by default and options for 50 or 100. The browser remembers the selected size; additional entries appear on subsequent pages, and changing the size or filters returns to page 1.
 - Added availability timelines positioned by actual observation times, recorded restock dates, observed available durations, and explicit unknown periods for outages, restarts, overdue checks, partial catalogs, and pending confirmation. Insights begin with complete observations after upgrading; older change records remain available without inventing historical coverage.
 - Added 7-, 30-, and 90-day lowest observed catalog prices, lowest prices while available, and current-price comparisons with watch targets. Comparisons remain within one exact variant, region, and currency; Any variant products with multiple SKUs require a variant selection for price insights.

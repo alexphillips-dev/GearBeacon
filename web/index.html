@@ -115,7 +115,7 @@
     <section id="watchlist" class="page active" role="tabpanel" aria-labelledby="tabWatchlist">
       <div class="section-heading">
         <div><h2>Your watchlist</h2><p>Watch exact variants, set availability and price conditions, and organize your gear.</p></div>
-        <div class="watch-heading-actions"><button id="openWatchImport" class="primary" type="button">Import watchlist</button></div>
+        <div class="watch-heading-actions"><button id="openCollectionManager" type="button">Manage collections</button><button id="openWatchImport" class="primary" type="button">Import watchlist</button></div>
       </div>
       <div class="watch-toolbar" aria-label="Watchlist filters">
         <input id="watchSearch" type="search" placeholder="Search watchlist" autocomplete="off" aria-label="Search watchlist" />
@@ -127,12 +127,8 @@
       </div>
       <div class="collection-toolbar">
         <button id="selectVisibleWatches" type="button">Select visible watches</button>
-        <details class="collection-manager"><summary>Manage collections</summary>
-          <form id="collectionForm" class="collection-form"><label class="field"><span>New collection name</span><input id="collectionName" maxlength="80" required autocomplete="off" /></label><button class="primary" type="submit">Create collection</button></form>
-          <div id="collectionList"></div><p id="collectionResult" role="status" aria-live="polite"></p>
-        </details>
       </div>
-      <div id="bulkActions" class="bulk-actions hidden"><strong id="bulkCount">0 selected</strong><select id="bulkPauseDuration" aria-label="Bulk pause duration"><option value="60">Pause 1 hour</option><option value="1440">Pause 1 day</option><option value="10080">Pause 1 week</option><option value="0">Pause until resumed</option></select><button id="bulkPause">Pause</button><button id="bulkResume">Resume</button><button id="bulkRemove" class="danger-button">Remove</button><button id="bulkClear" class="ghost">Clear selection</button></div>
+      <div id="bulkActions" class="bulk-actions hidden"><strong id="bulkCount">0 selected</strong><button id="bulkAddCollection" type="button">Add to collection</button><select id="bulkPauseDuration" aria-label="Bulk pause duration"><option value="60">Pause 1 hour</option><option value="1440">Pause 1 day</option><option value="10080">Pause 1 week</option><option value="0">Pause until resumed</option></select><button id="bulkPause">Pause</button><button id="bulkResume">Resume</button><button id="bulkRemove" class="danger-button">Remove</button><button id="bulkClear" class="ghost">Clear selection</button></div>
       <div id="collectionReadiness" class="collection-readiness"></div>
       <div id="watchGrid" class="grid watch-grid"></div>
       <div id="watchEmpty" class="empty hidden">
@@ -405,6 +401,37 @@
     <article class="product-dialog-panel">
       <div class="product-dialog-head"><div><span id="productDialogCategory" class="settings-kicker">Product</span><h2 id="productDialogTitle">Product details</h2></div><button id="closeProductDialog" class="icon-button" type="button" aria-label="Close product details">×</button></div>
       <div id="productDialogBody" class="product-dialog-body"></div>
+    </article>
+  </section>
+  <section id="collectionDialog" class="watch-import-dialog hidden" role="dialog" aria-modal="true" aria-labelledby="collectionDialogTitle" aria-describedby="collectionDialogDescription">
+    <button id="collectionBackdrop" class="watch-import-backdrop" type="button" aria-label="Close collection manager" tabindex="-1"></button>
+    <article class="watch-import-panel collection-panel">
+      <div class="watch-import-head">
+        <div><h2 id="collectionDialogTitle">Manage collections</h2><p id="collectionDialogDescription">Group your watched gear by project.</p></div>
+        <button id="closeCollectionManager" class="icon-button" type="button" aria-label="Close collection manager">×</button>
+      </div>
+      <div class="collection-body">
+        <div id="collectionOverview">
+          <div class="collection-list-heading"><span id="collectionTotal"></span><button id="newCollection" class="primary" type="button">+ New collection</button></div>
+          <div id="collectionList"></div>
+          <div id="collectionEmpty" class="collection-empty hidden"><span class="collection-empty-icon" aria-hidden="true">▦</span><h3>A place for every project</h3><p>Group your watches into projects, like Home network or Camera upgrade.</p><button id="firstCollection" class="primary" type="button">Create your first collection</button></div>
+        </div>
+        <div id="collectionBulk" class="hidden">
+          <form id="collectionBulkForm"><label class="field"><span>Collection</span><select id="collectionDestination" required></select></label><p class="collection-help">Selected watches will be added alongside existing items. Their other collections stay the same.</p><div class="collection-form-actions"><button id="cancelCollectionBulk" type="button">Cancel</button><button class="primary" type="submit">Add watches</button></div></form>
+          <button id="newBulkCollection" class="collection-new-link" type="button">+ Create a new collection</button>
+        </div>
+        <form id="collectionForm" class="hidden">
+          <label class="field"><span>Collection name</span><input id="collectionName" maxlength="80" required autocomplete="off" placeholder="e.g. Home network" /></label>
+          <div class="collection-picker-heading"><h3>Watches</h3><span id="collectionSelection" role="status">0 selected</span></div>
+          <p class="collection-help">Choose watches for this project, or save an empty collection and add them later.</p>
+          <label class="field"><span class="sr-only">Search watches to include</span><input id="collectionWatchSearch" type="search" placeholder="Search name, SKU, or variant" autocomplete="off" /></label>
+          <div id="collectionWatchChoices" class="collection-watch-choices"></div>
+          <div class="collection-form-actions"><button id="cancelCollectionEdit" type="button">Cancel</button><button id="saveCollection" class="primary" type="submit">Create collection</button></div>
+          <div id="collectionDeleteArea" class="collection-delete-area hidden"><button id="askDeleteCollection" class="danger-button" type="button">Delete collection</button></div>
+        </form>
+        <div id="collectionDeleteConfirm" class="collection-delete-confirm hidden"><h3>Delete this collection?</h3><p id="collectionDeleteDescription"></p><div class="collection-form-actions"><button id="cancelDeleteCollection" type="button">Keep collection</button><button id="confirmDeleteCollection" class="danger-button" type="button">Delete collection</button></div></div>
+        <p id="collectionResult" class="collection-result" role="status" aria-live="polite"></p>
+      </div>
     </article>
   </section>
   <section id="watchImportDialog" class="watch-import-dialog hidden" role="dialog" aria-modal="true" aria-labelledby="watchImportTitle">

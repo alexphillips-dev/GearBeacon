@@ -117,6 +117,34 @@ try {
   assert.equal((await details()).product.collections.length, 2);
   await request(memberships, { collections:[a.id,'missing'] }, 'PUT', 400);
   assert.equal((await details()).product.collections.length, 2, 'Invalid assignment changed valid membership.');
+  const managed = await request('/api/collections', { name:'Managed project', slugs:[black,parent,black] });
+  const managedPath = `/api/collections/${managed.id}`;
+  const managedState = async () => (await request('/api/collections')).collections.find((collection) => collection.id === managed.id);
+  assert.deepEqual(new Set((await managedState()).slugs), new Set([black,parent]), 'Create did not assign exact watches or deduplicate them.');
+  await request('/api/collections', { name:'Invalid project', slugs:[white] }, 'POST', 400);
+  assert(!(await request('/api/collections')).collections.some((collection) => collection.name === 'Invalid project'), 'Failed creation left an empty collection.');
+  for (const body of [{ name:'Invalid rename',slugs:[white] }, { slugs:'bad' }, { slugs:null }, { slugs:[],addSlugs:[black] }, { addSlugs:['missing'] }]) await request(managedPath, body, 'PUT', 400);
+  assert.equal((await managedState()).name, 'Managed project');
+  assert.equal((await managedState()).slugs.length, 2, 'Invalid edits changed collection membership.');
+  await request(`${managedPath}?region=ca`, { addSlugs:[black] }, 'PUT', 404);
+  await request(managedPath, { name:'Edited project',slugs:[parent] }, 'PUT');
+  assert.deepEqual((await details()).product.collections.sort(), [a.id,b.id].sort(), 'Editing one collection changed other memberships.');
+  await request(managedPath, { addSlugs:[black,black] }, 'PUT');
+  await request(managedPath, { addSlugs:[black] }, 'PUT');
+  assert.deepEqual(new Set((await managedState()).slugs), new Set([black,parent]), 'Bulk addition replaced existing watches or created duplicate members.');
+  const collectionDatabase = new DatabaseSync(join(dataDir, 'gearbeacon.mock.sqlite3'));
+  try {
+    collectionDatabase.exec("CREATE TRIGGER test_collection_save_failure BEFORE INSERT ON watch_collection_members BEGIN SELECT RAISE(ABORT, 'mock collection save failure'); END");
+    await request(managedPath, { name:'Must roll back',slugs:[black] }, 'PUT', 500);
+    assert.equal((await managedState()).name, 'Edited project', 'Failed save committed the new name.');
+    assert.deepEqual(new Set((await managedState()).slugs), new Set([black,parent]), 'Failed save committed partial membership.');
+    await request('/api/collections', { name:'Must not exist',slugs:[black] }, 'POST', 500);
+    assert(!(await request('/api/collections')).collections.some((collection) => collection.name === 'Must not exist'), 'Failed member insertion committed a new collection.');
+  } finally { collectionDatabase.exec('DROP TRIGGER IF EXISTS test_collection_save_failure'); collectionDatabase.close(); }
+  await request(managedPath, { slugs:[] }, 'PUT');
+  assert.equal((await managedState()).slugs.length, 0, 'Saving an empty collection did not remove its membership.');
+  assert.equal((await details()).product.watchedAt, createdAt, 'Collection edits changed the watch itself.');
+  await request(managedPath, undefined, 'DELETE');
   await rules(black, { availableUnderTarget:true, targetPrice:300 });
   const preview = await request(`/api/watch/${encodeURIComponent(black)}/preview`, { rule:{ availableUnderTarget:true,targetPrice:300 } });
   assert.equal(preview.decision.allowed, true);

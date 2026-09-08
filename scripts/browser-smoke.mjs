@@ -320,7 +320,7 @@ try {
   const watchImportReview = await evaluate("({ ready:app.watchImportPreview.summary.addable, already:app.watchImportPreview.summary.alreadyWatched, duplicates:app.watchImportPreview.summary.duplicates, mismatch:app.watchImportPreview.summary.regionMismatch, unrecognized:app.watchImportPreview.summary.unrecognized, selected:document.querySelectorAll('#watchImportResults [data-import-slug]:checked').length, button:document.getElementById('confirmWatchImport').textContent, region:document.getElementById('watchImportRegion').textContent })");
   assert(watchImportReview.ready === 1 && watchImportReview.already === 1 && watchImportReview.duplicates === 1 && watchImportReview.mismatch === 1 && watchImportReview.unrecognized === 1 && watchImportReview.selected === 1 && watchImportReview.button === 'Add 1 product' && /United States Store/.test(watchImportReview.region), `Watchlist import classifications are incomplete: ${JSON.stringify(watchImportReview)}`);
   await cdp.send('Emulation.setDeviceMetricsOverride', { width:390, height:844, screenWidth:390, screenHeight:844, deviceScaleFactor:1, mobile:false });
-  const responsiveImport = await evaluate("(() => { const panel=document.querySelector('.watch-import-panel').getBoundingClientRect(); return { width:panel.width, height:panel.height, overflow:document.documentElement.scrollWidth <= window.innerWidth + 1, summaryColumns:getComputedStyle(document.getElementById('watchImportSummary')).gridTemplateColumns.split(' ').length }; })()");
+  const responsiveImport = await evaluate("(() => { const panel=document.querySelector('#watchImportDialog .watch-import-panel').getBoundingClientRect(); return { width:panel.width, height:panel.height, overflow:document.documentElement.scrollWidth <= window.innerWidth + 1, summaryColumns:getComputedStyle(document.getElementById('watchImportSummary')).gridTemplateColumns.split(' ').length }; })()");
   assert(responsiveImport?.width === 390 && responsiveImport.height === 844 && responsiveImport.overflow && responsiveImport.summaryColumns === 2, `Watchlist importer is not responsive at 390px: ${JSON.stringify(responsiveImport)}`);
   await cdp.send('Emulation.clearDeviceMetricsOverride');
   await evaluate("document.getElementById('confirmWatchImport').click()");
@@ -487,9 +487,11 @@ try {
   await waitForBrowser("!app.browserOffline && document.getElementById('toast').textContent === 'Connection restored' && document.getElementById('toast').classList.contains('success')", 'Reconnect state did not confirm recovery');
 
   // Precision watch workflows use browser controls, real API calls, and isolated mock data.
-  await evaluate("activateTab('watchlist'); document.querySelector('.collection-manager').open=true; document.getElementById('collectionName').value='Camera project'; document.getElementById('collectionForm').requestSubmit()");
+  await evaluate("activateTab('watchlist'); document.getElementById('openCollectionManager').focus(); document.getElementById('openCollectionManager').click(); document.getElementById('firstCollection').click(); document.getElementById('collectionName').value='Camera project'; document.getElementById('collectionForm').requestSubmit()");
   await waitForBrowser("app.collections.some((item) => item.name === 'Camera project')", 'Collection creation failed');
   await assertAccessible('Collection manager');
+  await evaluate("document.getElementById('closeCollectionManager').click()");
+  assert(await evaluate("document.activeElement.id === 'openCollectionManager' && !document.querySelector('main').inert"), 'Collection manager did not restore focus or release the page');
   await evaluate("activateTab('browse'); resetBrowseFilters(); document.getElementById('tabBrowse').focus(); openProductDialog('uvc-g5-ptz')");
   await waitForBrowser("document.querySelector('[data-variant-selector]')?.options.length === 3", 'Variant choices did not render');
   await evaluate("(() => { const picker=document.querySelector('[data-variant-selector]'); picker.value='uvc-g5-ptz::mock-black'; picker.dispatchEvent(new Event('change',{bubbles:true})); })()");
@@ -556,19 +558,78 @@ try {
     await evaluate(`applyTheme(${JSON.stringify(theme)})`); await delay(250);
     await assertAccessible(`Collection readiness ${theme}`);
   }
-  await evaluate("document.querySelector('.collection-manager').open=true; document.querySelector('[data-collection-row] input').value='Renamed cameras'; document.querySelector('[data-rename-collection]').click()");
+  await evaluate("document.getElementById('openCollectionManager').click(); document.querySelector('[data-edit-collection]').click(); document.getElementById('collectionName').value='Renamed cameras'; document.getElementById('collectionForm').requestSubmit()");
   await waitForBrowser("app.collections.some((item) => item.name === 'Renamed cameras')", 'Collection rename failed');
   await cdp.send('Emulation.setDeviceMetricsOverride', { width:390,height:844,screenWidth:390,screenHeight:844,deviceScaleFactor:1,mobile:false });
   assert(await evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), 'Collection manager overflows on mobile');
   await assertAccessible('Mobile collections and precision watchlist');
+  await evaluate("document.getElementById('closeCollectionManager').click()");
   const selectedCollection = await evaluate("document.getElementById('watchCollection').value");
   await cdp.send('Page.reload');
   await waitForBrowser(`app.products.some((item) => item.slug === 'uvc-g5-ptz::mock-black') && document.getElementById('watchCollection').value === ${JSON.stringify(selectedCollection)}`, 'Collection filter did not survive reload');
   await cdp.send('Page.navigate', { url:`${baseUrl}/?region=us&collection=${encodeURIComponent(selectedCollection)}#watchlist` });
   await waitForBrowser(`app.activeTab === 'watchlist' && document.getElementById('watchCollection').value === ${JSON.stringify(selectedCollection)} && app.pendingCollectionId === null`, 'Collection notification deep link did not open its Watchlist collection');
-  await evaluate("window.confirm=() => true; document.querySelector('.collection-manager').open=true; document.querySelector('[data-delete-collection]').click()");
+  await evaluate("document.getElementById('openCollectionManager').click(); document.querySelector('[data-edit-collection]').click(); document.getElementById('askDeleteCollection').click(); document.getElementById('confirmDeleteCollection').click()");
   await waitForBrowser("app.collections.length === 0", 'Collection deletion failed');
   assert(await evaluate("app.products.some((item) => item.slug === 'uvc-g5-ptz::mock-black' && item.watched)"), 'Collection deletion removed its watch');
+  await evaluate("document.getElementById('closeCollectionManager').click()");
+
+  // Collection management keeps name/membership edits together and preserves drafts until saved.
+  const collectionTestSlugs = await evaluate("app.products.filter((product) => product.watched).slice(0,2).map((product) => product.slug)");
+  assert(collectionTestSlugs.length === 2, 'Collection manager fixture needs two watched products');
+  await evaluate("document.getElementById('openCollectionManager').focus(); document.getElementById('openCollectionManager').click()");
+  assert(await evaluate("document.activeElement.id === 'firstCollection' && document.querySelector('main').inert && !document.getElementById('collectionEmpty').classList.contains('hidden')"), 'Collection empty state did not provide a focused first action');
+  await evaluate("document.getElementById('firstCollection').click(); document.getElementById('collectionName').value='Home network'");
+  await evaluate(`document.querySelector('[data-collection-watch="${collectionTestSlugs[0]}"]').click()`);
+  await evaluate("document.getElementById('collectionWatchSearch').value='no-such-mock-watch'; document.getElementById('collectionWatchSearch').dispatchEvent(new Event('input'))");
+  assert(await evaluate("document.getElementById('collectionWatchChoices').textContent.includes('No watches match') && document.getElementById('collectionSelection').textContent === '1 selected'"), 'Filtering collection choices lost the selection or empty-state guidance');
+  await evaluate("document.getElementById('collectionWatchSearch').value=''; document.getElementById('collectionWatchSearch').dispatchEvent(new Event('input'))");
+  assert(await evaluate(`document.querySelector('[data-collection-watch="${collectionTestSlugs[0]}"]').checked && document.querySelector('.collection-watch-image img')`), 'Selected watch or product thumbnails were missing');
+  await evaluate("refresh()");
+  assert(await evaluate("document.getElementById('collectionName').value === 'Home network' && app.collectionDraft.slugs.size === 1"), 'Background refresh erased an unsaved collection draft');
+  for (const theme of ['dark','light']) {
+    await evaluate(`applyTheme(${JSON.stringify(theme)})`); await delay(250);
+    await assertAccessible(`Collection editor ${theme}`);
+    assert(await evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1 && document.querySelector('.collection-panel').scrollWidth <= document.querySelector('.collection-panel').clientWidth + 1"), 'Collection editor overflowed at 390px');
+  }
+  await evaluate("document.getElementById('saveCollection').focus(); document.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',bubbles:true}))");
+  assert(await evaluate("document.activeElement.id === 'closeCollectionManager'"), 'Collection editor did not contain forward keyboard focus');
+  await evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',shiftKey:true,bubbles:true}))");
+  assert(await evaluate("document.activeElement.id === 'saveCollection'"), 'Collection editor did not contain reverse keyboard focus');
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width:640,height:450,screenWidth:1280,screenHeight:900,deviceScaleFactor:2,mobile:false });
+  assert(await evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), 'Collection editor overflowed at 200% equivalent zoom');
+  await evaluate("document.getElementById('collectionForm').requestSubmit()");
+  await waitForBrowser("app.collections.some((item) => item.name === 'Home network' && item.slugs.length === 1) && !app.collectionBusy", 'Creating a collection did not save its selected watch');
+  const homeCollection = await evaluate("app.collections.find((item) => item.name === 'Home network').id");
+  assert(await evaluate(`document.activeElement.dataset.editCollection === '${homeCollection}'`), 'Saving a new collection did not focus its Edit action');
+  await evaluate(`document.querySelector('[data-edit-collection="${homeCollection}"]').click(); document.getElementById('collectionName').value='Discarded name'; document.querySelector('[data-collection-watch="${collectionTestSlugs[1]}"]').click(); document.getElementById('cancelCollectionEdit').click()`);
+  assert(await evaluate(`app.collections.find((item) => item.id === '${homeCollection}').name === 'Home network' && app.collections[0].slugs.length === 1`), 'Cancel saved collection edits');
+  await evaluate("document.getElementById('newCollection').click(); document.getElementById('collectionName').value='Home network'; document.getElementById('collectionForm').requestSubmit()");
+  await waitForBrowser("document.getElementById('collectionResult').textContent.includes('already exists') && !app.collectionBusy", 'Duplicate collection name did not report a recoverable error');
+  assert(await evaluate("document.getElementById('collectionName').value === 'Home network' && !document.getElementById('saveCollection').disabled"), 'Failed collection save erased the draft or left controls disabled');
+  await evaluate("document.getElementById('collectionName').value='Camera upgrade'; document.getElementById('collectionForm').requestSubmit()");
+  await waitForBrowser("app.collections.length === 2 && !app.collectionBusy", 'Empty collection creation failed');
+  const cameraCollection = await evaluate("app.collections.find((item) => item.name === 'Camera upgrade').id");
+  await evaluate(`document.querySelector('[data-view-collection="${homeCollection}"]').click()`);
+  assert(await evaluate(`document.getElementById('collectionDialog').classList.contains('hidden') && document.getElementById('watchCollection').value === '${homeCollection}' && document.activeElement.id === 'watchCollection'`), 'View watches did not close the manager and filter the Watchlist');
+  await evaluate(`resetWatchFilters(); app.selectedWatch=new Set(${JSON.stringify(collectionTestSlugs)}); renderProducts(true); document.getElementById('bulkAddCollection').click(); document.getElementById('collectionDestination').value='${cameraCollection}'; document.getElementById('collectionBulkForm').requestSubmit()`);
+  await waitForBrowser(`app.collections.find((item) => item.id === '${cameraCollection}').slugs.length === 2 && document.getElementById('collectionDialog').classList.contains('hidden')`, 'Bulk Add to collection failed');
+  assert(await evaluate(`app.collections.find((item) => item.id === '${homeCollection}').slugs.length === 1 && app.selectedWatch.size === 0`), 'Bulk assignment replaced other memberships or retained the completed selection');
+  await evaluate(`app.selectedWatch=new Set(${JSON.stringify(collectionTestSlugs)}); renderProducts(true); document.getElementById('bulkAddCollection').click(); document.getElementById('newBulkCollection').click()`);
+  assert(await evaluate("app.collectionDraft.slugs.size === 2 && document.getElementById('collectionSelection').textContent === '2 selected'"), 'Creating from bulk selection did not preselect the watches');
+  await evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
+  assert(await evaluate("document.getElementById('collectionDialog').classList.contains('hidden') && app.selectedWatch.size === 2"), 'Escape saved bulk collection changes or lost the watch selection');
+  await evaluate(`document.getElementById('openCollectionManager').click(); document.querySelector('[data-edit-collection="${cameraCollection}"]').click(); document.getElementById('collectionName').value='Camera upgrade edited'; document.querySelector('[data-collection-watch="${collectionTestSlugs[1]}"]').click(); document.getElementById('collectionForm').requestSubmit()`);
+  await waitForBrowser(`app.collections.find((item) => item.id === '${cameraCollection}').name === 'Camera upgrade edited' && app.collections.find((item) => item.id === '${cameraCollection}').slugs.length === 1`, 'Editing membership and name together failed');
+  await evaluate(`document.querySelector('[data-edit-collection="${cameraCollection}"]').click(); document.getElementById('askDeleteCollection').click()`);
+  assert(await evaluate("document.activeElement.id === 'cancelDeleteCollection' && document.getElementById('collectionDeleteDescription').textContent.includes('watches, alert rules, and history will be kept')"), 'Delete confirmation did not explain retained watches or focus the safe action');
+  await assertAccessible('Collection deletion confirmation');
+  await evaluate("document.getElementById('cancelDeleteCollection').click()");
+  assert(await evaluate("!document.getElementById('collectionForm').classList.contains('hidden') && document.activeElement.id === 'askDeleteCollection'"), 'Cancelling deletion did not restore the editor');
+  await evaluate("document.getElementById('askDeleteCollection').click(); document.getElementById('confirmDeleteCollection').click()");
+  await waitForBrowser("app.collections.length === 1 && !app.collectionBusy", 'Confirmed collection deletion failed');
+  assert(await evaluate(`${JSON.stringify(collectionTestSlugs)}.every((slug) => app.products.some((product) => product.slug === slug && product.watched))`), 'Collection deletion removed watched products');
+  await evaluate("document.getElementById('closeCollectionManager').click(); app.selectedWatch.clear(); renderProducts(true)");
   // Paginate more than 100 real API entries in the isolated browser fixture.
   await evaluate(`(async () => {
     const backup = await api('/api/data/export');
