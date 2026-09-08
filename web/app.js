@@ -84,6 +84,7 @@ function restoreUiControls() {
   setControlValue('watchSearch', savedUiState.watch?.search);
   setControlValue('watchStatus', savedUiState.watch?.status);
   setControlValue('watchSort', savedUiState.watch?.sort);
+  $('groupCollectedWatches').checked = savedUiState.watch?.groupCollections === true;
   setControlValue('activitySearch', savedUiState.activity?.search);
   setControlValue('activityType', savedUiState.activity?.type);
   setControlValue('activityDelivery', savedUiState.activity?.delivery);
@@ -95,7 +96,7 @@ function persistUiState() {
   const state = {
     activeTab:app.activeTab,
     browse:{ search:$('search')?.value || '', category:app.browseCategory },
-    watch:{ search:$('watchSearch')?.value || '', status:$('watchStatus')?.value || 'all', category:app.pendingWatchCategory || $('watchCategory')?.value || 'all', sort:$('watchSort')?.value || 'changed', collection:app.pendingWatchCollection || $('watchCollection').value || 'all' },
+    watch:{ search:$('watchSearch')?.value || '', status:$('watchStatus')?.value || 'all', category:app.pendingWatchCategory || $('watchCategory')?.value || 'all', sort:$('watchSort')?.value || 'changed', collection:app.pendingWatchCollection || $('watchCollection').value || 'all', groupCollections:$('groupCollectedWatches').checked },
     activity:{ search:$('activitySearch')?.value || '', scope:app.pendingActivityRegion || $('activityRegion')?.value || 'all', type:$('activityType')?.value || 'all', delivery:$('activityDelivery')?.value || 'all', from:$('activityFrom')?.value || '', to:$('activityTo')?.value || '', limit:Number($('activityPageSize')?.value || 20) },
   };
   try { localStorage.setItem(UI_STATE_KEY, JSON.stringify(state)); } catch {}
@@ -456,7 +457,7 @@ function renderCategoryTabs() {
     return `<button class="store-category-tab ${app.browseCategory === category ? 'active' : ''}" data-category="${escapeHtml(category)}" role="tab" aria-selected="${app.browseCategory === category}">${escapeHtml(category)} <span>${count}</span></button>`;
   }).join('');
 }
-function filteredWatchlist() {
+function filteredWatchlist({ includeCollected = false } = {}) {
   const query = $('watchSearch').value.trim().toLowerCase();
   const status = $('watchStatus').value;
   const category = $('watchCategory').value;
@@ -470,6 +471,7 @@ function filteredWatchlist() {
     if (status === 'purchased' && !p.watchRule?.purchasedAt) return false;
     if (status === 'wanted' && p.watchRule?.purchasedAt) return false;
     const collection = $('watchCollection').value;
+    if (!includeCollected && $('groupCollectedWatches').checked && collection === 'all' && p.collections?.length) return false;
     if (collection === 'none' && p.collections?.length) return false;
     if (!['all','none'].includes(collection) && !p.collections?.includes(collection)) return false;
     return true;
@@ -517,6 +519,9 @@ function renderBulkActions() {
 function renderProducts(force = false) {
   const allWatched = app.products.filter((p) => p.watched);
   renderWatchFilters(allWatched);
+  if ($('groupCollectedWatches').checked && $('watchCollection').value === 'all') {
+    for (const product of allWatched) if (product.collections?.length) app.selectedWatch.delete(product.slug);
+  }
   renderCollectionReadiness();
   const watched = filteredWatchlist();
   $('watchCount').textContent = allWatched.length;
@@ -1981,7 +1986,15 @@ function renderCollectionDetails() {
 
 function renderCollectionReadiness(force = false) {
   const selected = $('watchCollection').value;
-  const collections = app.collections.filter((collection) => selected === 'all' || collection.id === selected);
+  let collections = app.collections.filter((collection) => selected === 'all' || collection.id === selected);
+  if ($('groupCollectedWatches').checked && selected === 'all') {
+    const query = $('watchSearch').value.trim().toLowerCase();
+    const memberFilters = $('watchStatus').value !== 'all' || $('watchCategory').value !== 'all';
+    if (query || memberFilters) {
+      const matching = new Set(filteredWatchlist({ includeCollected:true }).map((product) => product.slug));
+      collections = collections.filter((collection) => (!memberFilters && collection.name.toLowerCase().includes(query)) || collection.slugs.some((slug) => matching.has(slug)));
+    }
+  }
   renderCollectionDetails();
   const key = JSON.stringify(collections.map(({ readiness, ...collection }) => ({ ...collection, readiness:{ ...readiness, checkedAt:null }, previews:collection.slugs.slice(0,4).map((slug) => { const product = app.products.find((item) => item.slug === slug); return [product?.imageUrl,product?.name]; }) })));
   if (!force && key === app.readinessRenderKey) return;
@@ -2193,6 +2206,7 @@ window.addEventListener('resize', updateToTopVisibility);
 let browseSearchTimer = null;
 $('search').addEventListener('input', () => { clearTimeout(browseSearchTimer); browseSearchTimer = setTimeout(() => { app.browseVisibleCount = 48; persistUiState(); renderProducts(true); }, 180); });
 for (const id of ['watchSearch','watchStatus','watchCategory','watchSort','watchCollection']) $(id).addEventListener(id === 'watchSearch' ? 'input' : 'change', () => { persistUiState(); renderProducts(true); });
+$('groupCollectedWatches').addEventListener('change', () => { persistUiState(); renderProducts(true); });
 $('openCollectionManager').addEventListener('click', () => openCollectionManager());
 $('closeCollectionManager').addEventListener('click', closeCollectionManager);
 $('collectionBackdrop').addEventListener('click', closeCollectionManager);

@@ -707,6 +707,44 @@ try {
   assert(await evaluate("document.getElementById('watchCollection').value === window.previewCollectionId && document.querySelectorAll('.collection-card').length === 1"), 'View items did not filter the selected collection');
   await cdp.send('Emulation.setDeviceMetricsOverride', { width:640,height:450,screenWidth:1280,screenHeight:900,deviceScaleFactor:2,mobile:false });
   assert(await evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), 'Collection cards overflowed at 200% equivalent zoom');
+  // Grouping is a saved display preference; watches and their rules remain intact.
+  const groupedCollectionId = await evaluate("window.previewCollectionId");
+  const groupedMemberSlug = await evaluate("app.collections.find(item=>item.id===window.previewCollectionId).slugs[0]");
+  await evaluate("resetWatchFilters(); window.groupingWatchSnapshot=JSON.stringify(app.products.filter(item=>item.watched).map(({slug,watchRule,collections})=>({slug,watchRule,collections}))); app.selectedWatch=new Set(app.products.filter(item=>item.watched).map(item=>item.slug)); renderProducts(true)");
+  assert(await evaluate("!document.getElementById('groupCollectedWatches').checked"), 'Collection grouping unexpectedly changed the existing default view');
+  await evaluate("document.getElementById('groupCollectedWatches').focus(); document.getElementById('groupCollectedWatches').click()");
+  assert(await evaluate("document.querySelectorAll('#watchGrid .watch-card').length === app.products.filter(item=>item.watched && !item.collections.length).length && [...app.selectedWatch].every(slug=>!app.products.find(item=>item.slug===slug).collections.length) && document.querySelectorAll('.collection-card').length === app.collections.length"), 'Grouping left duplicate cards or selected hidden members');
+  assert(await evaluate("window.groupingWatchSnapshot === JSON.stringify(app.products.filter(item=>item.watched).map(({slug,watchRule,collections})=>({slug,watchRule,collections}))) && Number(document.getElementById('watchCount').textContent) === app.products.filter(item=>item.watched).length"), 'Grouping changed watch data or the total monitored count');
+  await evaluate("document.getElementById('selectVisibleWatches').click()");
+  assert(await evaluate("[...app.selectedWatch].every(slug=>!app.products.find(item=>item.slug===slug).collections.length)"), 'Select visible watches included hidden collection members');
+  await cdp.send('Page.reload');
+  await waitForBrowser("app.collections.length > 0 && document.getElementById('groupCollectedWatches').checked && document.getElementById('watchCollection').value === 'all'", 'The grouping preference did not survive reload');
+  assert(await evaluate("document.querySelectorAll('#watchGrid .watch-card').length === app.products.filter(item=>item.watched && !item.collections.length).length"), 'Reload displayed duplicate collection members');
+  await evaluate(`document.querySelector('[data-collection-card="${groupedCollectionId}"] [data-view-collection]').click()`);
+  assert(await evaluate(`document.getElementById('watchCollection').value === '${groupedCollectionId}' && document.querySelectorAll('#watchGrid .watch-card').length === app.collections.find(item=>item.id==='${groupedCollectionId}').slugs.length && document.getElementById('groupCollectedWatches').checked`), 'Opening a grouped collection did not reveal its members');
+  await evaluate(`resetWatchFilters(); document.getElementById('watchSearch').value='${groupedMemberSlug}'; document.getElementById('watchSearch').dispatchEvent(new Event('input'))`);
+  assert(await evaluate(`Boolean(document.querySelector('[data-collection-card="${groupedCollectionId}"]')) && !document.querySelector('#watchGrid [data-product-card="${groupedMemberSlug}"]')`), 'Searching for a grouped item did not retain its collection card');
+  await evaluate("document.getElementById('watchSearch').value='Preview project'; document.getElementById('watchSearch').dispatchEvent(new Event('input'))");
+  assert(await evaluate(`document.querySelectorAll('.collection-card').length === 1 && document.querySelector('.collection-card').dataset.collectionCard === '${groupedCollectionId}'`), 'Searching by collection name did not find the folder');
+  await evaluate("document.getElementById('watchSearch').value='no-such-grouped-item'; document.getElementById('watchSearch').dispatchEvent(new Event('input'))");
+  assert(await evaluate("!document.getElementById('watchEmpty').classList.contains('hidden') && !document.getElementById('resetWatchEmpty').classList.contains('hidden')"), 'A grouped search with no matches did not offer a reset');
+  await evaluate("document.getElementById('resetWatchEmpty').click()");
+  assert(await evaluate("document.getElementById('groupCollectedWatches').checked && document.querySelectorAll('.collection-card').length === app.collections.length"), 'Reset filters discarded the grouping preference');
+  const ungroupedSlug = await evaluate("app.products.find(item=>item.watched && !item.collections.length).slug");
+  const groupingFolders = await evaluate(`(async()=>{ const ids=[]; for(const name of ['Grouping first','Grouping second']) ids.push((await api('/api/collections',{method:'POST',body:JSON.stringify({name,slugs:['${ungroupedSlug}']})})).id); await refresh(); return ids; })()`);
+  assert(await evaluate(`!document.querySelector('#watchGrid [data-product-card="${ungroupedSlug}"]')`), 'Adding a watch to collections left its duplicate card visible');
+  await evaluate(`api('/api/collections/${groupingFolders[0]}',{method:'DELETE'}).then(()=>refresh())`);
+  assert(await evaluate(`!document.querySelector('#watchGrid [data-product-card="${ungroupedSlug}"]')`), 'Removing one of two memberships exposed a duplicate card');
+  await evaluate(`api('/api/collections/${groupingFolders[1]}',{method:'DELETE'}).then(()=>refresh())`);
+  assert(await evaluate(`Boolean(document.querySelector('#watchGrid [data-product-card="${ungroupedSlug}"]')) && app.products.find(item=>item.slug==='${ungroupedSlug}').watched`), 'Removing the last collection did not restore its watched item');
+  for (const theme of ['dark','light']) {
+    await evaluate(`applyTheme(${JSON.stringify(theme)})`); await delay(250);
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width:390,height:844,deviceScaleFactor:1,mobile:false });
+    assert(await evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), 'Grouping controls overflowed the mobile Watchlist');
+    await assertAccessible(`Grouped Watchlist ${theme}`);
+  }
+  await evaluate("document.getElementById('groupCollectedWatches').click()");
+  assert(await evaluate("document.querySelectorAll('#watchGrid .watch-card').length === app.products.filter(item=>item.watched).length"), 'Turning grouping off did not restore all watched item cards');
   // Paginate more than 100 real API entries in the isolated browser fixture.
   await evaluate(`(async () => {
     const backup = await api('/api/data/export');
