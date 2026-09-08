@@ -1756,18 +1756,19 @@ function renderCollections(force = false) {
   if (!force && key === app.collectionsRenderKey) return;
   app.collectionsRenderKey = key;
   const focused = document.activeElement;
-  const focusAction = ['data-edit-collection','data-view-collection','data-collection-detail'].find((attribute) => focused?.hasAttribute(attribute));
+  const focusAction = ['data-edit-collection','data-view-collection','data-collection-alerts'].find((attribute) => focused?.hasAttribute(attribute));
   const focusId = focusAction && focused.getAttribute(focusAction);
   $('collectionTotal').textContent = `${app.collections.length} collection${app.collections.length === 1 ? '' : 's'}`;
   $('collectionEmpty').classList.toggle('hidden', app.collections.length > 0);
   $('newCollection').classList.toggle('hidden', app.collections.length === 0);
-  $('collectionList').innerHTML = app.collections.map((collection) => `<article class="collection-row" data-collection-row="${escapeHtml(collection.id)}"><div class="collection-row-copy"><h3>${escapeHtml(collection.name)}</h3><p>${collection.slugs.length} watch${collection.slugs.length === 1 ? '' : 'es'}</p></div><div class="collection-row-actions"><button type="button" data-view-collection="${escapeHtml(collection.id)}" aria-label="View watches in ${escapeHtml(collection.name)}">View watches</button><button type="button" data-collection-detail="${escapeHtml(collection.id)}" aria-label="Configure alerts for ${escapeHtml(collection.name)}">Alerts</button><button type="button" data-edit-collection="${escapeHtml(collection.id)}" aria-label="Edit ${escapeHtml(collection.name)}">Edit</button></div></article>`).join('');
+  $('collectionList').innerHTML = app.collections.map((collection) => `<article class="collection-row" data-collection-row="${escapeHtml(collection.id)}"><div class="collection-row-copy"><h3>${escapeHtml(collection.name)}</h3><p>${collection.slugs.length} watch${collection.slugs.length === 1 ? '' : 'es'}</p></div><div class="collection-row-actions"><button type="button" data-view-collection="${escapeHtml(collection.id)}" aria-label="View watches in ${escapeHtml(collection.name)}">View watches</button><button type="button" data-collection-alerts="${escapeHtml(collection.id)}" aria-label="Configure alerts for ${escapeHtml(collection.name)}">Alerts</button><button type="button" data-edit-collection="${escapeHtml(collection.id)}" aria-label="Edit ${escapeHtml(collection.name)}">Edit</button></div></article>`).join('');
   if (focusId && !focused.isConnected) ($('collectionList').querySelector(`[${focusAction}="${CSS.escape(focusId)}"]`) || $('newCollection').offsetParent && $('newCollection') || $('firstCollection')).focus();
 }
 
 function collectionView(view) {
   if (view !== 'details') app.collectionDetailId = null;
-  for (const [id, name] of [['collectionOverview','list'],['collectionBulk','bulk'],['collectionForm','edit'],['collectionDetails','details'],['collectionDeleteConfirm','delete']]) $(id).classList.toggle('hidden', name !== view);
+  if (view !== 'alerts') app.collectionAlertId = null;
+  for (const [id, name] of [['collectionOverview','list'],['collectionBulk','bulk'],['collectionForm','edit'],['collectionDetails','details'],['collectionAlerts','alerts'],['collectionDeleteConfirm','delete']]) $(id).classList.toggle('hidden', name !== view);
   $('collectionResult').textContent = '';
   $('collectionResult').classList.remove('error');
 }
@@ -1775,7 +1776,7 @@ function collectionView(view) {
 function openCollectionManager(bulk = false) {
   app.collectionLastFocus = document.activeElement;
   const card = app.collectionLastFocus?.closest('[data-collection-card]');
-  const action = ['data-collection-detail','data-edit-collection','data-view-collection'].find((name) => app.collectionLastFocus?.hasAttribute(name));
+  const action = ['data-collection-detail','data-collection-alerts','data-edit-collection','data-view-collection'].find((name) => app.collectionLastFocus?.hasAttribute(name));
   app.collectionLastCardSelector = card && action ? `[data-collection-card="${CSS.escape(card.dataset.collectionCard)}"] ${app.collectionLastFocus.classList.contains('collection-preview') ? '.collection-preview' : app.collectionLastFocus.classList.contains('product-name-button') ? '.product-name-button' : '.card-actions button'}[${action}]` : null;
   app.collectionRegion = app.currentRegion;
   app.collectionBulkSlugs = bulk ? [...app.selectedWatch] : null;
@@ -1795,9 +1796,16 @@ function closeCollectionManager() {
   $('toTop').inert = false;
   app.collectionDraft = null;
   app.collectionDetailId = null;
+  app.collectionAlertId = null;
+  app.collectionAlertReturn = null;
   const original = app.collectionLastFocus;
   const replacement = app.collectionLastCardSelector && document.querySelector(app.collectionLastCardSelector);
   (original?.isConnected && original.offsetParent !== null ? original : replacement || $('openCollectionManager')).focus();
+}
+
+function dismissCollectionManager() {
+  if (!$('collectionAlerts').classList.contains('hidden') && app.collectionAlertReturn?.view) returnFromCollectionAlerts();
+  else closeCollectionManager();
 }
 
 function showCollectionOverview(focusId = null) {
@@ -1826,6 +1834,7 @@ function editCollection(id = null) {
   $('collectionWatchSearch').value = '';
   $('saveCollection').textContent = id ? 'Save changes' : 'Create collection';
   $('collectionDeleteArea').classList.toggle('hidden', !id);
+  $('editCollectionAlerts').classList.toggle('hidden', !id);
   renderCollectionChoices();
   $('collectionName').focus();
 }
@@ -1948,7 +1957,7 @@ function collectionCard(collection) {
     <div class="detail readiness-status" role="status">${escapeHtml(collectionStatusText(collection))}</div>
     <div class="rule-chips"><span class="rule-chip">${escapeHtml(collectionPriceNote(collection))}</span></div>
     <div class="rule-chips"><span class="rule-chip">Ready alerts ${collection.notifyReady ? 'on' : 'off'}</span></div>
-    <div class="card-actions"><button type="button" data-view-collection="${escapeHtml(collection.id)}">View items</button><button type="button" data-collection-detail="${escapeHtml(collection.id)}" aria-label="Configure alerts for ${escapeHtml(collection.name)}">Alerts</button><button type="button" data-edit-collection="${escapeHtml(collection.id)}">Edit</button></div>
+    <div class="card-actions"><button type="button" data-view-collection="${escapeHtml(collection.id)}">View items</button><button type="button" data-collection-alerts="${escapeHtml(collection.id)}" aria-label="Configure alerts for ${escapeHtml(collection.name)}">Alerts</button><button type="button" data-edit-collection="${escapeHtml(collection.id)}">Edit</button></div>
   </article>`;
 }
 
@@ -1964,30 +1973,83 @@ function openCollectionDetails(id) {
 
 function renderCollectionDetails() {
   const collection = app.collections.find((item) => item.id === app.collectionDetailId);
-  if (!collection || $('collectionDialog').classList.contains('hidden')) return;
+  if (!collection || $('collectionDetails').classList.contains('hidden') || $('collectionDialog').classList.contains('hidden')) return;
   const result = collection.readiness;
-  const key = JSON.stringify({ ...collection, readiness:{ ...result, checkedAt:null } });
+  const members = result.items.map((item) => ({ item, product:app.products.find((product) => product.slug === item.slug) || { slug:item.slug, name:item.name } }));
+  const key = JSON.stringify({ ...collection, readiness:{ ...result, checkedAt:null }, products:members.map(({ product }) => [product.name,product.sku,product.variantTitle,product.price,product.imageUrl]) });
   if (key === app.collectionDetailsKey) return;
   app.collectionDetailsKey = key;
-  const expanded = $('collectionDetails').querySelector('[data-readiness-items]')?.open;
   const focused = document.activeElement;
-  const focusAlert = focused?.matches('[data-notify-collection]');
-  const focusSummary = focused?.matches('[data-readiness-items] > summary');
-  const focusAction = focused?.closest('#collectionDetails') && ['data-view-collection','data-edit-collection'].find((name) => focused.hasAttribute(name));
+  const focusAction = focused?.closest('#collectionDetails') && ['data-view-collection','data-edit-collection','data-collection-alerts','data-collection-image'].find((name) => focused.hasAttribute(name));
+  const focusValue = focusAction && focused.getAttribute(focusAction);
   const text = collectionStatusText(collection);
   $('collectionDialogTitle').textContent = collection.name;
-  $('collectionDialogDescription').textContent = `${collection.slugs.length} items · Collection alerts and details`;
-  const items = result.items.map((item) => `<li><span>${escapeHtml(item.name)}</span><strong>${escapeHtml(humanStatus(item.state))}</strong><small>${escapeHtml(item.reason)}</small></li>`).join('');
-  $('collectionDetails').innerHTML = `<section class="collection-alert-settings" aria-labelledby="collectionAlertHeading">
+  $('collectionDialogDescription').textContent = `${collection.slugs.length} item${collection.slugs.length === 1 ? '' : 's'} · Collection details`;
+  const items = members.map(({ item, product }) => `<li class="collection-member-row">
+    <button class="collection-watch-image media-shell" type="button" data-collection-image="${escapeHtml(product.slug)}" aria-label="Retry image for ${escapeHtml(product.name)}">${imageMarkup(product)}</button>
+    <div class="collection-watch-copy"><strong>${escapeHtml(product.name)}</strong><small>${escapeHtml([product.variantTitle || (product.variantId ? '' : 'Any variant'),product.sku,product.price || 'Price unavailable'].filter(Boolean).join(' · '))}</small><small>${escapeHtml(item.reason)}</small></div>
+    <span class="collection-member-status">${escapeHtml(humanStatus(item.state))}</span>
+  </li>`).join('');
+  $('collectionDetails').innerHTML = `<div class="collection-detail-price"><strong class="price">${escapeHtml(collectionPriceText(collection))}</strong><span>${escapeHtml(collectionPriceNote(collection))}. Includes purchased items; based on current catalog prices.</span></div><p class="readiness-status" role="status">${escapeHtml(text)}</p><progress max="${Math.max(1, result.remaining)}" value="${result.qualifying}" aria-label="${escapeHtml(collection.name)}: ${escapeHtml(text)}"></progress><p>${result.purchased} already purchased${result.unknown ? ` · ${result.unknown} awaiting confirmed observations` : ''}</p>
+    <section class="collection-members" aria-labelledby="collectionItemsHeading"><h3 id="collectionItemsHeading">Items and conditions</h3><ul>${items || '<li class="collection-no-watches">No items assigned.</li>'}</ul></section>
+    <div class="collection-form-actions"><button type="button" data-view-collection="${escapeHtml(collection.id)}">View items</button><button type="button" data-collection-alerts="${escapeHtml(collection.id)}">Alerts</button><button type="button" data-edit-collection="${escapeHtml(collection.id)}">Edit collection</button></div>`;
+  wireProductImages($('collectionDetails'));
+  if (focusAction) $('collectionDetails').querySelector(`[${focusAction}="${CSS.escape(focusValue)}"]`)?.focus();
+}
+
+function openCollectionAlerts(id) {
+  if (app.collectionBusy || !app.collections.some((collection) => collection.id === id)) return;
+  const wasClosed = $('collectionDialog').classList.contains('hidden');
+  const view = wasClosed ? null : !$('collectionForm').classList.contains('hidden') ? 'edit' : !$('collectionDetails').classList.contains('hidden') ? 'details' : 'list';
+  if (wasClosed) openCollectionManager();
+  app.collectionAlertReturn = { view, id };
+  collectionView('alerts');
+  app.collectionAlertId = id;
+  app.collectionAlertsKey = null;
+  renderCollectionAlerts();
+  $('collectionAlerts').querySelector('[data-notify-collection]')?.focus();
+}
+
+function returnFromCollectionAlerts() {
+  const destination = app.collectionAlertReturn;
+  if (!destination?.view) { closeCollectionManager(); return; }
+  if (destination.view === 'edit' && app.collectionDraft?.id === destination.id) {
+    collectionView('edit');
+    $('collectionDialogTitle').textContent = 'Edit collection';
+    $('collectionDialogDescription').textContent = 'Keep the gear for your next project together.';
+    $('editCollectionAlerts').focus();
+  } else if (destination.view === 'details') {
+    openCollectionDetails(destination.id);
+    $('collectionDetails').querySelector('[data-collection-alerts]')?.focus();
+  } else {
+    showCollectionOverview();
+    $('collectionList').querySelector(`[data-collection-alerts="${CSS.escape(destination.id)}"]`)?.focus();
+  }
+  app.collectionAlertReturn = null;
+}
+
+function renderCollectionAlerts() {
+  const collection = app.collections.find((item) => item.id === app.collectionAlertId);
+  if (!collection || $('collectionAlerts').classList.contains('hidden') || $('collectionDialog').classList.contains('hidden')) return;
+  const returnView = app.collectionAlertReturn?.view;
+  const key = JSON.stringify([collection.id,collection.name,collection.notifyReady,returnView]);
+  if (key === app.collectionAlertsKey) return;
+  app.collectionAlertsKey = key;
+  const focused = document.activeElement;
+  const focusAlert = focused?.matches('[data-notify-collection]');
+  const focusBack = focused?.hasAttribute('data-close-collection-alerts');
+  $('collectionDialogTitle').textContent = collection.name;
+  $('collectionDialogDescription').textContent = 'Collection alert settings';
+  $('collectionAlerts').innerHTML = `<section class="collection-alert-settings" aria-labelledby="collectionAlertHeading">
     <h3 id="collectionAlertHeading">Collection alerts</h3>
     <label class="readiness-alert"><input type="checkbox" data-notify-collection="${escapeHtml(collection.id)}" aria-describedby="collectionAlertConditions collectionAlertInteraction collectionAlertDelivery" ${collection.notifyReady ? 'checked' : ''}/> Notify when all remaining items qualify<span class="sr-only"> in ${escapeHtml(collection.name)}</span></label>
     <p id="collectionAlertConditions">Receive one alert when every unpurchased item is in stock and meets its individual target price, if set.</p>
     <p id="collectionAlertInteraction">Individual item alerts continue using their own rules. This collection alert does not override them, and pausing an item does not pause the collection alert.</p>
     <p id="collectionAlertDelivery">Saves automatically. Uses the channels and delivery settings in Settings &gt; Notifications. If the collection already qualifies, enabling this waits until it stops qualifying and becomes ready again.</p>
-    </section><div class="collection-detail-price"><strong class="price">${escapeHtml(collectionPriceText(collection))}</strong><span>${escapeHtml(collectionPriceNote(collection))}. Includes purchased items; based on current catalog prices.</span></div><p class="readiness-status" role="status">${escapeHtml(text)}</p><progress max="${Math.max(1, result.remaining)}" value="${result.qualifying}" aria-label="${escapeHtml(collection.name)}: ${escapeHtml(text)}"></progress><p>${result.purchased} already purchased${result.unknown ? ` · ${result.unknown} awaiting confirmed observations` : ''}</p><details data-readiness-items="${escapeHtml(collection.id)}" ${expanded ? 'open' : ''}><summary>Items and conditions</summary><ul>${items || '<li>No items assigned.</li>'}</ul></details><div class="collection-form-actions"><button type="button" data-view-collection="${escapeHtml(collection.id)}">View items</button><button type="button" data-edit-collection="${escapeHtml(collection.id)}">Edit collection</button></div>`;
-  if (focusAlert) $('collectionDetails').querySelector('[data-notify-collection]')?.focus();
-  if (focusSummary) $('collectionDetails').querySelector('[data-readiness-items] > summary')?.focus();
-  if (focusAction) $('collectionDetails').querySelector(`[${focusAction}]`)?.focus();
+    ${returnView === 'edit' ? '<p>Your name and item selections stay in the editor. Alerts apply to saved items; choose Save changes after returning to apply your collection edits.</p>' : ''}
+    </section><div class="collection-form-actions"><button type="button" data-close-collection-alerts>${returnView === 'edit' ? 'Back to editing' : returnView === 'details' ? 'Back to collection' : returnView === 'list' ? 'Back to collections' : 'Done'}</button></div>`;
+  if (focusAlert) $('collectionAlerts').querySelector('[data-notify-collection]')?.focus();
+  if (focusBack) $('collectionAlerts').querySelector('[data-close-collection-alerts]')?.focus();
 }
 
 function renderCollectionReadiness(force = false) {
@@ -2002,11 +2064,12 @@ function renderCollectionReadiness(force = false) {
     }
   }
   renderCollectionDetails();
+  renderCollectionAlerts();
   const key = JSON.stringify(collections.map(({ readiness, ...collection }) => ({ ...collection, readiness:{ ...readiness, checkedAt:null }, previews:collection.slugs.slice(0,4).map((slug) => { const product = app.products.find((item) => item.slug === slug); return [product?.imageUrl,product?.name]; }) })));
   if (!force && key === app.readinessRenderKey) return;
   app.readinessRenderKey = key;
   const focused = document.activeElement;
-  const attribute = ['data-collection-detail','data-edit-collection','data-view-collection'].find((name) => focused?.hasAttribute(name));
+  const attribute = ['data-collection-detail','data-collection-alerts','data-edit-collection','data-view-collection'].find((name) => focused?.hasAttribute(name));
   const focusId = attribute && focused.closest('#collectionReadiness') ? focused.getAttribute(attribute) : null;
   const focusSelector = focused?.classList.contains('collection-preview') ? '.collection-preview' : focused?.classList.contains('product-name-button') ? '.product-name-button' : '.card-actions button';
   $('collectionReadiness').innerHTML = collections.map(collectionCard).join('');
@@ -2022,7 +2085,7 @@ async function setCollectionNotification(input) {
     app.collections = result.collections; renderCollectionReadiness();
     toast(enabled ? 'Collection readiness alerts enabled. Current conditions set the starting point.' : 'Collection readiness alerts disabled. Pending deliveries cancelled.');
   } catch (err) { input.checked = !enabled; toast(err.message, 'error'); }
-  finally { input.disabled = false; document.querySelector(`[data-notify-collection="${CSS.escape(id)}"]`)?.focus(); }
+  finally { input.disabled = false; if (app.collectionAlertId === id && !$('collectionDialog').classList.contains('hidden')) $('collectionAlerts').querySelector('[data-notify-collection]')?.focus(); }
 }
 
 async function openCollection(id, region) {
@@ -2073,13 +2136,17 @@ document.addEventListener('click', (event) => {
   if (preview) { previewProductRule(preview.closest('form')); return; }
   const edit = event.target.closest('[data-edit-collection]');
   if (edit) { if ($('collectionDialog').classList.contains('hidden')) openCollectionManager(); editCollection(edit.dataset.editCollection); return; }
+  if (event.target.closest('[data-close-collection-alerts]')) { returnFromCollectionAlerts(); return; }
+  const collectionAlerts = event.target.closest('[data-collection-alerts]');
+  if (collectionAlerts) { openCollectionAlerts(collectionAlerts.dataset.collectionAlerts); return; }
   const collectionDetail = event.target.closest('[data-collection-detail]');
   if (collectionDetail && !event.target.closest('[data-image-retry]')) { openCollectionDetails(collectionDetail.dataset.collectionDetail); return; }
   const viewCollection = event.target.closest('[data-view-collection]');
   if (viewCollection) { closeCollectionManager(); openCollection(viewCollection.dataset.viewCollection, app.currentRegion); return; }
   const collectionImage = event.target.closest('[data-collection-image]');
   if (collectionImage) {
-    const product = app.collectionDraft?.products.find((item) => item.slug === collectionImage.dataset.collectionImage);
+    const products = collectionImage.closest('#collectionDetails') ? app.products : app.collectionDraft?.products;
+    const product = products?.find((item) => item.slug === collectionImage.dataset.collectionImage);
     if (product?.imageUrl) { app.brokenImages.delete(product.imageUrl); collectionImage.innerHTML = imageMarkup(product); wireProductImages(collectionImage); }
     return;
   }
@@ -2214,12 +2281,13 @@ $('search').addEventListener('input', () => { clearTimeout(browseSearchTimer); b
 for (const id of ['watchSearch','watchStatus','watchCategory','watchSort','watchCollection']) $(id).addEventListener(id === 'watchSearch' ? 'input' : 'change', () => { persistUiState(); renderProducts(true); });
 $('groupCollectedWatches').addEventListener('change', () => { persistUiState(); renderProducts(true); });
 $('openCollectionManager').addEventListener('click', () => openCollectionManager());
-$('closeCollectionManager').addEventListener('click', closeCollectionManager);
-$('collectionBackdrop').addEventListener('click', closeCollectionManager);
+$('closeCollectionManager').addEventListener('click', dismissCollectionManager);
+$('collectionBackdrop').addEventListener('click', dismissCollectionManager);
 for (const id of ['newCollection','firstCollection','newBulkCollection']) $(id).addEventListener('click', () => editCollection());
 $('collectionForm').addEventListener('submit', (event) => { event.preventDefault(); saveCollection(); });
 $('cancelCollectionEdit').addEventListener('click', () => showCollectionOverview(app.collectionDraft?.id));
 $('collectionWatchSearch').addEventListener('input', renderCollectionChoices);
+$('editCollectionAlerts').addEventListener('click', () => openCollectionAlerts(app.collectionDraft?.id));
 $('collectionWatchChoices').addEventListener('change', (event) => {
   const input = event.target.closest('[data-collection-watch]');
   if (!input || !app.collectionDraft) return;
@@ -2277,7 +2345,7 @@ document.addEventListener('keydown', (event) => {
     return;
   }
   if (event.key !== 'Escape') return;
-  if (!$('collectionDialog').classList.contains('hidden')) closeCollectionManager();
+  if (!$('collectionDialog').classList.contains('hidden')) dismissCollectionManager();
   else if (!$('watchImportDialog').classList.contains('hidden')) closeWatchImport();
   else if (!$('activityDialog').classList.contains('hidden')) closeActivityDialog();
   else if (!$('productDialog').classList.contains('hidden')) closeProductDialog();

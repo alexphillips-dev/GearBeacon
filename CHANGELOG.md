@@ -4,6 +4,7 @@ The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. 
 
 ## V1.2.0 — Stock insights and collection readiness
 
+- Collection details now show an always-visible item list with retryable thumbnails, names, variant/SKU details, prices, and readiness status. Alert settings open in their own view from the card, manager, or bottom of collection details and editing; returning preserves unsaved collection edits and keyboard focus.
 - Made collection notifications discoverable through Alerts actions on collection cards and in Manage collections. The dialog puts its automatically saved toggle first and explains readiness conditions, delivery settings, and how collection alerts run alongside individual item alerts.
 - Watchlist membership badges now read "Collection: name" so assigned items clearly identify each collection they belong to.
 - Deleting a collection now closes the dialog and returns focus to the Watchlist instead of showing Manage collections again, including when the last collection is deleted.

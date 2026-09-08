@@ -429,10 +429,11 @@
           <p class="collection-help">Choose watches for this project, or save an empty collection and add them later.</p>
           <label class="field"><span class="sr-only">Search watches to include</span><input id="collectionWatchSearch" type="search" placeholder="Search name, SKU, or variant" autocomplete="off" /></label>
           <div id="collectionWatchChoices" class="collection-watch-choices"></div>
-          <div class="collection-form-actions"><button id="cancelCollectionEdit" type="button">Cancel</button><button id="saveCollection" class="primary" type="submit">Create collection</button></div>
+          <div class="collection-form-actions"><button id="editCollectionAlerts" class="hidden" type="button">Alerts</button><button id="cancelCollectionEdit" type="button">Cancel</button><button id="saveCollection" class="primary" type="submit">Create collection</button></div>
           <div id="collectionDeleteArea" class="collection-delete-area hidden"><button id="askDeleteCollection" class="danger-button" type="button">Delete collection</button></div>
         </form>
         <div id="collectionDetails" class="hidden"></div>
+        <div id="collectionAlerts" class="hidden"></div>
         <div id="collectionDeleteConfirm" class="collection-delete-confirm hidden"><h3>Delete this collection?</h3><p id="collectionDeleteDescription"></p><div class="collection-form-actions"><button id="cancelDeleteCollection" type="button">Keep collection</button><button id="confirmDeleteCollection" class="danger-button" type="button">Delete collection</button></div></div>
         <p id="collectionResult" class="collection-result" role="status" aria-live="polite"></p>
       </div>
