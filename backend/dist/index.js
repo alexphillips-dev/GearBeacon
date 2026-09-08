@@ -3559,14 +3559,15 @@ function enrichActivityEvents(events) {
 function activityQuery(url, { exportLimit = null } = {}) {
     const filter = activityFilterSql(url);
     const count = Number(db.prepare(`SELECT COUNT(*) AS count FROM events e WHERE ${filter.where}`).get(...filter.parameters)?.count || 0);
-    const requestedLimit = Number(url.searchParams.get('limit') || 50);
+    const requestedLimit = Number(url.searchParams.get('limit') || 20);
     const requestedPage = Number(url.searchParams.get('page') || 1);
-    const limit = exportLimit || (Number.isInteger(requestedLimit) ? Math.min(100, Math.max(10, requestedLimit)) : 50);
-    const page = exportLimit ? 1 : Number.isInteger(requestedPage) ? Math.max(1, requestedPage) : 1;
+    const limit = exportLimit || (Number.isInteger(requestedLimit) ? Math.min(100, Math.max(10, requestedLimit)) : 20);
+    const pages = Math.max(1, Math.ceil(count / limit));
+    const page = exportLimit ? 1 : Number.isInteger(requestedPage) ? Math.min(pages, Math.max(1, requestedPage)) : 1;
     const offset = exportLimit ? 0 : (page - 1) * limit;
     const rows = db.prepare(`SELECT e.data_json FROM events e WHERE ${filter.where} ORDER BY e.detected_at DESC,e.id DESC LIMIT ? OFFSET ?`).all(...filter.parameters, limit, offset);
     const events = enrichActivityEvents(rows.map((row) => safeJsonParse(row.data_json, null)).filter(Boolean));
-    return { events, count, page, limit, pages: Math.max(1, Math.ceil(count / limit)), filters: filter.filters, truncated: Boolean(exportLimit && count > exportLimit) };
+    return { events, count, page, limit, pages, filters: filter.filters, truncated: Boolean(exportLimit && count > exportLimit) };
 }
 function csvCell(value) {
     const text = value == null ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value);

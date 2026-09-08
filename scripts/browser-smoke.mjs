@@ -352,6 +352,7 @@ try {
     };
   })()`);
   assert(activityRow?.height === 64, `Desktop activity row height changed: ${JSON.stringify(activityRow)}`);
+  assert(await evaluate("document.getElementById('activityPageSize').value === '20' && app.activity.limit === 20"), 'Activity did not default to 20 entries per page');
   assert(activityRow.meta.includes('Sold out → In stock') && activityRow.meta.includes('$299.00') && activityRow.meta.includes('Back after') && activityRow.metaWhiteSpace === 'nowrap', `Compact activity transition details are incomplete: ${JSON.stringify(activityRow)}`);
   assert(activityRow.alert === 'No channel' && /no server notification channel was configured/i.test(activityRow.alertTitle), `Activity server-alert outcome is incomplete: ${JSON.stringify(activityRow)}`);
   assert(/U7 Pro XGS activity details/i.test(activityRow.aria) && activityRow.timeTitle && !/^\d{4}-\d{2}-\d{2}T/.test(activityRow.timeTitle), `Activity accessibility or exact-time details are incomplete: ${JSON.stringify(activityRow)}`);
@@ -568,6 +569,66 @@ try {
   await evaluate("window.confirm=() => true; document.querySelector('.collection-manager').open=true; document.querySelector('[data-delete-collection]').click()");
   await waitForBrowser("app.collections.length === 0", 'Collection deletion failed');
   assert(await evaluate("app.products.some((item) => item.slug === 'uvc-g5-ptz::mock-black' && item.watched)"), 'Collection deletion removed its watch');
+  // Paginate more than 100 real API entries in the isolated browser fixture.
+  await evaluate(`(async () => {
+    const backup = await api('/api/data/export');
+    backup.regions.us.events = Array.from({ length:115 }, (_, index) => ({
+      id:'pagination-' + index, region:'us', type:'restock', alertKind:'restock',
+      slug:'pagination-product-' + index, name:'Pagination fixture ' + index,
+      detectedAt:new Date(Date.now() - index * 1000).toISOString(), status:'Available', watchedAtDetection:false
+    }));
+    await api('/api/data/import', { method:'POST', body:JSON.stringify({ backup }) });
+    activateTab('activity'); resetActivityFilters();
+  })()`);
+  await waitForBrowser("app.activity.count === 115 && app.activity.limit === 20 && document.querySelectorAll('#activityList .event').length === 20", 'Default Activity page did not show only the first 20 entries');
+  assert(await evaluate("app.activity.pages === 6 && document.getElementById('activityPrevious').disabled && !document.getElementById('activityNext').disabled"), 'Default Activity pagination controls are incorrect');
+  const firstActivityIds = await evaluate("app.activity.events.map((event) => event.id)");
+  await evaluate("document.getElementById('activityNext').click()");
+  await waitForBrowser("app.activity.page === 2 && document.getElementById('activityResultCount').textContent === 'Showing 21–40 of 115 events'", 'Next did not show the second Activity page');
+  assert(await evaluate(`app.activity.events.every((event) => !${JSON.stringify(firstActivityIds)}.includes(event.id))`), 'Activity repeated first-page entries on the next page');
+  for (const size of [50,100]) {
+    await evaluate(`(() => { const picker=document.getElementById('activityPageSize'); picker.focus(); picker.value='${size}'; picker.dispatchEvent(new Event('change',{bubbles:true})); })()`);
+    await waitForBrowser(`app.activity.limit === ${size} && app.activity.page === 1 && document.querySelectorAll('#activityList .event').length === ${size}`, `Activity did not apply the ${size}-entry limit and reset to page 1`);
+    assert(await evaluate("document.activeElement.id === 'activityPageSize'"), 'Changing Activity page size lost keyboard focus');
+    await evaluate("document.getElementById('activityNext').click()");
+    await waitForBrowser(`app.activity.page === 2 && document.querySelectorAll('#activityList .event').length === ${size === 50 ? 50 : 15}`, 'Activity last-page size was incorrect');
+  }
+  assert(await evaluate("document.getElementById('activityNext').disabled && !document.getElementById('activityPrevious').disabled"), 'Activity did not stop at its last page');
+  await evaluate("document.getElementById('activityPrevious').click()");
+  await waitForBrowser("app.activity.page === 1 && document.querySelectorAll('#activityList .event').length === 100", 'Previous did not restore the first Activity page');
+  await cdp.send('Page.reload');
+  await waitForBrowser("app.activity.loaded && app.activity.limit === 100 && document.getElementById('activityPageSize').value === '100'", 'Activity page size did not survive reload');
+  await evaluate("document.getElementById('activityNext').click()");
+  await waitForBrowser("app.activity.page === 2 && app.activity.events.length === 15", 'Saved Activity page size was not used for navigation');
+  await evaluate("document.getElementById('activitySearch').value='Pagination fixture 114'; document.getElementById('activityFilters').requestSubmit()");
+  await waitForBrowser("app.activity.count === 1 && app.activity.page === 1 && app.activity.limit === 100", 'Activity filters did not reset pagination while preserving the selected size');
+  await evaluate("resetActivityFilters()");
+  await waitForBrowser("app.activity.count === 115 && app.activity.limit === 100 && app.activity.page === 1", 'Resetting Activity filters changed the preferred page size');
+  // A slow earlier request must not overwrite a newer page-size choice.
+  await evaluate(`(() => {
+    window.paginationOriginalFetch=window.fetch;
+    window.paginationRelease=null;
+    window.fetch=async (...args) => {
+      const response=await window.paginationOriginalFetch(...args);
+      if (String(args[0]).includes('/api/activity?') && new URL(String(args[0]),location.origin).searchParams.get('limit') === '50') await new Promise((resolve) => { window.paginationRelease=resolve; });
+      return response;
+    };
+    const picker=document.getElementById('activityPageSize'); picker.value='50'; picker.dispatchEvent(new Event('change',{bubbles:true}));
+  })()`);
+  await waitForBrowser("typeof window.paginationRelease === 'function'", 'Delayed Activity request did not start');
+  await evaluate("(() => { const picker=document.getElementById('activityPageSize'); picker.value='20'; picker.dispatchEvent(new Event('change',{bubbles:true})); })()");
+  await waitForBrowser("app.activity.limit === 20 && app.activity.events.length === 20", 'Newer Activity size request did not finish');
+  await evaluate("window.fetch=window.paginationOriginalFetch; window.paginationRelease()");
+  await delay(100);
+  assert(await evaluate("app.activity.limit === 20 && document.querySelectorAll('#activityList .event').length === 20"), 'An older request overwrote the selected Activity page size');
+  for (const theme of ['dark','light']) {
+    await evaluate(`applyTheme(${JSON.stringify(theme)})`); await delay(250);
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width:390,height:844,screenWidth:390,screenHeight:844,deviceScaleFactor:1,mobile:false });
+    assert(await evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1 && Math.round(document.querySelector('#activityList .event').getBoundingClientRect().height) === 64"), 'Activity page-size controls overflowed mobile layout or changed row height');
+    await assertAccessible(`Activity pagination ${theme}`);
+  }
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width:640,height:450,screenWidth:1280,screenHeight:900,deviceScaleFactor:2,mobile:false });
+  assert(await evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), 'Activity page-size controls overflowed at 200% equivalent zoom');
   console.log(`BROWSER SMOKE PASSED: ${process.platform} · setup/auth · WCAG axe scans · keyboard/focus/reduced-motion · persistent navigation/filters · resettable empty states · offline recovery · copy actions · unclipped navigation · dark/light · images · watch/rules/bulk/import · exact variants/combined preview/collections/purchased · stock insights/windows/collection readiness/alerts/deep-links · compact searchable activity/evidence · email settings/preview/deep-link · backup/import · diagnostics/operations · responsive`);
 } catch (error) {
   if (serverOutput.length) process.stderr.write(`\nGearBeacon server output:\n${serverOutput.join('').slice(-12000)}\n`);

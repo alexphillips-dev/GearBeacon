@@ -396,7 +396,7 @@ try {
   const activityJsonBody = await activityJson.json();
   if (!activityJson.ok || !Array.isArray(activityJsonBody.events) || activityJsonBody.events.length < 5) throw new Error('JSON activity export failed.');
   const normalizedPaging = await request('/api/activity?scope=all&page=not-a-number&limit=not-a-number');
-  if (normalizedPaging.page !== 1 || normalizedPaging.limit !== 50) throw new Error('Activity pagination did not safely normalize invalid numeric input.');
+  if (normalizedPaging.page !== 1 || normalizedPaging.limit !== 20) throw new Error('Activity pagination did not safely normalize invalid numeric input.');
   await fetchJson('/api/activity?scope=invalid', {}, 400);
 
   const preferences = await request('/api/notifications/preferences?region=us', {

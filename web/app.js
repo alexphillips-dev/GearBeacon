@@ -44,7 +44,7 @@ const app = {
   collections: [],
   pendingWatchCollection:typeof savedUiState.watch?.collection === 'string' ? savedUiState.watch.collection : 'all',
   events: [],
-  activity: { events:[], count:0, page:1, pages:1, limit:50, loaded:false },
+  activity: { events:[], count:0, page:1, pages:1, limit:[20,50,100].includes(Number(savedUiState.activity?.limit)) ? Number(savedUiState.activity.limit) : 20, loaded:false },
   dataInfo: null,
   config: null,
   operations: null,
@@ -89,13 +89,14 @@ function restoreUiControls() {
   setControlValue('activityDelivery', savedUiState.activity?.delivery);
   setControlValue('activityFrom', savedUiState.activity?.from);
   setControlValue('activityTo', savedUiState.activity?.to);
+  setControlValue('activityPageSize', String(app.activity.limit));
 }
 function persistUiState() {
   const state = {
     activeTab:app.activeTab,
     browse:{ search:$('search')?.value || '', category:app.browseCategory },
     watch:{ search:$('watchSearch')?.value || '', status:$('watchStatus')?.value || 'all', category:app.pendingWatchCategory || $('watchCategory')?.value || 'all', sort:$('watchSort')?.value || 'changed', collection:app.pendingWatchCollection || $('watchCollection').value || 'all' },
-    activity:{ search:$('activitySearch')?.value || '', scope:app.pendingActivityRegion || $('activityRegion')?.value || 'all', type:$('activityType')?.value || 'all', delivery:$('activityDelivery')?.value || 'all', from:$('activityFrom')?.value || '', to:$('activityTo')?.value || '' },
+    activity:{ search:$('activitySearch')?.value || '', scope:app.pendingActivityRegion || $('activityRegion')?.value || 'all', type:$('activityType')?.value || 'all', delivery:$('activityDelivery')?.value || 'all', from:$('activityFrom')?.value || '', to:$('activityTo')?.value || '', limit:Number($('activityPageSize')?.value || 20) },
   };
   try { localStorage.setItem(UI_STATE_KEY, JSON.stringify(state)); } catch {}
 }
@@ -836,7 +837,8 @@ function renderEvents() {
   $('activityEmpty').querySelector('h3').textContent = filteredEmpty ? 'No activity matches these filters' : 'No stock changes detected yet';
   $('activityEmpty').querySelector('p').textContent = filteredEmpty ? 'Reset or change a filter to see retained stock activity.' : 'The first check establishes a baseline. Changes appear here after that.';
   $('resetActivityEmpty').classList.toggle('hidden', !filteredEmpty);
-  $('activityResultCount').textContent = app.activity.loaded ? `${app.activity.count} matching event${app.activity.count === 1 ? '' : 's'}` : 'Loading activity…';
+  const first = (app.activity.page - 1) * app.activity.limit + 1;
+  $('activityResultCount').textContent = app.activity.loaded ? (app.activity.count > app.activity.limit && events.length ? `Showing ${first}–${first + events.length - 1} of ${app.activity.count} events` : `${app.activity.count} matching event${app.activity.count === 1 ? '' : 's'}`) : 'Loading activity…';
   const retention = app.config?.config?.eventRetentionDays;
   $('activityRetention').textContent = retention === 0 ? 'Activity retained until manually changed' : retention ? `${retention}-day activity retention` : 'Retained activity';
   $('activityPagination').classList.toggle('hidden', !app.activity.loaded || app.activity.pages <= 1);
@@ -851,7 +853,7 @@ function activityQueryParameters(page = app.activity.page || 1) {
     type:$('activityType').value || 'all',
     delivery:$('activityDelivery').value || 'all',
     page:String(page),
-    limit:'50',
+    limit:$('activityPageSize').value || '20',
   });
   if ($('activitySearch').value.trim()) params.set('search', $('activitySearch').value.trim());
   if ($('activityFrom').value) params.set('from', $('activityFrom').value);
@@ -860,12 +862,17 @@ function activityQueryParameters(page = app.activity.page || 1) {
 }
 
 async function refreshActivity(page = app.activity.page || 1) {
+  const request = (app.activityRequest || 0) + 1;
+  app.activityRequest = request;
+  app.activity.page = page;
   $('activityResultCount').textContent = 'Loading activity…';
   try {
     const result = await api(`/api/activity?${activityQueryParameters(page)}`);
+    if (request !== app.activityRequest) return;
     app.activity = { ...result, loaded:true };
     renderEvents();
   } catch (err) {
+    if (request !== app.activityRequest) return;
     $('activityResultCount').textContent = `Activity unavailable: ${err.message}`;
     app.activity = { ...app.activity, events:[], loaded:true };
     renderEvents();
@@ -2057,6 +2064,7 @@ $('refreshOperations').addEventListener('click', refreshOperations);
 $('runDiagnostics').addEventListener('click', runInstallationDiagnostics);
 $('attentionAction').addEventListener('click', () => { activateTab('settings'); activateSettingsTab('operations'); });
 $('activityFilters').addEventListener('submit', (event) => { event.preventDefault(); persistUiState(); refreshActivity(1); });
+$('activityPageSize').addEventListener('change', () => { persistUiState(); refreshActivity(1); });
 $('clearActivityFilters').addEventListener('click', resetActivityFilters);
 $('resetActivityEmpty').addEventListener('click', resetActivityFilters);
 $('activityPrevious').addEventListener('click', () => refreshActivity(Math.max(1, app.activity.page - 1)));

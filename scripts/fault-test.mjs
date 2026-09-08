@@ -264,6 +264,19 @@ try {
   await startServer({ GEARBEACON_MOCK_OVERRIDES_JSON:JSON.stringify(persistentOverrides), GEARBEACON_MOCK_CATALOG_SIZE:'500' });
   const largeActivity = await fetchJson('/api/activity?limit=100&page=101');
   assert(largeActivity.count >= 10050 && largeActivity.events.length > 0 && largeActivity.pages >= 101, '10k activity pagination failed.');
+  const defaultActivity = await fetchJson('/api/activity');
+  assert(defaultActivity.limit === 20 && defaultActivity.events.length === 20, 'Activity did not default to 20 entries per page.');
+  for (const limit of [20,50,100]) {
+    const firstPage = await fetchJson(`/api/activity?limit=${limit}&page=1`);
+    const nextPage = await fetchJson(`/api/activity?limit=${limit}&page=2`);
+    const firstIds = new Set(firstPage.events.map((event) => event.id));
+    assert(firstPage.events.length === limit && nextPage.events.length === limit && nextPage.page === 2 && nextPage.pages === Math.ceil(nextPage.count / limit), `Activity page size ${limit} did not split the full result set.`);
+    assert(nextPage.events.every((event) => !firstIds.has(event.id)), `Activity page size ${limit} repeated entries on the next page.`);
+    const lastPage = await fetchJson(`/api/activity?limit=${limit}&page=999999`);
+    assert(lastPage.page === lastPage.pages && lastPage.events.length > 0 && lastPage.events.length <= limit, 'Out-of-range activity page did not return the last available page.');
+  }
+  const emptyPage = await fetchJson('/api/activity?search=nonexistent-pagination-fixture&page=999999');
+  assert(emptyPage.page === 1 && emptyPage.pages === 1 && emptyPage.events.length === 0, 'Empty activity results did not normalize to page 1.');
   const largeExport = await fetchJson('/api/activity/export?format=json');
   assert(largeExport.events.length === 10000 && largeExport.truncated === true && largeExport.count >= 10050, '10k activity export limit was not enforced or disclosed.');
 

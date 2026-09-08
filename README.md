@@ -18,7 +18,7 @@ GearBeacon `1.0.0` is the first stable self-hosted release. The `dev` branch is 
 - Detects restocks, sellouts, price changes, status changes, and newly listed products.
 - Confirms potentially destructive changes across two complete observations while keeping fast one-check restock detection and the last-known-good state visible.
 - Shows a focused product view with current availability, store details, first/last-seen times, price history, and recent changes.
-- Keeps durable, searchable activity with evidence, delivery outcomes, date/type/region filters, pagination, and CSV or JSON export.
+- Keeps durable, searchable activity with evidence, delivery outcomes, date/type/region filters, and CSV or JSON export. Activity shows 20 entries per page by default; **Entries per page** also offers 50 and 100 and remembers your choice in this browser. Use **Previous** and **Next** for additional entries; changing the size or filters returns to page 1.
 - Supports per-product alert overrides, price-drop and target-price rules, immediate restocks, and temporary or indefinite pauses.
 - Watches exact product variants by SKU, color, length, or pack size, with independent availability, prices, history, and direct variant links.
 - Combines availability and target-price conditions, previews alert decisions, organizes watches into collections, and retains purchased watches with alerts stopped.
