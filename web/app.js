@@ -413,7 +413,7 @@ function watchCard(p) {
     <div class="price">${escapeHtml(p.price || 'Price unavailable')}</div>
     <div class="detail">${escapeHtml(productDetail(p))}${changedRecently ? ' · changed recently' : ''}</div>
     <div class="rule-chips">${ruleSummary(p)}</div>
-    <div class="rule-chips">${(p.collections || []).map((id) => app.collections.find((collection) => collection.id === id)).filter(Boolean).map((collection) => `<span class="rule-chip">${escapeHtml(collection.name)}</span>`).join('')}</div>
+    <div class="rule-chips">${(p.collections || []).map((id) => app.collections.find((collection) => collection.id === id)).filter(Boolean).map((collection) => `<span class="rule-chip">Collection: ${escapeHtml(collection.name)}</span>`).join('')}</div>
     <div class="card-actions">
       <button data-product-detail="${escapeHtml(p.slug)}">Alert rules</button>
       <button data-purchased="${escapeHtml(p.slug)}">${p.watchRule?.purchasedAt ? 'Still wanted' : 'Purchased'}</button>

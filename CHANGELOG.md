@@ -4,6 +4,7 @@ The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. 
 
 ## V1.2.0 — Stock insights and collection readiness
 
+- Watchlist membership badges now read "Collection: name" so assigned items clearly identify each collection they belong to.
 - Deleting a collection now closes the dialog and returns focus to the Watchlist instead of showing Manage collections again, including when the last collection is deleted.
 - Added an optional Group items in collections Watchlist view. In All collections, assigned watches appear inside their collection cards without duplicate individual cards; View items reveals a collection's members. The browser remembers the preference, grouped searches find matching collection names or members, and removing the last membership restores the individual card. Monitoring, alert rules, and total watch counts are unchanged; hidden members are excluded from visible-watch bulk selection.
 - Replaced wide collection readiness panels with product-sized cards in the Watchlist grid. Collections preview up to four assigned products, show an additional-item count and combined catalog price, and keep View items, Details, and Edit actions on the card. Details contains readiness conditions and alert controls. Totals include purchased items, use the collection's store currency, and disclose unavailable prices instead of presenting a partial subtotal as complete.
