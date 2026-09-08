@@ -83,6 +83,7 @@ function emailKind(event) {
     return event.type || 'restock';
 }
 const KIND_DETAILS = {
+    collection_ready: { label: 'Collection ready', eyebrow: 'COLLECTION READY', color: '#36d17c', subject: (event) => `${event.name || 'Your collection'} is ready` },
     restock: { label: 'Back in stock', eyebrow: 'RESTOCK ALERT', color: '#36d17c', subject: (event) => `${event.name || 'A watched product'} is back in stock` },
     target_price: { label: 'Target price reached', eyebrow: 'PRICE TARGET', color: '#4d9fff', subject: (event) => `${event.name || 'A watched product'} reached your target price` },
     price_drop: { label: 'Price dropped', eyebrow: 'PRICE DROP', color: '#f2b84b', subject: (event) => `${event.name || 'A watched product'} dropped in price` },
@@ -202,10 +203,11 @@ function singleEmail(event, options) {
     const details = kindDetails(event);
     const kind = emailKind(event);
     const statusLine = kind === 'status_change' ? `${event.previousStatus || 'Unknown'} → ${event.status || 'Unknown'}`
-        : kind === 'test' ? 'Your SMTP settings are ready.'
-            : kind === 'operational' ? (event.detail || 'Open GearBeacon Operations for more information.')
-                : details.label;
-    const isProduct = !['test', 'operational'].includes(kind);
+        : kind === 'collection_ready' ? `${event.name}: ${event.detail || 'All remaining items meet your conditions.'}`
+            : kind === 'test' ? 'Your SMTP settings are ready.'
+                : kind === 'operational' ? (event.detail || 'Open GearBeacon Operations for more information.')
+                    : details.label;
+    const isProduct = !['test', 'operational', 'collection_ready'].includes(kind);
     const actions = `${button(event.url, 'Open UniFi Store', details.color)}${button(event.dashboardUrl, 'Open in GearBeacon', details.color, true)}`;
     const explanation = options.explainReason ? `<div style="margin-top:20px;padding:13px 14px;border:1px solid #30363c;border-radius:10px;background:#111416"><div style="margin-bottom:4px;color:#8e98a4;font:700 9px Arial,sans-serif;letter-spacing:.1em;text-transform:uppercase">Why you received this</div><div class="email-copy" style="color:#c7cfd7;font:400 12px/1.55 Arial,sans-serif">${htmlEscape(reasonText(event))}</div></div>` : '';
     const product = isProduct ? `<table class="product-columns" role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td class="product-visual" width="205" valign="top" style="width:205px;padding:0 24px 0 0">${productImage(event, options)}</td><td valign="top"><h1 class="email-title" style="margin:0;color:#fff;font:700 26px/1.15 Arial,sans-serif;letter-spacing:-.5px">${htmlEscape(event.name || 'Product update')}</h1><div class="email-copy" style="margin-top:8px;color:#b5bec8;font:500 13px/1.5 Arial,sans-serif">${htmlEscape(statusLine)}</div>${productPriceMarkup(event, options)}${detailRows(event, options)}</td></tr></table>` : `<h1 class="email-title" style="margin:0;color:#fff;font:700 27px/1.2 Arial,sans-serif">${htmlEscape(details.label)}</h1><p class="email-copy" style="margin:12px 0 0;color:#c7cfd7;font:400 14px/1.65 Arial,sans-serif">${htmlEscape(statusLine)}</p>${options.detailLevel === 'detailed' ? `<p class="email-copy" style="color:#8e98a4;font:400 11px Arial,sans-serif">${htmlEscape(formatDetectedAt(event, options.timeZone))}</p>` : ''}`;
@@ -237,7 +239,7 @@ function digestEmail(event, options) {
             const store = safeEmailUrl(item.url);
             const dashboard = safeEmailUrl(item.dashboardUrl);
             const destination = store || dashboard;
-            const image = productImage(item, options, 82);
+            const image = item.type === 'collection_ready' ? '<span style="color:#36d17c;font:700 12px Arial,sans-serif">READY</span>' : productImage(item, options, 82);
             const price = item.price ? `<div style="margin-top:6px;color:#fff;font:700 13px Arial,sans-serif">${htmlEscape(item.price)}${options.priceCalculations && moneyDelta(item) ? ` <span style="color:${details.color};font-size:10px">${htmlEscape(moneyDelta(item))}</span>` : ''}</div>` : '';
             return `<tr><td style="padding:12px 0;border-top:1px solid #30363c"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td width="96" valign="middle" style="width:96px">${image}</td><td valign="middle"><div class="email-title" style="color:#f5f7fa;font:700 14px Arial,sans-serif">${htmlEscape(item.name || 'Product update')}</div><div class="email-copy" style="margin-top:4px;color:#8e98a4;font:400 10px Arial,sans-serif">${htmlEscape(item.category || item.slug || regionLabel(item, options.regions))}</div>${price}</td>${destination ? `<td width="82" align="right" valign="middle"><a href="${htmlEscape(destination)}" style="color:${details.color};font:700 11px Arial,sans-serif;text-decoration:none">View →</a></td>` : ''}</tr></table></td></tr>`;
         }).join('');
@@ -271,7 +273,7 @@ function textForEvent(event, options) {
         lines.push(`Price: ${event.price}${event.previousPrice ? ` (was ${event.previousPrice})` : ''}`);
     if (options.priceCalculations && moneyDelta(event))
         lines.push(moneyDelta(event));
-    if (event.sku || event.slug)
+    if (event.type !== 'collection_ready' && (event.sku || event.slug))
         lines.push(`SKU: ${event.sku || event.slug}`);
     if (event.category)
         lines.push(`Category: ${event.category}`);

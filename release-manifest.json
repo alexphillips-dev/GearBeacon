@@ -1,11 +1,11 @@
 {
   "name": "GearBeacon",
-  "latestVersion": "1.1.0",
-  "publishedAt": "2026-09-05T00:00:00Z",
+  "latestVersion": "1.2.0",
+  "publishedAt": "2026-09-08T00:00:00Z",
   "downloadUrl": "https://github.com/alexphillips-dev/GearBeacon/releases",
   "releasePageUrl": "https://github.com/alexphillips-dev/GearBeacon/releases",
   "minimumSchemaVersion": 4,
-  "maximumSchemaVersion": 8,
+  "maximumSchemaVersion": 9,
   "minimumNodeVersion": "22.13.0",
-  "releaseNotes": "GearBeacon 1.1.0 adds exact variant watches, combined availability and target-price conditions, rule previews, regional watchlist collections, and purchased watches with preserved history. Includes the 1.0.1 security hardening and backup-protected schema-v8 upgrades."
+  "releaseNotes": "GearBeacon 1.2.0 adds observed availability timelines with explicit monitoring gaps, exact-variant price insights for 7/30/90 days, collection readiness summaries and opt-in durable collection alerts. Includes backup-protected schema-v9 upgrades and format-v5 recovery exports."
 }

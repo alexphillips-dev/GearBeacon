@@ -38,6 +38,7 @@ const app = {
   auth: null,
   currentRegion: initialDeepLink.get('region') || localStorage.getItem('gearbeacon.region') || null,
   pendingProductSlug: initialDeepLink.get('product') || null,
+  pendingCollectionId: initialDeepLink.get('collection') || null,
   status: null,
   products: [],
   collections: [],
@@ -152,7 +153,8 @@ function activityMeta(event) {
   const parts = [];
   const previousStatus = humanStatus(event.previousStatus);
   const currentStatus = humanStatus(event.status);
-  if (event.type === 'restock') parts.push({ text:`${event.previousStatus ? previousStatus : 'Sold out'} → In stock`, className:'event-meta-transition' });
+  if (event.type === 'collection_ready') parts.push({ text:`${event.readiness?.remaining || 0} remaining items qualify`, className:'event-meta-transition' });
+  else if (event.type === 'restock') parts.push({ text:`${event.previousStatus ? previousStatus : 'Sold out'} → In stock`, className:'event-meta-transition' });
   else if (event.type === 'sold_out') parts.push({ text:`${event.previousStatus ? previousStatus : 'In stock'} → Sold out`, className:'event-meta-transition' });
   else if (event.type === 'status_change') parts.push({ text:`${previousStatus} → ${currentStatus}`, className:'event-meta-transition' });
   else if (event.type === 'price_change') parts.push({ text:`${event.previousPrice || 'Previous price'} → ${event.price || 'New price'}`, className:'event-meta-transition' });
@@ -275,6 +277,10 @@ async function enterApp() {
     app.pendingProductSlug = null;
     activateTab('browse');
     await openProductDialog(slug);
+  }
+  else if (app.pendingCollectionId) {
+    const id = app.pendingCollectionId; app.pendingCollectionId = null;
+    await openCollection(id, app.currentRegion);
   }
 }
 
@@ -510,10 +516,11 @@ function renderBulkActions() {
 function renderProducts(force = false) {
   const allWatched = app.products.filter((p) => p.watched);
   renderWatchFilters(allWatched);
+  renderCollectionReadiness();
   const watched = filteredWatchlist();
   $('watchCount').textContent = allWatched.length;
   if ($('settingsWatchCount')) $('settingsWatchCount').textContent = `${allWatched.length} product${allWatched.length === 1 ? '' : 's'}`;
-  const watchKey = JSON.stringify([watched.map((p) => [p.slug,p.status,p.price,p.lastChangedAt,p.watchRule,p.collections]), app.collections, [...app.selectedWatch]]);
+  const watchKey = JSON.stringify([watched.map((p) => [p.slug,p.status,p.price,p.lastChangedAt,p.watchRule,p.collections]), app.collections.map(({ id,name }) => [id,name]), [...app.selectedWatch]]);
   if (force || watchKey !== app.watchRenderKey) {
     $('watchGrid').innerHTML = watched.map(watchCard).join('');
     app.watchRenderKey = watchKey;
@@ -671,18 +678,56 @@ async function confirmWatchImport() {
   }
 }
 
-function historyChart(history) {
-  const values = [...history].reverse().filter((item) => Number.isFinite(Number(item.priceValue)));
-  if (values.length < 2) return '<div class="history-empty">Price history will appear after GearBeacon detects a change.</div>';
-  const width = 620; const height = 170; const pad = 18;
-  const prices = values.map((item) => Number(item.priceValue));
-  const min = Math.min(...prices); const max = Math.max(...prices); const range = Math.max(1, max - min);
-  const points = values.map((item, index) => {
-    const x = pad + index * (width - pad * 2) / Math.max(1, values.length - 1);
-    const y = height - pad - ((Number(item.priceValue) - min) / range) * (height - pad * 2);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(' ');
-  return `<div class="history-chart"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Price history from ${escapeHtml(values[0].price)} to ${escapeHtml(values.at(-1).price)}"><polyline points="${points}" fill="none" stroke="currentColor" stroke-width="3" vector-effect="non-scaling-stroke"/></svg><div><span>${escapeHtml(values[0].price)} · ${escapeHtml(new Date(values[0].observedAt).toLocaleDateString())}</span><span>${escapeHtml(values.at(-1).price)} · now</span></div></div>`;
+function insightMoney(value, currency) {
+  return value === null || value === undefined ? 'Not observed' : new Intl.NumberFormat(undefined, { style:'currency', currency }).format(value);
+}
+
+function insightChart(insights, price = false) {
+  const rows = insights.timeline || [];
+  const since = insights.timelineTruncated ? rows[0]?.startedAt : insights.since;
+  const start = new Date(since).getTime(); const end = new Date(insights.until).getTime();
+  const x = (at) => 12 + (new Date(at).getTime() - start) / Math.max(1, end - start) * 596;
+  const values = rows.filter((row) => !row.unknown && row.priceValue !== null);
+  const min = values.length ? Math.min(...values.map((row) => row.priceValue)) : 0;
+  const max = values.length ? Math.max(...values.map((row) => row.priceValue)) : 1;
+  const y = (value) => 125 - (value - min) / Math.max(1, max - min) * 90;
+  const shapes = rows.map((row) => {
+    const from = x(row.startedAt); const to = x(row.endedAt);
+    const label = row.unknown ? 'Unknown' : row.inStock ? 'Available' : humanStatus(row.status);
+    const title = escapeHtml(`${new Date(row.startedAt).toLocaleString()} to ${new Date(row.endedAt).toLocaleString()}: ${label}${row.price ? `, ${row.price}` : ''}`);
+    if (price) return !row.unknown && row.priceValue !== null ? `<path d="M ${from.toFixed(2)} ${y(row.priceValue).toFixed(2)} H ${Math.max(from + 1, to).toFixed(2)}" stroke="currentColor" stroke-width="3"><title>${title}</title></path>` : '';
+    return `<rect x="${from.toFixed(2)}" y="12" width="${Math.max(1, to - from).toFixed(2)}" height="38" class="insight-${row.unknown ? 'unknown' : row.inStock ? 'available' : 'unavailable'}"><title>${title}</title></rect>`;
+  }).join('');
+  const label = price ? `Catalog price observations in ${insights.currency}. Gaps have no connecting line. Values are listed below.` : 'Observed availability timeline. Unknown periods include monitoring gaps and pending confirmation. Details are listed below.';
+  return `<div class="insight-chart ${price ? 'insight-price-chart' : ''}"><svg viewBox="0 0 620 ${price ? 150 : 62}" role="img" aria-label="${label}">${shapes}</svg><div class="insight-axis"><span>${escapeHtml(new Date(since).toLocaleDateString())}</span><span>${escapeHtml(new Date(insights.until).toLocaleDateString())}</span></div></div>`;
+}
+
+function renderInsights(insights) {
+  const duration = (seconds) => seconds ? activityDuration(seconds) : '0m';
+  const summary = `${insights.restocks.length} recorded restock${insights.restocks.length === 1 ? '' : 's'} · ${duration(insights.availableSeconds)} observed available · ${duration(Math.max(0, insights.observedSeconds - insights.availableSeconds))} observed unavailable · ${duration(insights.unknownSeconds)} unknown`;
+  const rows = insights.timeline.slice(-100).reverse().map((row) => `<li><time>${escapeHtml(new Date(row.startedAt).toLocaleString())}</time> to <time>${escapeHtml(new Date(row.endedAt).toLocaleString())}</time><strong>${row.unknown ? 'Unknown' : row.inStock ? 'Available' : escapeHtml(humanStatus(row.status))}</strong>${!row.unknown && insights.exactPriceScope ? `<span>${escapeHtml(insightMoney(row.priceValue, insights.currency))}</span>` : ''}</li>`).join('');
+  const priceRows = insights.prices.map((row) => `<tr><th scope="row">${row.days} days${row.fullWindow ? '' : '<small>Partial history</small>'}</th><td>${escapeHtml(insightMoney(row.lowest, insights.currency))}</td><td>${escapeHtml(insightMoney(row.lowestAvailable, insights.currency))}</td></tr>`).join('');
+  const target = insights.targetPrice === null ? 'Set a target price in the watch rules to compare it with the current price.' : `Target: ${insightMoney(insights.targetPrice, insights.currency)}. ${!insights.currentConfirmed ? 'Waiting for a fresh, confirmed price.' : insights.targetDifference === null ? 'Current price unavailable.' : insights.targetDifference <= 0 ? 'Current price is at or below target.' : `${insightMoney(insights.targetDifference, insights.currency)} above target.`}`;
+  return `<div class="insight-heading"><h3>Stock insights</h3><label class="field"><span>History window</span><select data-insight-days>${[7,30,90].map((days) => `<option value="${days}" ${days === insights.days ? 'selected' : ''}>${days} days</option>`).join('')}</select></label></div>
+    <p class="insight-summary" role="status">${escapeHtml(summary)}</p><p class="insight-note">${insights.historySince ? `Retained observations begin ${escapeHtml(new Date(insights.historySince).toLocaleString())}.` : 'Insufficient history. Insights begin with complete store checks after this update.'} ${insights.fullWindow ? '' : 'The selected window has partial history.'} These are observations between checks; changes can occur between polls.</p>
+    ${insightChart(insights)}<div class="insight-legend"><span><i class="insight-available"></i>Available</span><span><i class="insight-unavailable"></i>Unavailable / unlisted</span><span><i class="insight-unknown"></i>Unknown</span></div>
+    <h3>Price insights</h3>${insights.exactPriceScope ? `${insightChart(insights, true)}<div class="insight-table-wrap"><table class="insight-prices"><caption>Lowest observed catalog prices (${escapeHtml(insights.currency)})</caption><thead><tr><th scope="col">Window</th><th scope="col">Any availability</th><th scope="col">While available</th></tr></thead><tbody>${priceRows}</tbody></table></div><p>${escapeHtml(target)}</p>` : '<p>Select an exact variant above to compare prices for the same SKU.</p>'}
+    <p class="insight-note">Catalog prices are not checkout totals. Shipping, additional taxes, and surcharges are not calculated. Unknown periods are excluded; historical observations do not predict future restocks.</p>
+    <details class="insight-observations"><summary>Observation details</summary><p>Latest ${Math.min(100, insights.timeline.length)} periods, including gaps.${insights.timelineTruncated ? ' The chart shows the latest 600 periods; summary totals cover the selected window.' : ''}</p><ol>${rows}</ol><h4>Recorded restocks</h4><ul>${insights.restocks.length ? insights.restocks.slice(-100).reverse().map((event) => `<li>${escapeHtml(new Date(event.detectedAt).toLocaleString())}</li>`).join('') : '<li>No restocks recorded in this window.</li>'}</ul></details>`;
+}
+
+async function changeInsightWindow(days) {
+  const slug = app.currentProductDetails?.product.slug;
+  if (!slug) return;
+  const request = app.productRequest;
+  const insightRequest = (app.insightRequest || 0) + 1; app.insightRequest = insightRequest;
+  try {
+    const result = await api(`/api/products/${encodeURIComponent(slug)}?days=${days}`);
+    if (app.productRequest !== request || app.insightRequest !== insightRequest) return;
+    app.currentProductDetails.insights = result.insights;
+    document.querySelector('[data-product-insights]').innerHTML = renderInsights(result.insights);
+    document.querySelector('[data-insight-days]')?.focus();
+  } catch (err) { toast(err.message, 'error'); }
 }
 
 function ruleSelect(name, label, value) {
@@ -713,7 +758,7 @@ function renderProductDialog(details) {
   </form>` : `<div class="product-watch-prompt"><p>Add this product to your watchlist to configure its alert rules.</p><button class="primary button-link" data-watch="${escapeHtml(p.slug)}">Watch this product</button></div>`;
   const changes = details.history.slice(0, 12).map((item) => `<div class="product-change"><span class="connection-dot ${item.inStock ? 'enabled' : ''}"></span><div><strong>${escapeHtml(item.changeType.replaceAll('-', ' '))}</strong><small>${escapeHtml(item.status || 'Unknown')}${item.price ? ` · ${escapeHtml(item.price)}` : ''}</small></div><time>${escapeHtml(relativeTime(item.observedAt))}</time></div>`).join('');
   $('productDialogBody').innerHTML = `<div class="product-hero"><div class="product-hero-image media-shell">${imageMarkup(p, 'product-image')}</div><div><div class="product-status-row"><span class="badge ${p.inStock ? 'in' : p.comingSoon ? 'soon' : 'out'}">${p.unlisted ? 'Unlisted' : p.inStock ? 'In stock' : p.comingSoon ? 'Coming soon' : 'Sold out'}</span><strong>${escapeHtml(p.price || 'Price unavailable')}</strong></div><div class="product-sku-row"><p>${escapeHtml(p.sku || p.slug)}</p><button class="copy-button" type="button" data-copy-text="${escapeHtml(p.sku || p.slug)}" data-copy-label="SKU">Copy SKU</button></div><dl class="settings-details"><div><dt>Store region</dt><dd>${escapeHtml(String(p.region || app.currentRegion || '').toUpperCase())}</dd></div><div><dt>First observed</dt><dd>${escapeHtml(relativeTime(details.firstObservedAt))}</dd></div><div><dt>Last checked</dt><dd>${escapeHtml(relativeTime(p.lastSeenAt))}</dd></div><div><dt>Last changed</dt><dd>${escapeHtml(relativeTime(details.lastChangedAt))}</dd></div><div><dt>History retention</dt><dd>${details.historyRetentionDays} days</dd></div></dl><div class="product-link-actions"><a class="button-link" href="${escapeHtml(p.url)}" target="_blank" rel="noopener">Open UniFi Store ↗</a><button class="copy-button" type="button" data-copy-text="${escapeHtml(p.url)}" data-copy-label="Store link">Copy link</button></div></div></div>
-    ${variantSelector}${ruleForm}<section class="product-history"><h3>Price history</h3>${historyChart(details.history)}<h3>Recent changes</h3><div class="product-change-list">${changes || '<div class="history-empty">No changes recorded yet.</div>'}</div></section>`;
+    ${variantSelector}${ruleForm}<section class="product-history" data-product-insights>${renderInsights(details.insights)}</section><section class="product-history"><h3>Recent changes</h3><div class="product-change-list">${changes || '<div class="history-empty">No changes recorded yet.</div>'}</div></section>`;
   wireProductImages($('productDialogBody'));
 }
 
@@ -842,7 +887,7 @@ function renderActivityDialog(event) {
   const confirmation = event.confirmation || {};
   const alert = event.serverAlert || {};
   $('activityDialogTitle').textContent = event.name || 'Activity details';
-  $('activityDialogBody').innerHTML = `<section class="activity-detail-hero"><span class="settings-kicker">${escapeHtml(String(event.region || '').toUpperCase())} · ${escapeHtml(humanStatus(event.type))}</span><h3>${escapeHtml(event.name || event.slug)}</h3><p>${escapeHtml(metadata)}</p></section><div class="activity-evidence"><article class="settings-card"><span class="settings-kicker">Monitor evidence</span><h3>Confirmation</h3><dl class="settings-details"><div><dt>Policy</dt><dd>${escapeHtml(humanStatus(confirmation.policy || 'legacy event'))}</dd></div><div><dt>Observations</dt><dd>${escapeHtml(confirmation.observations || 1)} of ${escapeHtml(confirmation.required || 1)}</dd></div><div><dt>First observed</dt><dd>${escapeHtml(confirmation.firstObservedAt ? new Date(confirmation.firstObservedAt).toLocaleString() : exactEventTime(event))}</dd></div><div><dt>Confirmed</dt><dd>${escapeHtml(confirmation.confirmedAt ? new Date(confirmation.confirmedAt).toLocaleString() : exactEventTime(event))}</dd></div></dl></article><article class="settings-card"><span class="settings-kicker">Server notification</span><h3>${escapeHtml(alert.label || 'No delivery')}</h3><p>${escapeHtml(serverAlertTitle(event))}</p><dl class="settings-details"><div><dt>Outcome</dt><dd>${escapeHtml(humanStatus(alert.state || 'not recorded'))}</dd></div><div><dt>Channels</dt><dd>${escapeHtml((alert.channels || []).join(', ') || 'None')}</dd></div><div><dt>Detected</dt><dd>${escapeHtml(exactEventTime(event))}</dd></div></dl></article></div><div class="settings-actions wrap activity-detail-actions"><button class="primary button-link" type="button" data-activity-product="${escapeHtml(event.slug)}" data-activity-region="${escapeHtml(event.region || app.currentRegion || '')}">Open product details</button>${event.url ? `<a class="button-link" href="${escapeHtml(event.url)}" target="_blank" rel="noopener">Open UniFi Store ↗</a>` : ''}</div>`;
+  $('activityDialogBody').innerHTML = `<section class="activity-detail-hero"><span class="settings-kicker">${escapeHtml(String(event.region || '').toUpperCase())} · ${escapeHtml(humanStatus(event.type))}</span><h3>${escapeHtml(event.name || event.slug)}</h3><p>${escapeHtml(metadata)}</p></section><div class="activity-evidence"><article class="settings-card"><span class="settings-kicker">Monitor evidence</span><h3>Confirmation</h3><dl class="settings-details"><div><dt>Policy</dt><dd>${escapeHtml(humanStatus(confirmation.policy || 'legacy event'))}</dd></div><div><dt>Observations</dt><dd>${escapeHtml(confirmation.observations || 1)} of ${escapeHtml(confirmation.required || 1)}</dd></div><div><dt>First observed</dt><dd>${escapeHtml(confirmation.firstObservedAt ? new Date(confirmation.firstObservedAt).toLocaleString() : exactEventTime(event))}</dd></div><div><dt>Confirmed</dt><dd>${escapeHtml(confirmation.confirmedAt ? new Date(confirmation.confirmedAt).toLocaleString() : exactEventTime(event))}</dd></div></dl></article><article class="settings-card"><span class="settings-kicker">Server notification</span><h3>${escapeHtml(alert.label || 'No delivery')}</h3><p>${escapeHtml(serverAlertTitle(event))}</p><dl class="settings-details"><div><dt>Outcome</dt><dd>${escapeHtml(humanStatus(alert.state || 'not recorded'))}</dd></div><div><dt>Channels</dt><dd>${escapeHtml((alert.channels || []).join(', ') || 'None')}</dd></div><div><dt>Detected</dt><dd>${escapeHtml(exactEventTime(event))}</dd></div></dl></article></div><div class="settings-actions wrap activity-detail-actions">${event.collectionId ? `<button class="primary button-link" type="button" data-activity-collection="${escapeHtml(event.collectionId)}" data-activity-region="${escapeHtml(event.region || app.currentRegion || '')}">Open collection</button>` : `<button class="primary button-link" type="button" data-activity-product="${escapeHtml(event.slug)}" data-activity-region="${escapeHtml(event.region || app.currentRegion || '')}">Open product details</button>`}${event.url ? `<a class="button-link" href="${escapeHtml(event.url)}" target="_blank" rel="noopener">Open UniFi Store ↗</a>` : ''}</div>`;
 }
 
 async function openActivityDialog(id) {
@@ -1635,9 +1680,10 @@ function maybeBrowserNotify(events) {
   localStorage.setItem(eventStorageKey, newest);
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
   fresh.filter((e) => e.notificationDecision?.allowed).reverse().forEach((e) => {
-    const titles = { restock:`${e.name} is back in stock`, sold_out:`${e.name} sold out`, price_change:`${e.name} price changed`, status_change:`${e.name} status changed`, new_product:`New UniFi product: ${e.name}` };
+    const titles = { restock:`${e.name} is back in stock`, sold_out:`${e.name} sold out`, price_change:`${e.name} price changed`, status_change:`${e.name} status changed`, new_product:`New UniFi product: ${e.name}`, collection_ready:`${e.name} is ready` };
     const n = new Notification(`GearBeacon: ${titles[e.type] || e.name}`, { body: `${e.price ? `${e.price} · ` : ''}Detected ${relativeTime(e.detectedAt)}` });
-    if (e.url) n.onclick = () => window.open(e.url, '_blank');
+    if (e.collectionId) n.onclick = () => { window.focus(); openCollection(e.collectionId, e.region); };
+    else if (e.url) n.onclick = () => window.open(e.url, '_blank');
   });
 }
 
@@ -1692,10 +1738,49 @@ async function toggleWatch(slug) {
 }
 
 function renderCollections() {
-  const key = JSON.stringify(app.collections);
+  const key = JSON.stringify(app.collections.map(({ id,name,slugs }) => ({ id,name,slugs })));
   if (key === app.collectionsRenderKey) return;
   app.collectionsRenderKey = key;
   $('collectionList').innerHTML = app.collections.map((collection) => `<div class="collection-row" data-collection-row="${escapeHtml(collection.id)}"><label class="field"><span>${collection.slugs.length} watch${collection.slugs.length === 1 ? '' : 'es'}</span><input value="${escapeHtml(collection.name)}" maxlength="80" aria-label="Rename ${escapeHtml(collection.name)}" /></label><button type="button" data-rename-collection="${escapeHtml(collection.id)}">Rename</button><button type="button" data-delete-collection="${escapeHtml(collection.id)}">Delete</button></div>`).join('') || '<p>No collections yet.</p>';
+}
+
+function renderCollectionReadiness() {
+  const selected = $('watchCollection').value;
+  const collections = app.collections.filter((collection) => selected === 'all' || collection.id === selected);
+  const key = JSON.stringify(collections.map(({ readiness, ...collection }) => ({ ...collection, readiness:{ ...readiness, checkedAt:null } })));
+  if (key === app.readinessRenderKey) return;
+  app.readinessRenderKey = key;
+  const expanded = new Set([...document.querySelectorAll('[data-readiness-items][open]')].map((element) => element.dataset.readinessItems));
+  const focused = document.activeElement?.dataset?.notifyCollection;
+  const focusedDetails = document.activeElement?.matches('[data-readiness-items] > summary') ? document.activeElement.parentElement.dataset.readinessItems : null;
+  $('collectionReadiness').innerHTML = collections.map((collection) => {
+    const result = collection.readiness;
+    const text = result.remaining ? `${result.qualifying} of ${result.remaining} remaining items meet your conditions` : result.purchased ? 'All items purchased' : 'Add watches to this collection';
+    const items = result.items.map((item) => `<li><span>${escapeHtml(item.name)}</span><strong>${escapeHtml(humanStatus(item.state))}</strong><small>${escapeHtml(item.reason)}</small></li>`).join('');
+    return `<article class="readiness-card"><h3>${escapeHtml(collection.name)}</h3><p class="readiness-status" role="status">${escapeHtml(text)}</p><progress max="${Math.max(1, result.remaining)}" value="${result.qualifying}" aria-label="${escapeHtml(collection.name)}: ${escapeHtml(text)}"></progress><p>${result.purchased} already purchased${result.unknown ? ` · ${result.unknown} awaiting confirmed observations` : ''}</p><label class="readiness-alert"><input type="checkbox" data-notify-collection="${escapeHtml(collection.id)}" ${collection.notifyReady ? 'checked' : ''}/> Notify when all remaining items qualify<span class="sr-only"> in ${escapeHtml(collection.name)}</span></label><details data-readiness-items="${escapeHtml(collection.id)}" ${expanded.has(collection.id) ? 'open' : ''}><summary>Items and conditions</summary><ul>${items || '<li>No items assigned.</li>'}</ul><p>Each remaining watch needs availability and its target price, if set. Individual watch pauses do not pause this separate collection alert. Enabling alerts starts from the current state; it does not send an immediate alert for an already ready collection.</p></details></article>`;
+  }).join('');
+  if (focused) document.querySelector(`[data-notify-collection="${CSS.escape(focused)}"]`)?.focus();
+  if (focusedDetails) document.querySelector(`[data-readiness-items="${CSS.escape(focusedDetails)}"] > summary`)?.focus();
+}
+
+async function setCollectionNotification(input) {
+  const id = input.dataset.notifyCollection; const enabled = input.checked;
+  input.disabled = true;
+  try {
+    const result = await api(`/api/collections/${encodeURIComponent(id)}`, { method:'PUT', body:JSON.stringify({ notifyReady:enabled }) });
+    app.collections = result.collections; renderCollectionReadiness();
+    toast(enabled ? 'Collection readiness alerts enabled. Current conditions set the starting point.' : 'Collection readiness alerts disabled. Pending deliveries cancelled.');
+  } catch (err) { input.checked = !enabled; toast(err.message, 'error'); }
+  finally { input.disabled = false; document.querySelector(`[data-notify-collection="${CSS.escape(id)}"]`)?.focus(); }
+}
+
+async function openCollection(id, region) {
+  if (region && region !== app.currentRegion) {
+    app.currentRegion = region; localStorage.setItem('gearbeacon.region', region); await refresh();
+  }
+  if (!app.collections.some((collection) => collection.id === id)) { toast('This collection is no longer available.', 'error'); return; }
+  closeActivityDialog(); activateTab('watchlist'); resetWatchFilters();
+  $('watchCollection').value = id; persistUiState(); renderProducts(true); $('watchCollection').focus();
 }
 
 async function changeCollection(action, id = null) {
@@ -1720,6 +1805,7 @@ async function markPurchased(slug) {
   try {
     const result = await api('/api/watch/bulk', { method:'POST', body:JSON.stringify({ action, slugs:[slug] }) });
     Object.assign(product, result.products[0]);
+    const collections = await api('/api/collections'); app.collections = collections.collections;
     renderProducts(true);
     if (app.currentProductDetails?.product.slug === slug) {
       await openProductDialog(slug, true);
@@ -1769,6 +1855,8 @@ document.addEventListener('click', (event) => {
   if (activityEvent) { event.preventDefault(); openActivityDialog(activityEvent.dataset.activityEvent); return; }
   const activityProduct = event.target.closest('[data-activity-product]');
   if (activityProduct) { event.preventDefault(); openActivityProduct(activityProduct.dataset.activityProduct, activityProduct.dataset.activityRegion); return; }
+  const activityCollection = event.target.closest('[data-activity-collection]');
+  if (activityCollection) { event.preventDefault(); openCollection(activityCollection.dataset.activityCollection, activityCollection.dataset.activityRegion); return; }
   const category = event.target.closest('[data-category]');
   if (category) { app.browseCategory = category.dataset.category; app.browseVisibleCount = 48; persistUiState(); renderProducts(true); return; }
   const details = event.target.closest('[data-product-detail]');
@@ -1785,6 +1873,10 @@ document.addEventListener('click', (event) => {
   if (retry) api('/api/notifications/retry-failed', { method:'POST' }).then((result) => { toast(`${result.queued} failed deliveries queued`); refreshOperations(); }).catch((err) => toast(err.message, 'error'));
 });
 document.addEventListener('change', (event) => {
+  const days = event.target.closest('[data-insight-days]');
+  if (days) { changeInsightWindow(Number(days.value)); return; }
+  const notification = event.target.closest('[data-notify-collection]');
+  if (notification) { setCollectionNotification(notification); return; }
   const variant = event.target.closest('[data-variant-selector]');
   if (variant) { openProductDialog(variant.value, true).then(() => document.querySelector('[data-variant-selector]')?.focus()); return; }
   const selection = event.target.closest('[data-watch-select]');

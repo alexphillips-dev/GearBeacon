@@ -2,6 +2,16 @@
 
 The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. The first release promoted to `main` is V1.0.0.
 
+## V1.2.0 — Stock insights and collection readiness
+
+- Added availability timelines positioned by actual observation times, recorded restock dates, observed available durations, and explicit unknown periods for outages, restarts, overdue checks, partial catalogs, and pending confirmation. Insights begin with complete observations after upgrading; older change records remain available without inventing historical coverage.
+- Added 7-, 30-, and 90-day lowest observed catalog prices, lowest prices while available, and current-price comparisons with watch targets. Comparisons remain within one exact variant, region, and currency; Any variant products with multiple SKUs require a variant selection for price insights.
+- Added Watchlist collection readiness summaries showing qualifying, waiting, unknown, and purchased items. Optional collection alerts fire on confirmed transitions to readiness, retain their state across restarts, and use the durable notification queue, configured channels, quiet hours, grouping, digests, and retries.
+- Kept collection notifications explicitly opt-in, separate from individual watch pauses and All activity. Enabling alerts or changing conditions establishes a baseline; empty and fully purchased collections never alert. Disabling, deleting, or changing a collection's membership or purchase/target conditions cancels its pending or failed deliveries.
+- Added collection Activity filtering, compact event rows, email rendering, and links back to the corresponding Watchlist collection. Added accessible observation details, keyboard focus preservation, and mobile/light/dark coverage for the new controls.
+- Added transactional schema-v9 migration with a validated safety backup and format-v5 recovery exports containing compact inventory intervals, monitoring coverage, collection settings, and readiness state. Older exports remain supported. Insight retention follows product-history settings with a 100,000-interval limit per region for each new history table.
+- Added deterministic coverage, price-window, collection-transition, restart, privacy, recovery, and migration tests plus browser workflow and accessibility checks. Support diagnostics continue to redact product and collection data.
+
 ## V1.1.0 — Precision monitoring and smart watchlists
 
 - Added exact variant watches with stable regional identities, actual SKUs, variant images and Store links, independent stock/price history, and separate persisted confirmation evidence. Existing product watches retain their Any variant scope.

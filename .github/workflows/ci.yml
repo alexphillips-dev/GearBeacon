@@ -36,6 +36,8 @@ jobs:
         run: node --no-warnings scripts/fault-test.mjs
       - name: Exact variants, conditions, collections and recovery
         run: node --no-warnings scripts/precision-test.mjs
+      - name: Stock insights, coverage and collection readiness
+        run: node --no-warnings scripts/insights-test.mjs
       - name: Verify update helpers refuse unsafe updates
         run: npm run test:update-helpers
       - name: Validate shell launchers and installers
@@ -180,4 +182,4 @@ jobs:
         shell: bash
         env:
           EXPECTED_BUILD_COMMIT: ${{ github.sha }}
-        run: node scripts/standalone-smoke.mjs dist/standalone/GearBeacon-v1.1.0-*/
+        run: node scripts/standalone-smoke.mjs dist/standalone/GearBeacon-v1.2.0-*/

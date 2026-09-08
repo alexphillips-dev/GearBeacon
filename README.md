@@ -8,7 +8,7 @@ GearBeacon is a private, self-hosted Ubiquiti and UniFi Store inventory monitor.
 
 There is no GearBeacon cloud account, hosted database, public registration, subscription, analytics, or telemetry. GearBeacon is independent and is not affiliated with or endorsed by Ubiquiti Inc.
 
-GearBeacon `1.0.0` is the first stable self-hosted release. The `dev` branch is currently `1.1.0`, the precision monitoring and smart watchlist update under development before promotion to `main`.
+GearBeacon `1.0.0` is the first stable self-hosted release. The `dev` branch is currently `1.2.0`, the stock insights and collection readiness update under development before promotion to `main`.
 
 ## What it does
 
@@ -22,6 +22,8 @@ GearBeacon `1.0.0` is the first stable self-hosted release. The `dev` branch is 
 - Supports per-product alert overrides, price-drop and target-price rules, immediate restocks, and temporary or indefinite pauses.
 - Watches exact product variants by SKU, color, length, or pack size, with independent availability, prices, history, and direct variant links.
 - Combines availability and target-price conditions, previews alert decisions, organizes watches into collections, and retains purchased watches with alerts stopped.
+- Shows observed availability timelines with monitoring gaps, recorded restocks, and 7/30/90-day price insights for each exact variant.
+- Summarizes collection readiness and can notify when every remaining item is available and meets its target price.
 - Searches, filters, sorts, selects, pauses, resumes, and removes watched products in bulk.
 - Delivers browser, ntfy, Discord, Gotify, SMTP email, or generic webhook alerts.
 - Queues delivery durably, retries failures with exponential backoff, and supports grouping, cooldowns, quiet hours, and daily digests.
@@ -149,11 +151,25 @@ After watching an item, set a target price and enable **Alert when available at 
 
 **Preview rule & notification** evaluates the unsaved rule without recording activity or delivering an alert. Existing quiet hours, digests, cooldowns, and immediate-restock settings still apply. **All activity updates**, when enabled, continues to override event filters and combined conditions; the preview calls this out. Purchased watches remain stopped.
 
-Use **Watchlist > Manage collections** to create, rename, or delete regional collections. Assign a watch to one or more collections from its alert rules. Filter by collection, then **Select visible watches** to pause or resume those watches in bulk. Collections reference the same watch: overlapping collections do not duplicate notifications, and deleting a collection preserves its watches and history. Independently watching both Any variant and an exact variant creates two separate watches with their own rules.
+Use **Watchlist > Manage collections** to create, rename, or delete regional collections. Assign a watch to one or more collections from its alert rules. Filter by collection, then **Select visible watches** to pause or resume those watches in bulk. Collections reference the same watch: overlapping collections do not duplicate individual product notifications, and deleting a collection preserves its watches and history. Independently watching both Any variant and an exact variant creates two separate watches with their own rules.
 
 **Purchased** retains the watch, its rules, and its history while stopping subsequent alerts and cancelling its pending or failed delivery jobs. A delivery already in progress may finish. **Still wanted** restores the saved rules, including any existing pause. Use the Purchased or Still wanted status filters to review these items.
 
-Upgrading to 1.1.0 creates a validated safety backup before schema v8. Existing watches remain Any variant and existing rules keep their behavior until the combined condition is explicitly enabled. New format-v4 recovery exports include exact variants, collections, purchased state, and condition state; older exports remain supported. Keep the pre-upgrade backup for rollback: 1.0.x cannot use a schema-v8 database or a format-v4 export. Stop the service and restore a compatible pre-upgrade backup with its matching encryption key before running the older application.
+### Stock insights and collection readiness
+
+Open product details to see **Stock insights**. Choose a 7-, 30-, or 90-day window to view observed availability, recorded restocks, and observed available time. The timeline uses actual timestamps; **Observation details** provides dates and values as text. Unknown periods include time before monitoring began, restarts, failed or incomplete checks, overdue polling, and pending stock or price confirmation. Intervals cover consecutive observations with unchanged confirmed values; they do not establish what happened between polls. The most recent check is not extended forward to the present as known availability.
+
+**Price insights** lists the lowest catalog price and the lowest catalog price observed while available for each window, plus the difference between the current confirmed price and your saved target. Comparisons use one SKU, Store region, and currency. Select an exact variant when a product has multiple variants. A missing price is not zero; an explicitly observed zero price remains zero. Catalog prices are not checkout totals and exclude shipping, additional taxes, and surcharges GearBeacon does not calculate.
+
+New insight history starts with complete checks after upgrading to 1.2.0. Earlier change records remain in **Recent changes**, but cannot reconstruct historical monitoring coverage or exact-variant prices. Windows with less retained history are marked **Partial history**; unknown periods are excluded from observed durations and minima. The application records no predictions of future restocks. History retention follows `GEARBEACON_HISTORY_RETENTION_DAYS` (365 days by default). Compact inventory intervals and regional monitoring intervals each have a 100,000-record limit per region; oldest intervals expire first. The chart shows at most 600 recent intervals and observation details at most 100, with a notice when limited; summary calculations use all retained observations in the requested window.
+
+Watchlist collections show how many **remaining** items qualify, which items are waiting for stock or a target price, which need fresh confirmation, and how many are purchased. Each remaining watch must be available and at or below its target price, if one is set. An Any variant watch needs one specific variant to meet both conditions. Collection readiness does not establish stock quantities or reserve inventory.
+
+Enable **Notify when all remaining items qualify** on a collection to receive a server-side alert when it enters readiness. Enabling the option establishes the current baseline, so an already ready collection does not alert immediately. The alert fires once per qualifying period, survives restarts and recovery, and rearms only after confirmed observations show the collection is no longer ready. Monitoring gaps never rearm it. Empty and fully purchased collections never alert. Each opted-in collection has its own transition alert, including overlapping collections.
+
+Collection alerts use configured notification channels, quiet hours, grouping, digests, cooldowns, and bounded retries. They appear in Activity under **Collection ready**, with an action to open that collection. They are separate from individual watch pause settings; **All activity** does not enable them. Disabling or deleting a collection, changing its membership, or changing a member's target or purchased state cancels pending/failed collection jobs and establishes a new baseline. A delivery already in progress may finish. Notification contents describe the conditions observed when the alert was queued; check the Store for current availability.
+
+Upgrading to 1.2.0 creates a validated safety backup before schema v9. Existing watches, rules, collections, purchased state, and history are retained; collection alerts default to off. Format-v5 recovery exports include inventory intervals, monitoring coverage, and collection alert state; preview and import accept requests up to 256 MiB to accommodate retained history; earlier formats remain supported and start with unknown insight coverage. Restoring an export cancels obsolete queued collection alerts and requires a fresh complete check before current readiness is known. For rollback, stop the service and restore the compatible pre-upgrade database with its matching encryption key: 1.1.x cannot use a schema-v9 database or format-v5 export.
 
 ### Delivery settings
 
@@ -209,7 +225,7 @@ Browser-saved settings are intended for most owners. Environment values seed new
 | `GEARBEACON_DATA_DIR` | OS data folder | Persistent data override |
 | `GEARBEACON_BACKUP_INTERVAL_HOURS` | `24` | `0` disables scheduled backups |
 | `GEARBEACON_BACKUP_RETENTION` | `10` | Database backups to retain |
-| `GEARBEACON_HISTORY_RETENTION_DAYS` | `365` | Change-only product history retention |
+| `GEARBEACON_HISTORY_RETENTION_DAYS` | `365` | Product changes, inventory insight intervals, and monitoring coverage retention |
 | `GEARBEACON_EVENT_RETENTION_DAYS` | `365` | Activity retention; `0` keeps activity indefinitely |
 | `GEARBEACON_SECONDARY_BACKUP_DIR` | blank | Absolute recovery directory or mounted share |
 | `GEARBEACON_SECONDARY_ENCRYPTED_EXPORTS` | `0` | Encrypt secondary copies; save its passphrase in Settings first |
@@ -261,6 +277,8 @@ Only liveness, readiness, and authentication bootstrap routes work without an ow
 - `/api/config`, `/api/config/validate` — sanitized configuration and validation
 - `/api/products`, `/api/products/:slug`, `/api/watchlist`, `/api/watch/*`, `/api/watch/import`, `/api/watch/import/preview`, `/api/events`, `/api/check` — regional monitor data, watchlist importing, details, history, and per-product rules
 - `/api/collections`, `/api/collections/:id`, `/api/watch/:slug/collections`, `/api/watch/:slug/preview` — regional collections, membership, and previews of unsaved watch conditions
+- `/api/products/:slug?days=7|30|90` — availability timeline, recorded restocks, price-window summaries, target comparison, and explicit coverage/retention limitations; defaults to 30 days
+- `PUT /api/collections/:id` with `{ "notifyReady": true }` — opt into collection readiness alerts; collection responses include qualifying/waiting/unknown/purchased counts and per-item reasons
 - `/api/activity`, `/api/activity/:id`, `/api/activity/export` — searchable confirmed activity, evidence, pagination, and CSV/JSON export
 - `/api/notifications/*` — preferences, scheduling preview, individual tests, queue retry, and delivery history
 - `/api/operations`, `/api/operations/diagnostics`, `/api/operations/support-bundle`, `/api/logs` — operational status, installation diagnostics, redacted support data, and filtered logs
@@ -283,9 +301,9 @@ docker compose build
 
 CI exercises fresh installs and backup-protected upgrades from V0.1.5–V0.1.7 on Windows, macOS, and Linux; confirmation and unlisting behavior; searchable/exportable activity; primary and encrypted-secondary restore tests; diagnostics and support-bundle redaction; deterministic rate-limit, partial-catalog, restart, storage, key, 500-product, and 10k-activity fault scenarios; real Chrome workflows with axe WCAG scans, keyboard/focus behavior, reduced motion, persistent filters, reset states, offline recovery, copy actions, responsive widths, both themes, product images, rules, scheduling and bulk actions; integration-secret encryption; every notification mock; webhook signing; SMTP STARTTLS; authentication, CSRF, Host/origin, secure-cookie, and forwarded-header behavior; update-helper safety; launcher syntax; real Docker Compose isolation and startup; amd64/arm64 containers; and native standalone packages. CodeQL scans source, while Trivy fails closed on repository secrets and high/critical container vulnerabilities.
 
-Before a stable release, run **Candidate packages** manually with a matching prerelease version such as `1.1.0-rc.1` to create retained Actions artifacts without publishing a release. It uses the exact reusable packaging jobs used by a tag, extracts every archive, starts every native executable, validates the source archive, generates SBOMs, and records attestations.
+Before a stable release, run **Candidate packages** manually with a matching prerelease version such as `1.2.0-rc.1` to create retained Actions artifacts without publishing a release. It uses the exact reusable packaging jobs used by a tag, extracts every archive, starts every native executable, validates the source archive, generates SBOMs, and records attestations.
 
-Prerelease tags such as `v1.1.0-rc.1` must point to a commit on `dev` and never move the stable container `latest` tag. Stable tags such as `v1.1.0` must point to the reviewed commit on protected `main`. Publication also requires successful CI and security workflows at the exact SHA, consistent version/changelog/manifest data, checksummed and rehearsed packages, amd64/arm64 images, SBOMs, and provenance. The GitHub release stays a draft until those steps succeed. Use the [stable release checklist](.github/RELEASE_CHECKLIST.md) for real installation, upgrade, rollback, accessibility, and 24–48 hour soak evidence.
+Prerelease tags such as `v1.2.0-rc.1` must point to a commit on `dev` and never move the stable container `latest` tag. Stable tags such as `v1.2.0` must point to the reviewed commit on protected `main`. Publication also requires successful CI and security workflows at the exact SHA, consistent version/changelog/manifest data, checksummed and rehearsed packages, amd64/arm64 images, SBOMs, and provenance. The GitHub release stays a draft until those steps succeed. Use the [stable release checklist](.github/RELEASE_CHECKLIST.md) for real installation, upgrade, rollback, accessibility, and 24–48 hour soak evidence.
 
 ## Project layout
 

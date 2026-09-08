@@ -133,6 +133,7 @@
         </details>
       </div>
       <div id="bulkActions" class="bulk-actions hidden"><strong id="bulkCount">0 selected</strong><select id="bulkPauseDuration" aria-label="Bulk pause duration"><option value="60">Pause 1 hour</option><option value="1440">Pause 1 day</option><option value="10080">Pause 1 week</option><option value="0">Pause until resumed</option></select><button id="bulkPause">Pause</button><button id="bulkResume">Resume</button><button id="bulkRemove" class="danger-button">Remove</button><button id="bulkClear" class="ghost">Clear selection</button></div>
+      <div id="collectionReadiness" class="collection-readiness"></div>
       <div id="watchGrid" class="grid watch-grid"></div>
       <div id="watchEmpty" class="empty hidden">
         <div class="empty-icon">⌁</div>
@@ -173,7 +174,7 @@
       <form id="activityFilters" class="activity-filters" aria-label="Activity filters">
         <label class="field"><span>Product or SKU</span><input id="activitySearch" type="search" placeholder="Search activity" autocomplete="off" /></label>
         <label class="field"><span>Store region</span><select id="activityRegion"><option value="all">All enabled stores</option></select></label>
-        <label class="field"><span>Change type</span><select id="activityType"><option value="all">All changes</option><option value="restock">Restocks</option><option value="sold_out">Sold out</option><option value="price_change">Price changes</option><option value="status_change">Status changes</option><option value="new_product">New products</option></select></label>
+        <label class="field"><span>Change type</span><select id="activityType"><option value="all">All changes</option><option value="restock">Restocks</option><option value="sold_out">Sold out</option><option value="price_change">Price changes</option><option value="status_change">Status changes</option><option value="new_product">New products</option><option value="collection_ready">Collection ready</option></select></label>
         <label class="field"><span>Server alert</span><select id="activityDelivery"><option value="all">All outcomes</option><option value="sent">Sent</option><option value="pending">Pending or retrying</option><option value="failed">Failed</option><option value="not-sent">Not sent</option></select></label>
         <label class="field"><span>From</span><input id="activityFrom" type="date" /></label>
         <label class="field"><span>Through</span><input id="activityTo" type="date" /></label>
@@ -205,7 +206,7 @@
         <div class="settings-grid">
         <article class="settings-card">
           <div class="settings-card-head">
-            <div><span class="settings-kicker">Application</span><h3>GearBeacon <span id="settingsVersion">V1.1.0</span></h3></div>
+            <div><span class="settings-kicker">Application</span><h3>GearBeacon <span id="settingsVersion">V1.2.0</span></h3></div>
             <span id="schemaBadge" class="settings-badge">SQLite</span>
           </div>
           <p>Your watched products live in a persistent SQLite database outside the GearBeacon application folder.</p>
@@ -391,7 +392,7 @@
     </section>
 
     <footer>
-      <span>GearBeacon V1.1.0 · Private self-hosted monitoring</span>
+      <span>GearBeacon V1.2.0 · Private self-hosted monitoring</span>
       <span id="notifyStatus"></span>
     </footer>
   </main>

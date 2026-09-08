@@ -1,4 +1,4 @@
-// GearBeacon V1.1.0 backend
+// GearBeacon V1.2.0 backend
 // Private, owner-operated stock monitoring for local and self-hosted installs.
 // @ts-nocheck
 
@@ -14,8 +14,8 @@ const { URL } = require('node:url');
 const { DatabaseSync } = require('node:sqlite');
 const { renderEmail, buildMimeEmail, numericPrice } = require('./email');
 
-const APP_VERSION = '1.1.0';
-const DATABASE_SCHEMA_VERSION = 8;
+const APP_VERSION = '1.2.0';
+const DATABASE_SCHEMA_VERSION = 9;
 const STORE_BASE = 'https://store.ui.com';
 const REGIONS = {
   us: { label: 'United States', path: 'us/en', currency: 'USD', origin: STORE_BASE },
@@ -307,6 +307,9 @@ function saveWatchRule(slug, input, region = currentRegion()) {
     db.prepare("UPDATE notification_queue SET status='cancelled',updated_at=? WHERE region=? AND status IN ('pending','failed') AND json_extract(payload_json,'$.slug')=?")
       .run(isoNow(), region, slug);
   }
+  if (next.targetPrice !== previous.targetPrice || next.purchasedAt !== previous.purchasedAt) {
+    baselineCollections(region, db.prepare('SELECT collection_id FROM watch_collection_members WHERE region=? AND slug=?').all(region, slug).map((row) => row.collection_id));
+  }
   return next;
 }
 
@@ -335,6 +338,13 @@ function pruneProductObservations() {
   if (!tableExists('product_observations')) return;
   const cutoff = new Date(Date.now() - HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
   db.prepare('DELETE FROM product_observations WHERE observed_at<?').run(cutoff);
+  if (tableExists('inventory_history')) {
+    for (const table of ['inventory_history', 'monitor_coverage']) {
+      db.prepare(`DELETE FROM ${table} WHERE ended_at<?`).run(cutoff);
+      db.prepare(`UPDATE ${table} SET started_at=? WHERE started_at<?`).run(cutoff, cutoff);
+      for (const region of ACTIVE_REGIONS) db.prepare(`DELETE FROM ${table} WHERE region=? AND id NOT IN (SELECT id FROM ${table} WHERE region=? ORDER BY ended_at DESC,id DESC LIMIT 100000)`).run(region, region);
+    }
+  }
 }
 
 function schemaVersion() {
@@ -687,6 +697,23 @@ MIGRATIONS.push({ version:8, name:'precision-watches-and-collections', sql:`
     FOREIGN KEY(region,collection_id) REFERENCES watch_collections(region,id) ON DELETE CASCADE,
     FOREIGN KEY(region,slug) REFERENCES watchlist(region,slug) ON DELETE CASCADE
   );
+` });
+
+MIGRATIONS.push({ version:9, name:'stock-insights-and-collection-readiness', sql:`
+  CREATE TABLE monitor_coverage (
+    id INTEGER PRIMARY KEY, region TEXT NOT NULL, started_at TEXT NOT NULL,
+    ended_at TEXT NOT NULL, checks INTEGER NOT NULL DEFAULT 1
+  );
+  CREATE INDEX idx_coverage_region_end ON monitor_coverage(region,ended_at);
+  CREATE TABLE inventory_history (
+    id INTEGER PRIMARY KEY, region TEXT NOT NULL, slug TEXT NOT NULL,
+    started_at TEXT NOT NULL, ended_at TEXT NOT NULL, status TEXT NOT NULL,
+    in_stock INTEGER NOT NULL, price_text TEXT, price_value REAL, currency TEXT NOT NULL
+  );
+  CREATE INDEX idx_inventory_region_slug_end ON inventory_history(region,slug,ended_at);
+  CREATE INDEX idx_inventory_region_end ON inventory_history(region,ended_at);
+  ALTER TABLE watch_collections ADD COLUMN notify_ready INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE watch_collections ADD COLUMN ready_state INTEGER;
 ` });
 
 function runMigrations() {
@@ -1738,6 +1765,7 @@ async function postJson(url, body, headers = {}) {
 function notificationCopy(event) {
   const regionKey = event.region || currentRegion();
   const region = REGIONS[regionKey]?.label || String(regionKey).toUpperCase();
+  if (event.type === 'collection_ready') return { title:`${event.name} is ready`, body:`${event.detail} · ${region}`, ntfyTags:'white_check_mark,package' };
   if (event.type === 'digest') return {
     title: `${event.events?.length || 0} GearBeacon stock updates`,
     body: `${(event.events || []).slice(0, 8).map((item) => `${item.name}: ${item.status || item.type}`).join(' · ')}${event.events?.length > 8 ? ' · more…' : ''} · ${region}`,
@@ -1782,6 +1810,10 @@ function notificationCopy(event) {
 
 function notificationDecision(event, prefs = notificationPreferences(), ruleOverride = null) {
   if (event.type === 'test' || event.type === 'operational') return { allowed: true, reason: 'immediate', rule: { ...DEFAULT_WATCH_RULE } };
+  if (event.type === 'collection_ready') {
+    const enabled = Boolean(db.prepare('SELECT notify_ready FROM watch_collections WHERE region=? AND id=?').get(event.region || currentRegion(), event.collectionId)?.notify_ready);
+    return { allowed:enabled, reason:enabled ? 'collection-ready' : 'collection-disabled', rule:{ ...DEFAULT_WATCH_RULE } };
+  }
   const rule = ruleOverride || (event.watchedAtDetection ? watchRule(event.slug, event.region || currentRegion()) : { ...DEFAULT_WATCH_RULE });
   if (event.watchedAtDetection && rule.purchasedAt) return { allowed:false, reason:'purchased', rule };
   if (prefs.allActivity) {
@@ -1838,7 +1870,7 @@ async function sendNtfy(event) {
       Title: copy.title,
       Priority: event.type === 'restock' ? '5' : '3',
       Tags: copy.ntfyTags,
-      ...(event.url ? { Click: event.url } : {}),
+      ...(event.url || event.dashboardUrl ? { Click: event.url || event.dashboardUrl } : {}),
       ...(NTFY_TOKEN ? { Authorization: `Bearer ${NTFY_TOKEN}` } : {}),
       'Content-Type': 'text/plain; charset=utf-8',
     },
@@ -1851,7 +1883,7 @@ async function sendNtfy(event) {
 async function sendDiscord(event) {
   if (!DISCORD_WEBHOOK_URL) return null;
   const copy = notificationCopy(event);
-  const suffix = event.url ? `\n${event.url}` : '';
+  const suffix = event.url || event.dashboardUrl ? `\n${event.url || event.dashboardUrl}` : '';
   await postJson(DISCORD_WEBHOOK_URL, { content: `**GearBeacon:** ${copy.title}\n${copy.body}${suffix}` });
   return true;
 }
@@ -1888,9 +1920,9 @@ async function sendGotify(event) {
   const url = `${GOTIFY_BASE_URL}/message?token=${encodeURIComponent(GOTIFY_TOKEN)}`;
   await postJson(url, {
     title: copy.title,
-    message: `${copy.body}${event.url ? `\n${event.url}` : ''}`,
+    message: `${copy.body}${event.url || event.dashboardUrl ? `\n${event.url || event.dashboardUrl}` : ''}`,
     priority: event.type === 'restock' ? 10 : 5,
-    extras: event.url ? { 'client::display': { contentType: 'text/markdown' }, 'client::notification': { click: { url: event.url } } } : undefined,
+    extras: event.url || event.dashboardUrl ? { 'client::display': { contentType: 'text/markdown' }, 'client::notification': { click: { url: event.url || event.dashboardUrl } } } : undefined,
   });
   return true;
 }
@@ -2194,14 +2226,14 @@ function deliveryPlan(event, rule = event.slug ? watchRule(event.slug, event.reg
 
 function cooldownAllows(event, rule) {
   if (!NOTIFICATION_COOLDOWN_MINUTES || (event.type === 'restock' && rule.immediateRestock) || event.type === 'test') return true;
-  const slug = event.slug || `operational:${event.code || event.name}`;
+  const slug = event.collectionId ? `collection:${event.collectionId}` : event.slug || `operational:${event.code || event.name}`;
   const row = db.prepare('SELECT last_notified_at FROM notification_cooldowns WHERE region=? AND slug=? AND event_type=?').get(event.region || currentRegion(), slug, event.type);
   return !row || Date.now() - new Date(row.last_notified_at).getTime() >= NOTIFICATION_COOLDOWN_MINUTES * 60000;
 }
 
 function markCooldown(event) {
   if (event.type === 'test') return;
-  const slug = event.slug || `operational:${event.code || event.name}`;
+  const slug = event.collectionId ? `collection:${event.collectionId}` : event.slug || `operational:${event.code || event.name}`;
   db.prepare(`INSERT INTO notification_cooldowns(region,slug,event_type,last_notified_at) VALUES(?,?,?,?)
     ON CONFLICT(region,slug,event_type) DO UPDATE SET last_notified_at=excluded.last_notified_at`)
     .run(event.region || currentRegion(), slug, event.type, isoNow());
@@ -2411,6 +2443,150 @@ function pendingTransitions(region = null, limit = 100) {
   return rows.map((row) => ({ region:row.region, slug:row.slug, kind:row.kind, candidate:safeJsonParse(row.candidate_json, {}), firstObservedAt:row.first_seen_at, lastObservedAt:row.last_seen_at, observations:Number(row.observations) }));
 }
 
+// Only consecutive complete checks in this process can establish an interval.
+// Restarts, failures, partial catalogs and overdue polling always break coverage.
+const coverageSessions = new Map();
+function coverageToleranceMs() { return (POLL_SECONDS * 1.5 + 60) * 1000; }
+
+function recordInventoryCoverage(at = isoNow()) {
+  const region = currentRegion();
+  const previous = coverageSessions.get(region);
+  const continuous = previous && new Date(at).getTime() - new Date(previous.at).getTime() <= coverageToleranceMs();
+  const pending = new Set(db.prepare('SELECT DISTINCT slug FROM pending_transitions WHERE region=?').all(region).map((row) => row.slug));
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    let id;
+    if (continuous) {
+      id = previous.id;
+      db.prepare('UPDATE monitor_coverage SET ended_at=?,checks=checks+1 WHERE id=?').run(at, id);
+    } else {
+      id = Number(db.prepare('INSERT INTO monitor_coverage(region,started_at,ended_at) VALUES(?,?,?)').run(region, at, at).lastInsertRowid);
+    }
+    const latest = db.prepare('SELECT * FROM inventory_history WHERE region=? AND slug=? ORDER BY ended_at DESC,id DESC LIMIT 1');
+    const extend = db.prepare('UPDATE inventory_history SET ended_at=? WHERE id=?');
+    const insert = db.prepare('INSERT INTO inventory_history(region,slug,started_at,ended_at,status,in_stock,price_text,price_value,currency) VALUES(?,?,?,?,?,?,?,?,?)');
+    for (const product of Object.values(state.products)) {
+      // Pending stock or price evidence cannot establish availability at a price.
+      if (pending.has(product.slug)) continue;
+      const price = product.unlisted ? null : product.price || null;
+      const last = latest.get(region, product.slug);
+      if (continuous && last?.ended_at === previous.at && last.status === product.status && Boolean(last.in_stock) === Boolean(product.inStock) && last.price_text === price && last.currency === REGIONS[region].currency) {
+        extend.run(at, last.id);
+      } else insert.run(region, product.slug, at, at, product.status, product.inStock ? 1 : 0, price, priceValue(price), REGIONS[region].currency);
+    }
+    db.exec('COMMIT');
+    coverageSessions.set(region, { id, at });
+  } catch (err) { db.exec('ROLLBACK'); throw err; }
+}
+
+function productInsights(slug, days = 30, now = Date.now()) {
+  const region = currentRegion();
+  const product = state.products[slug];
+  const since = new Date(now - days * 86400000).toISOString();
+  const until = new Date(now).toISOString();
+  const historySince = db.prepare('SELECT MIN(started_at) AS at FROM inventory_history WHERE region=? AND slug=?').get(region, slug)?.at || null;
+  const rows = db.prepare(`SELECT started_at AS startedAt,ended_at AS endedAt,status,in_stock AS inStock,price_text AS price,price_value AS priceValue,currency
+    FROM inventory_history WHERE region=? AND slug=? AND ended_at>=? AND started_at<=? ORDER BY started_at,id`).all(region, slug, since, until);
+  const intervals = rows.map((row) => ({ ...row, inStock:Boolean(row.inStock), startedAt:row.startedAt < since ? since : row.startedAt, endedAt:row.endedAt > until ? until : row.endedAt }));
+  let cursor = since;
+  const timeline = [];
+  let observedMs = 0; let availableMs = 0;
+  for (const interval of intervals) {
+    if (interval.startedAt > cursor) timeline.push({ startedAt:cursor, endedAt:interval.startedAt, status:'Unknown', unknown:true });
+    const duration = Math.max(0, new Date(interval.endedAt).getTime() - new Date(interval.startedAt).getTime());
+    observedMs += duration;
+    if (interval.inStock) availableMs += duration;
+    timeline.push(interval);
+    cursor = interval.endedAt;
+  }
+  if (cursor < until) timeline.push({ startedAt:cursor, endedAt:until, status:'Unknown', unknown:true });
+  const exactPriceScope = Boolean(product.variantId) || !Object.values(state.products).some((item) => item.parentSlug === slug);
+  const prices = [7,30,90].map((period) => {
+    const start = new Date(now - period * 86400000).toISOString();
+    const values = exactPriceScope ? db.prepare(`SELECT MIN(price_value) AS lowest,MIN(CASE WHEN in_stock=1 THEN price_value END) AS lowestAvailable,COUNT(*) AS samples
+      FROM inventory_history WHERE region=? AND slug=? AND currency=? AND ended_at>=? AND started_at<=? AND price_value IS NOT NULL`).get(region, slug, REGIONS[region].currency, start, until) : { lowest:null, lowestAvailable:null, samples:0 };
+    return { days:period, ...values, fullWindow:Boolean(historySince && historySince <= start && HISTORY_RETENTION_DAYS >= period) };
+  });
+  const restockSince = historySince && historySince > since ? historySince : since;
+  const restocks = historySince ? db.prepare("SELECT observed_at AS detectedAt FROM product_observations WHERE region=? AND slug=? AND observed_at>=? AND observed_at<=? AND change_type LIKE '%restock%' ORDER BY observed_at").all(region, slug, restockSince, until) : [];
+  const target = watchRule(slug).targetPrice;
+  const current = priceValue(product.price);
+  return { days, since, until, historySince, currency:REGIONS[region].currency, exactPriceScope, prices, timeline:timeline.slice(-600), timelineTruncated:timeline.length > 600,
+    observedSeconds:Math.round(observedMs / 1000), availableSeconds:Math.round(availableMs / 1000), unknownSeconds:Math.max(0, days * 86400 - Math.round(observedMs / 1000)),
+    restocks, targetPrice:target, currentPrice:current, targetDifference:exactPriceScope && current !== null && target !== null ? Math.round((current - target) * 100) / 100 : null,
+    fullWindow:Boolean(historySince && historySince <= since && HISTORY_RETENTION_DAYS >= days),
+    currentConfirmed:!product.unlisted && coverageFresh(region) && !db.prepare('SELECT 1 FROM pending_transitions WHERE region=? AND slug=?').get(region, slug),
+  };
+}
+
+function coverageFresh(region = currentRegion()) {
+  const latest = coverageSessions.get(region);
+  return Boolean(latest && Date.now() - new Date(latest.at).getTime() <= coverageToleranceMs());
+}
+
+function collectionReadiness(collection, region = currentRegion()) {
+  const products = states[region]?.products || {};
+  const pending = db.prepare('SELECT slug,kind FROM pending_transitions WHERE region=?').all(region);
+  const fresh = coverageFresh(region);
+  const items = collection.slugs.map((slug) => {
+    const product = Object.hasOwn(products, slug) ? products[slug] : null;
+    const rule = watchRule(slug, region);
+    const item = { slug, name:product?.name || slug, targetPrice:rule.targetPrice, state:'unknown', reason:'Waiting for a complete store check.' };
+    if (rule.purchasedAt) return { ...item, state:'purchased', reason:'Already purchased.' };
+    if (!fresh || !product) return item;
+    const variants = !product.variantId ? Object.values(products).filter((entry) => entry.parentSlug === slug) : [];
+    const candidates = variants.length ? variants : [product];
+    const uncertain = (entry) => pending.some((row) => row.slug === entry.slug && (row.kind !== 'price' || rule.targetPrice !== null));
+    const matching = candidates.find((entry) => !uncertain(entry) && !entry.unlisted && entry.inStock && (rule.targetPrice === null || (priceValue(entry.price) !== null && priceValue(entry.price) <= rule.targetPrice)));
+    if (matching) return { ...item, state:'ready', reason:rule.targetPrice === null ? 'Available.' : 'Available at or below target.', matchingSlug:matching.slug };
+    if (candidates.some((entry) => uncertain(entry) || (entry.inStock && rule.targetPrice !== null && priceValue(entry.price) === null))) return { ...item, reason:'Waiting for confirmed availability or price.' };
+    return { ...item, state:'waiting', reason:candidates.some((entry) => entry.inStock && !entry.unlisted) ? 'Available above target price.' : product.unlisted ? 'Unlisted by the Store.' : 'Not available.' };
+  });
+  const count = (value) => items.filter((item) => item.state === value).length;
+  const purchased = count('purchased'); const remaining = items.length - purchased; const qualifying = count('ready');
+  return { ready:remaining > 0 && qualifying === remaining, remaining, qualifying, purchased, waiting:count('waiting'), unknown:count('unknown'), items, checkedAt:coverageSessions.get(region)?.at || null,
+    confirmedNotReady:remaining === 0 || count('waiting') > 0 };
+}
+
+function cancelCollectionAlerts(id, region = currentRegion()) {
+  db.prepare("UPDATE notification_queue SET status='cancelled',updated_at=? WHERE region=? AND status IN ('pending','failed') AND json_extract(payload_json,'$.collectionId')=?").run(isoNow(), region, id);
+}
+
+function baselineCollections(region = currentRegion(), ids = null) {
+  for (const collection of watchCollections(region)) {
+    if (ids && !ids.includes(collection.id)) continue;
+    const result = collection.readiness;
+    db.prepare('UPDATE watch_collections SET ready_state=? WHERE region=? AND id=?').run(result.ready ? 1 : result.confirmedNotReady ? 0 : null, region, collection.id);
+    cancelCollectionAlerts(collection.id, region);
+  }
+}
+
+function evaluateCollectionAlerts() {
+  for (const collection of watchCollections()) {
+    const result = collection.readiness;
+    if (!result.ready && !result.confirmedNotReady) continue; // Unknown never rearms.
+    const previous = db.prepare('SELECT ready_state FROM watch_collections WHERE region=? AND id=?').get(currentRegion(), collection.id)?.ready_state;
+    const shouldAlert = collection.notifyReady && result.ready && previous === 0;
+    db.exec('BEGIN IMMEDIATE');
+    const eventsBefore = state.events.slice();
+    try {
+      db.prepare('UPDATE watch_collections SET ready_state=? WHERE region=? AND id=?').run(result.ready ? 1 : 0, currentRegion(), collection.id);
+      if (shouldAlert) {
+        const at = isoNow();
+        const dashboardUrl = PUBLIC_BASE_URL ? `${PUBLIC_BASE_URL.replace(/\/$/, '')}/?region=${currentRegion()}&collection=${encodeURIComponent(collection.id)}#watchlist` : null;
+        const event = { id:crypto.randomUUID(), type:'collection_ready', alertKind:'collection_ready', collectionId:collection.id, name:collection.name, slug:null,
+          detail:`All ${result.remaining} remaining items are available and meet their target prices. ${result.purchased} already purchased.`, readiness:result,
+          status:'Ready', region:currentRegion(), detectedAt:at, watchedAtDetection:false, url:null, dashboardUrl, notificationTimeZone:NOTIFICATION_TIME_ZONE,
+          triggerReason:'You enabled notifications when all remaining items in this collection qualify.',
+          confirmation:{ policy:'confirmed-collection-conditions', observations:1, required:1, firstObservedAt:at, confirmedAt:at } };
+        recordEvent(event);
+        enqueueAlert(event);
+      }
+      db.exec('COMMIT');
+    } catch (err) { db.exec('ROLLBACK'); state.events = eventsBefore; throw err; }
+  }
+}
+
 function recordMonitorCheck(outcome, startedAt, detail = null) {
   if (!tableExists('monitor_checks')) return;
   const duration = Math.max(0, Date.now() - startedAt);
@@ -2601,6 +2777,8 @@ async function checkStore(reason = 'timer') {
 
     // Preserve last-known-good data for partial catalogs and pending changes.
     state.products = { ...state.products, ...incoming };
+    if (monitor.partialErrors.length) coverageSessions.delete(currentRegion());
+    else recordInventoryCoverage();
     applyCombinedWatchConditions(detectedEvents, prefs);
     for (const event of detectedEvents) {
       const decision = notificationDecision(event, prefs);
@@ -2618,6 +2796,7 @@ async function checkStore(reason = 'timer') {
     saveStateSoon();
 
     for (const event of notifications) enqueueAlert(event);
+    if (!monitor.partialErrors.length) evaluateCollectionAlerts();
     try {
       const stat = typeof fs.statfsSync === 'function' ? fs.statfsSync(USER_DATA_DIR) : null;
       const free = stat ? Number(stat.bavail) * Number(stat.bsize) : null;
@@ -2628,6 +2807,7 @@ async function checkStore(reason = 'timer') {
     recordMonitorCheck('success', startedAt, monitor.partialErrors.length ? 'Catalog was usable but one or more categories failed.' : null);
     return { ok: true, products: monitor.productCount, notifications: notifications.length, catalogHealth: monitor.catalogHealth, pendingChanges:monitor.pendingChanges };
   } catch (err) {
+    coverageSessions.delete(currentRegion());
     monitor.consecutiveFailures += 1;
     monitor.lastError = err?.message || String(err);
     monitor.retryAfterAt = err?.retryAfterAt || null;
@@ -2675,8 +2855,11 @@ function productForApi(product) {
 }
 
 function watchCollections(region = currentRegion()) {
-  return db.prepare('SELECT id,name,created_at AS createdAt FROM watch_collections WHERE region=? ORDER BY name COLLATE NOCASE').all(region)
-    .map((collection) => ({ ...collection, slugs:db.prepare('SELECT slug FROM watch_collection_members WHERE region=? AND collection_id=? ORDER BY slug').all(region, collection.id).map((row) => row.slug) }));
+  return db.prepare('SELECT id,name,created_at AS createdAt,notify_ready AS notifyReady,ready_state AS readyState FROM watch_collections WHERE region=? ORDER BY name COLLATE NOCASE').all(region)
+    .map((collection) => {
+      const value = { ...collection, notifyReady:Boolean(collection.notifyReady), slugs:db.prepare('SELECT slug FROM watch_collection_members WHERE region=? AND collection_id=? ORDER BY slug').all(region, collection.id).map((row) => row.slug) };
+      return { ...value, readiness:collectionReadiness(value, region) };
+    });
 }
 
 function collectionName(value) {
@@ -2688,6 +2871,9 @@ function collectionName(value) {
 function setWatchCollections(slug, ids, region = currentRegion()) {
   if (!Array.isArray(ids) || ids.length > 50 || ids.some((id) => typeof id !== 'string')) throw new Error('Choose up to 50 collections.');
   const unique = [...new Set(ids)];
+  const affected = [...unique, ...db.prepare('SELECT collection_id FROM watch_collection_members WHERE region=? AND slug=?').all(region, slug).map((row) => row.collection_id)];
+  const existingIds = affected.slice(unique.length);
+  if (unique.length === existingIds.length && unique.every((id) => existingIds.includes(id))) return;
   if (unique.some((id) => !db.prepare('SELECT id FROM watch_collections WHERE region=? AND id=?').get(region, id))) throw new Error('Collection not found in this region.');
   db.exec('BEGIN IMMEDIATE');
   try {
@@ -2696,6 +2882,7 @@ function setWatchCollections(slug, ids, region = currentRegion()) {
     for (const id of unique) insert.run(region, id, slug);
     db.exec('COMMIT');
   } catch (err) { db.exec('ROLLBACK'); throw err; }
+  baselineCollections(region, affected);
 }
 
 const WATCH_IMPORT_FIELD_ORDER = ['url', 'producturl', 'storeurl', 'slug', 'sku', 'product', 'model', 'modelnumber', 'identifier', 'name'];
@@ -2871,7 +3058,7 @@ function previewWatchImport(content, fileName = '') {
   };
 }
 
-function productDetailsForApi(slug) {
+function productDetailsForApi(slug, days = 30) {
   const product = Object.hasOwn(state.products, slug) ? state.products[slug] : null;
   if (!product) return null;
   const history = productObservations(slug);
@@ -2881,6 +3068,7 @@ function productDetailsForApi(slug) {
     parent:product.parentSlug ? productForApi(state.products[product.parentSlug]) : null,
     collections:watchCollections(),
     history,
+    insights:productInsights(slug, days),
     historyRetentionDays: HISTORY_RETENTION_DAYS,
     firstObservedAt: history.length ? history[history.length - 1].observedAt : product.firstDiscoveredAt || product.lastSeenAt || null,
     lastChangedAt: product.lastChangedAt || history[0]?.observedAt || null,
@@ -2948,6 +3136,8 @@ function dataInfo() {
     backup: backupSummary(),
     history: {
       observations: tableExists('product_observations') ? Number(db.prepare('SELECT COUNT(*) AS count FROM product_observations').get()?.count || 0) : 0,
+      insightIntervals:Number(db.prepare('SELECT COUNT(*) AS count FROM inventory_history').get()?.count || 0),
+      coverageIntervals:Number(db.prepare('SELECT COUNT(*) AS count FROM monitor_coverage').get()?.count || 0),
       retentionDays: HISTORY_RETENTION_DAYS,
     },
     activity: {
@@ -3028,7 +3218,7 @@ function activityFilterSql(url) {
   const conditions = [`e.region IN (${regions.map(() => '?').join(',')})`];
   const parameters = [...regions];
   const type = String(url.searchParams.get('type') || 'all').toLowerCase();
-  const allowedTypes = ['restock', 'sold_out', 'price_change', 'status_change', 'new_product'];
+  const allowedTypes = ['restock', 'sold_out', 'price_change', 'status_change', 'new_product', 'collection_ready'];
   if (type !== 'all') {
     if (!allowedTypes.includes(type)) throw new Error('Activity type is not supported.');
     conditions.push('e.type=?'); parameters.push(type);
@@ -3200,7 +3390,7 @@ async function runDiagnostics({ network = true } = {}) {
 
 function scrubSupportValue(value, key = '') {
   if (/password|secret|token|credential|session|cookie|authorization|path$|directory$|dir$/i.test(key)) return '[redacted]';
-  if (/^(?:name|slug|slugs|sku|variantId|variantSlug|variantTitle|variantKeys|parentSlug|sourceSlug|watchlist|watchRules|collections|collectionName|candidate|product|products|productHistory)$/i.test(key)) return '[redacted]';
+  if (/^(?:name|slug|slugs|sku|variantId|variantSlug|variantTitle|variantKeys|parentSlug|sourceSlug|watchlist|watchRules|collections|collectionName|collectionId|readiness|inventoryHistory|candidate|product|products|productHistory)$/i.test(key)) return '[redacted]';
   if (Array.isArray(value)) return value.map((item) => scrubSupportValue(item));
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, scrubSupportValue(item, name)]));
   if (typeof value === 'string') return value
@@ -3283,7 +3473,9 @@ function exportSnapshot() {
       events: db.prepare('SELECT data_json FROM events WHERE region=? ORDER BY detected_at').all(region)
         .map((row) => safeJsonParse(row.data_json, null)).filter(Boolean),
       watchRules,
-      collections:watchCollections(region),
+      collections:watchCollections(region).map(({ readiness, ...collection }) => collection),
+      monitoringCoverage:db.prepare('SELECT started_at AS startedAt,ended_at AS endedAt,checks FROM monitor_coverage WHERE region=? ORDER BY started_at,id').all(region),
+      inventoryHistory:db.prepare('SELECT slug,started_at AS startedAt,ended_at AS endedAt,status,in_stock AS inStock,price_text AS price,price_value AS priceValue,currency FROM inventory_history WHERE region=? ORDER BY slug,started_at,id').all(region).map((row) => ({ ...row, inStock:Boolean(row.inStock) })),
       conditionState:db.prepare('SELECT slug,matched FROM watch_condition_state WHERE region=?').all(region),
       productHistory: db.prepare(`SELECT slug,observed_at AS observedAt,change_type AS changeType,status,in_stock AS inStock,price_text AS price,price_value AS priceValue
         FROM product_observations WHERE region=? ORDER BY observed_at`).all(region).map((row) => ({ ...row, inStock:Boolean(row.inStock) })),
@@ -3291,7 +3483,7 @@ function exportSnapshot() {
   }
   return {
     format: 'GearBeaconBackup',
-    formatVersion: 4,
+    formatVersion: 5,
     exportedAt: isoNow(),
     appVersion: APP_VERSION,
     schemaVersion: schemaVersion(),
@@ -3343,7 +3535,7 @@ function normalizeImportedSnapshot(snapshot) {
   const isBackup = snapshot.format === 'GearBeaconBackup';
   const isLegacy = !snapshot.format && (Array.isArray(snapshot.watchlist) || snapshot.products || Array.isArray(snapshot.events));
   if (!isBackup && !isLegacy) throw new Error('This file is not a GearBeacon backup or legacy GearBeacon state file.');
-  if (isBackup && Number(snapshot.formatVersion || 0) > 4) throw new Error(`This backup format (${snapshot.formatVersion}) is newer than GearBeacon ${APP_VERSION} supports.`);
+  if (isBackup && Number(snapshot.formatVersion || 0) > 5) throw new Error(`This backup format (${snapshot.formatVersion}) is newer than GearBeacon ${APP_VERSION} supports.`);
   const normalizeRegion = (value) => ({
     watchlist: Array.isArray(value?.watchlist) ? value.watchlist.map(String).filter(Boolean) : [],
     watchCreatedAt: value?.watchCreatedAt && typeof value.watchCreatedAt === 'object' && !Array.isArray(value.watchCreatedAt) ? value.watchCreatedAt : {},
@@ -3352,6 +3544,8 @@ function normalizeImportedSnapshot(snapshot) {
     watchRules: value?.watchRules && typeof value.watchRules === 'object' && !Array.isArray(value.watchRules) ? value.watchRules : {},
     collections:Array.isArray(value?.collections) ? value.collections : [],
     conditionState:Array.isArray(value?.conditionState) ? value.conditionState : [],
+    monitoringCoverage:value?.monitoringCoverage ?? [],
+    inventoryHistory:value?.inventoryHistory ?? [],
     productHistory: Array.isArray(value?.productHistory) ? value.productHistory.filter((item) => item?.slug && item?.observedAt).slice(-100000) : [],
   });
   const regions = {};
@@ -3364,6 +3558,7 @@ function normalizeImportedSnapshot(snapshot) {
     regions[region] = normalizeRegion(snapshot);
   }
   validateSnapshotCollections(regions);
+  validateSnapshotInsights(regions);
   return {
     regions,
     settings: snapshot.settings && typeof snapshot.settings === 'object' && !Array.isArray(snapshot.settings) ? snapshot.settings : {},
@@ -3381,8 +3576,29 @@ function validateSnapshotCollections(regions) {
       if (!/^[a-z0-9-]{1,80}$/i.test(collection.id || '') || ids.has(collection.id) || names.has(collection.name.toLowerCase())) throw new Error('Backup contains invalid or duplicate collections.');
       if (!Array.isArray(collection.slugs) || collection.slugs.some((slug) => typeof slug !== 'string' || !regionState.watchlist.includes(slug))) throw new Error('Backup collection contains an unknown watch.');
       ids.add(collection.id); names.add(collection.name.toLowerCase());
+      if (collection.notifyReady !== undefined && typeof collection.notifyReady !== 'boolean') throw new Error('Backup contains invalid collection notification settings.');
+      if (collection.readyState !== undefined && ![null,0,1].includes(collection.readyState)) throw new Error('Backup contains invalid collection alert state.');
     }
     for (const rule of Object.values(regionState.watchRules)) normalizeWatchRule(rule);
+  }
+}
+
+function validateSnapshotInsights(regions) {
+  const validTime = (value) => typeof value === 'string' && !Number.isNaN(new Date(value).valueOf()) && new Date(value).toISOString() === value;
+  for (const [region, value] of Object.entries(regions)) {
+    for (const key of ['monitoringCoverage', 'inventoryHistory']) {
+      if (!Array.isArray(value[key]) || value[key].length > 100000) throw new Error('Backup contains too many or invalid insight intervals.');
+      const ends = new Map();
+      for (const row of value[key]) {
+        if (!row || !validTime(row.startedAt) || !validTime(row.endedAt) || row.startedAt > row.endedAt || new Date(row.endedAt).getTime() > Date.now() + 60000) throw new Error('Backup contains invalid insight timestamps.');
+        const identity = key === 'inventoryHistory' ? row.slug : region;
+        if (ends.has(identity) && row.startedAt < ends.get(identity)) throw new Error('Backup insight intervals overlap or are out of order.');
+        ends.set(identity, row.endedAt);
+        if (key === 'monitoringCoverage') {
+          if (!Number.isSafeInteger(row.checks) || row.checks < 1) throw new Error('Backup contains an invalid monitoring check count.');
+        } else if (typeof row.slug !== 'string' || !Object.hasOwn(value.products, row.slug) || (typeof row.status !== 'string' || !row.status || row.status.length > 100 || /[\x00-\x1f\x7f]/.test(row.status)) || typeof row.inStock !== 'boolean' || row.currency !== REGIONS[region].currency || (row.price !== null && (typeof row.price !== 'string' || row.price.length > 100)) || (row.priceValue !== null && (typeof row.priceValue !== 'number' || !Number.isFinite(row.priceValue) || row.priceValue < 0))) throw new Error('Backup contains invalid product insight values.');
+      }
+    }
   }
 }
 
@@ -3406,7 +3622,7 @@ function importSnapshot(snapshot) {
     db.prepare('DELETE FROM watch_collections WHERE region=?').run(region);
     for (const collection of regionState.collections) {
       const createdAt = collection.createdAt && !Number.isNaN(new Date(collection.createdAt).valueOf()) ? new Date(collection.createdAt).toISOString() : isoNow();
-      db.prepare('INSERT INTO watch_collections(region,id,name,created_at) VALUES(?,?,?,?)').run(region, collection.id, collection.name, createdAt);
+      db.prepare('INSERT INTO watch_collections(region,id,name,created_at,notify_ready,ready_state) VALUES(?,?,?,?,?,?)').run(region, collection.id, collection.name, createdAt, collection.notifyReady ? 1 : 0, collection.readyState ?? null);
       for (const slug of new Set(collection.slugs)) db.prepare('INSERT INTO watch_collection_members(region,collection_id,slug) VALUES(?,?,?)').run(region, collection.id, slug);
     }
     db.prepare('DELETE FROM watch_condition_state WHERE region=?').run(region);
@@ -3421,6 +3637,18 @@ function importSnapshot(snapshot) {
       addHistory.run(region, String(item.slug), observed.toISOString(), String(item.changeType || 'imported').slice(0, 80), item.status ? String(item.status) : null, item.inStock ? 1 : 0, item.price ? String(item.price) : null, priceValue(item.priceValue ?? item.price));
     }
     states[region] = loadState(region);
+    coverageSessions.delete(region);
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.prepare('DELETE FROM monitor_coverage WHERE region=?').run(region);
+      db.prepare('DELETE FROM inventory_history WHERE region=?').run(region);
+      const addCoverage = db.prepare('INSERT INTO monitor_coverage(region,started_at,ended_at,checks) VALUES(?,?,?,?)');
+      const addInventory = db.prepare('INSERT INTO inventory_history(region,slug,started_at,ended_at,status,in_stock,price_text,price_value,currency) VALUES(?,?,?,?,?,?,?,?,?)');
+      for (const row of regionState.monitoringCoverage) addCoverage.run(region, row.startedAt, row.endedAt, row.checks);
+      for (const row of regionState.inventoryHistory) addInventory.run(region, row.slug, row.startedAt, row.endedAt, row.status, row.inStock ? 1 : 0, row.price, row.priceValue, row.currency);
+      db.prepare("UPDATE notification_queue SET status='cancelled',updated_at=? WHERE region=? AND status IN ('pending','failed') AND json_extract(payload_json,'$.type')='collection_ready'").run(isoNow(), region);
+      db.exec('COMMIT');
+    } catch (err) { db.exec('ROLLBACK'); throw err; }
     monitors[region].productCount = Object.values(states[region].products).filter((product) => !product.variantId).length;
     watchCount += states[region].watchlist.length;
     eventCount += states[region].events.length;
@@ -3454,6 +3682,8 @@ function previewSnapshot(snapshot) {
     productCount: Object.keys(value.products).length,
     eventCount: value.events.length,
     historyCount: value.productHistory.length,
+    insightCount:value.inventoryHistory.length,
+    coverageCount:value.monitoringCoverage.length,
     collectionCount:value.collections.length,
     variantWatchCount:value.watchlist.filter((slug) => value.products[slug]?.variantId).length,
     purchasedCount:value.watchlist.filter((slug) => value.watchRules[slug]?.purchasedAt).length,
@@ -4238,7 +4468,7 @@ async function handleRegionApi(req, res, url) {
   }
 
   if (req.method === 'POST' && url.pathname === '/api/data/preview') {
-    const body = await readJsonBody(req, 25 * 1024 * 1024);
+    const body = await readJsonBody(req, 256 * 1024 * 1024);
     try {
       const snapshot = decryptSnapshot(body?.backup || body, body?.passphrase);
       return sendJson(res, 200, previewSnapshot(snapshot));
@@ -4248,7 +4478,7 @@ async function handleRegionApi(req, res, url) {
   }
 
   if (req.method === 'POST' && url.pathname === '/api/data/import') {
-    const body = await readJsonBody(req, 25 * 1024 * 1024);
+    const body = await readJsonBody(req, 256 * 1024 * 1024);
     try {
       const snapshot = decryptSnapshot(body?.backup || body, body?.passphrase);
       return sendJson(res, 200, importSnapshot(snapshot));
@@ -4315,7 +4545,9 @@ async function handleRegionApi(req, res, url) {
 
   if (req.method === 'GET' && url.pathname.startsWith('/api/products/')) {
     const slug = decodeURIComponent(url.pathname.slice('/api/products/'.length));
-    const details = productDetailsForApi(slug);
+    const days = Number(url.searchParams.get('days') || 30);
+    if (![7,30,90].includes(days)) return sendJson(res, 400, { error:'Choose a 7, 30, or 90 day insight window.' });
+    const details = productDetailsForApi(slug, days);
     return details ? sendJson(res, 200, details) : sendJson(res, 404, { error:'Product not found.' });
   }
 
@@ -4344,13 +4576,22 @@ async function handleRegionApi(req, res, url) {
   if (url.pathname.startsWith('/api/collections/') && ['PUT','DELETE'].includes(req.method)) {
     const id = decodeURIComponent(url.pathname.slice('/api/collections/'.length));
     if (!db.prepare('SELECT id FROM watch_collections WHERE region=? AND id=?').get(currentRegion(), id)) return sendJson(res, 404, { error:'Collection not found in this region.' });
-    if (req.method === 'DELETE') db.prepare('DELETE FROM watch_collections WHERE region=? AND id=?').run(currentRegion(), id);
+    if (req.method === 'DELETE') {
+      cancelCollectionAlerts(id);
+      db.prepare('DELETE FROM watch_collections WHERE region=? AND id=?').run(currentRegion(), id);
+    }
     else {
       const body = await readJsonBody(req);
       let name;
-      try { name = collectionName(body?.name); } catch (err) { return sendJson(res, 400, { error:err.message }); }
+      const existing = db.prepare('SELECT name,notify_ready FROM watch_collections WHERE region=? AND id=?').get(currentRegion(), id);
+      try { name = collectionName(body?.name ?? existing.name); } catch (err) { return sendJson(res, 400, { error:err.message }); }
+      if (body?.notifyReady !== undefined && typeof body.notifyReady !== 'boolean') return sendJson(res, 400, { error:'Collection notification setting must be true or false.' });
       if (db.prepare('SELECT id FROM watch_collections WHERE region=? AND name=? COLLATE NOCASE AND id<>?').get(currentRegion(), name, id)) return sendJson(res, 409, { error:'A collection with that name already exists.' });
       db.prepare('UPDATE watch_collections SET name=? WHERE region=? AND id=?').run(name, currentRegion(), id);
+      if (body?.notifyReady !== undefined && body.notifyReady !== Boolean(existing.notify_ready)) {
+        db.prepare('UPDATE watch_collections SET notify_ready=? WHERE region=? AND id=?').run(body.notifyReady ? 1 : 0, currentRegion(), id);
+        baselineCollections(currentRegion(), [id]);
+      }
     }
     return sendJson(res, 200, { ok:true, collections:watchCollections() });
   }
@@ -4465,9 +4706,11 @@ async function handleRegionApi(req, res, url) {
     } else if (action === 'purchased' || action === 'wanted') {
       for (const slug of slugs) saveWatchRule(slug, { purchasedAt:action === 'purchased' ? isoNow() : null });
     } else {
+      const affected = watchCollections().filter((collection) => collection.slugs.some((slug) => slugs.includes(slug))).map((collection) => collection.id);
       state.watchlist = state.watchlist.filter((slug) => !slugs.includes(slug));
       const removeWatch = db.prepare('DELETE FROM watchlist WHERE region=? AND slug=?');
       for (const slug of slugs) removeWatch.run(currentRegion(), slug);
+      baselineCollections(currentRegion(), affected);
     }
     saveStateSoon();
     return sendJson(res, 200, { ok:true, action, affected:slugs.length, pausedUntil, products:slugs.map((slug) => productForApi(state.products[slug])).filter(Boolean) });
@@ -4489,8 +4732,10 @@ async function handleRegionApi(req, res, url) {
 
   if (req.method === 'DELETE' && url.pathname.startsWith('/api/watch/')) {
     const slug = decodeURIComponent(url.pathname.slice('/api/watch/'.length));
+    const affected = watchCollections().filter((collection) => collection.slugs.includes(slug)).map((collection) => collection.id);
     state.watchlist = state.watchlist.filter((x) => x !== slug);
     db.prepare('DELETE FROM watchlist WHERE region=? AND slug=?').run(currentRegion(), slug);
+    baselineCollections(currentRegion(), affected);
     saveStateSoon();
     return sendJson(res, 200, { ok: true, watchlist: state.watchlist });
   }

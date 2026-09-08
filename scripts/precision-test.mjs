@@ -84,7 +84,7 @@ try {
   await start();
   const config = await request('/api/config');
   await request('/api/config', { config:{ ...config.config,digestEnabled:true,digestTime:'12:34',notificationTimeZone:'UTC',notificationCooldownMinutes:0 } }, 'PUT');
-  assert.equal((await request('/api/status')).storage.schemaVersion, 8);
+  assert.equal((await request('/api/status')).storage.schemaVersion, 9);
   const initial = await details();
   assert.equal(initial.product.sku, 'MOCK-G5-PTZ-B');
   assert.equal(initial.product.price, '$299.00');
@@ -202,7 +202,7 @@ try {
   assert.ok((await details()).history.length > retainedHistory);
   const backup = await request('/api/data/export/encrypted', { passphrase:'precision test recovery passphrase' });
   const snapshot = await request('/api/data/export');
-  assert.equal(snapshot.formatVersion, 4);
+  assert.equal(snapshot.formatVersion, 5);
   const invalidSnapshot = structuredClone(snapshot);
   invalidSnapshot.regions.us.collections[0].slugs.push('not-a-watch');
   await request('/api/data/preview', { backup:invalidSnapshot }, 'POST', 400);
