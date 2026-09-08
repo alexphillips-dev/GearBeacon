@@ -1836,7 +1836,23 @@ async function commitCollection(method, id, body) {
   const controls = [...$('collectionDialog').querySelectorAll('button,input,select')].map((control) => [control,control.disabled]);
   controls.forEach(([control]) => { control.disabled = true; });
   try {
+    const editsMembers = body?.slugs !== undefined || body?.addSlugs !== undefined;
+    if (editsMembers) {
+      const server = await api('/api/collections');
+      if (server.capabilities?.memberEditing !== true) throw new Error('The running server needs to be updated and restarted before it can save collection items. Your selections are still here. Restart GearBeacon, then try saving again.');
+    }
     const result = await api(id ? `/api/collections/${encodeURIComponent(id)}` : '/api/collections', { method, ...(body ? { body:JSON.stringify(body) } : {}) });
+    if (editsMembers) {
+      const saved = result.collections?.find((collection) => collection.id === (id || result.id));
+      // Keep a created collection editable if its server response reports an incomplete save.
+      if (method === 'POST' && saved && app.collectionDraft) {
+        app.collectionDraft.id = saved.id;
+        $('saveCollection').textContent = 'Save changes';
+      }
+      const expected = [...new Set(body.slugs ?? body.addSlugs)];
+      const membersSaved = Array.isArray(saved?.slugs) && expected.every((slug) => saved.slugs.includes(slug)) && (body.slugs === undefined || saved.slugs.length === expected.length);
+      if (!membersSaved) throw new Error('The server did not confirm your collection items were saved. Your selections are still here. Restart GearBeacon after updating, then try saving again.');
+    }
     app.collections = result.collections;
     for (const product of app.products) product.collections = app.collections.filter((collection) => collection.slugs.includes(product.slug)).map((collection) => collection.id);
     renderCollections(); renderProducts(true);
@@ -1854,11 +1870,12 @@ async function commitCollection(method, id, body) {
 async function saveCollection() {
   const draft = app.collectionDraft;
   if (!draft) return;
+  const creating = !draft.id;
   const result = await commitCollection(draft.id ? 'PUT' : 'POST', draft.id, { name:$('collectionName').value, slugs:[...draft.slugs] });
   if (!result) return;
   if (app.collectionBulkSlugs) { app.selectedWatch.clear(); renderProducts(true); closeCollectionManager(); }
   else showCollectionOverview(draft.id || result.id);
-  toast(draft.id ? 'Collection updated.' : 'Collection created.', 'success');
+  toast(creating ? 'Collection created.' : 'Collection updated.', 'success');
 }
 
 async function addSelectedToCollection() {

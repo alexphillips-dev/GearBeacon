@@ -602,6 +602,37 @@ try {
   await waitForBrowser("app.collections.some((item) => item.name === 'Home network' && item.slugs.length === 1) && !app.collectionBusy", 'Creating a collection did not save its selected watch');
   const homeCollection = await evaluate("app.collections.find((item) => item.name === 'Home network').id");
   assert(await evaluate(`document.activeElement.dataset.editCollection === '${homeCollection}'`), 'Saving a new collection did not focus its Edit action');
+  // An older running backend ignores member edits while still returning HTTP 200.
+  await evaluate(`document.querySelector('[data-edit-collection="${homeCollection}"]').click(); document.querySelector('[data-collection-watch="${collectionTestSlugs[1]}"]').click()`);
+  await evaluate(`(() => {
+    window.collectionOriginalFetch=window.fetch; window.collectionMutationRequests=0;
+    window.fetch=(input,options={}) => {
+      const url=new URL(String(input),location.origin);
+      if (url.pathname.startsWith('/api/collections')) {
+        if ((options.method || 'GET') === 'GET') return Promise.resolve(new Response(JSON.stringify({collections:app.collections}),{status:200,headers:{'Content-Type':'application/json'}}));
+        window.collectionMutationRequests++;
+      }
+      return window.collectionOriginalFetch(input,options);
+    };
+    document.getElementById('collectionForm').requestSubmit();
+  })()`);
+  await waitForBrowser("!app.collectionBusy && document.getElementById('collectionResult').textContent.includes('updated and restarted')", 'An older backend did not show the restart guidance');
+  assert(await evaluate("window.collectionMutationRequests === 0 && app.collectionDraft.slugs.size === 2 && !document.getElementById('collectionForm').classList.contains('hidden') && !document.getElementById('saveCollection').disabled"), 'An unsupported server save changed data, dismissed the editor, or erased selected watches');
+  // Even a capable server must return the requested membership before success is shown.
+  await evaluate(`(() => {
+    window.fetch=(input,options={}) => {
+      if (new URL(String(input),location.origin).pathname.startsWith('/api/collections/') && options.method === 'PUT') return Promise.resolve(new Response(JSON.stringify({ok:true,collections:app.collections}),{status:200,headers:{'Content-Type':'application/json'}}));
+      return window.collectionOriginalFetch(input,options);
+    };
+    document.getElementById('collectionForm').requestSubmit();
+  })()`);
+  await waitForBrowser("!app.collectionBusy && document.getElementById('collectionResult').textContent.includes('did not confirm')", 'A response missing the selected watch was reported as a successful save');
+  assert(await evaluate("app.collectionDraft.slugs.size === 2 && !document.getElementById('collectionForm').classList.contains('hidden')"), 'An incomplete save response erased the collection draft');
+  await evaluate("window.fetch=window.collectionOriginalFetch; document.getElementById('collectionForm').requestSubmit()");
+  await waitForBrowser(`!app.collectionBusy && app.collections.find((item) => item.id === '${homeCollection}').slugs.length === 2 && !document.getElementById('collectionOverview').classList.contains('hidden')`, 'Retrying against a compatible server did not save the retained selections');
+  assert(await evaluate(`api('/api/collections').then(result => result.collections.find(item => item.id === '${homeCollection}').slugs.length === 2)`), 'Saved membership did not persist on the server');
+  await evaluate(`document.querySelector('[data-edit-collection="${homeCollection}"]').click(); document.querySelector('[data-collection-watch="${collectionTestSlugs[1]}"]').click(); document.getElementById('collectionForm').requestSubmit()`);
+  await waitForBrowser(`!app.collectionBusy && app.collections.find((item) => item.id === '${homeCollection}').slugs.length === 1`, 'Removing a selected watch did not save');
   await evaluate(`document.querySelector('[data-edit-collection="${homeCollection}"]').click(); document.getElementById('collectionName').value='Discarded name'; document.querySelector('[data-collection-watch="${collectionTestSlugs[1]}"]').click(); document.getElementById('cancelCollectionEdit').click()`);
   assert(await evaluate(`app.collections.find((item) => item.id === '${homeCollection}').name === 'Home network' && app.collections[0].slugs.length === 1`), 'Cancel saved collection edits');
   await evaluate("document.getElementById('newCollection').click(); document.getElementById('collectionName').value='Home network'; document.getElementById('collectionForm').requestSubmit()");

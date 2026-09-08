@@ -4974,7 +4974,7 @@ async function handleRegionApi(req, res, url) {
         return sendJson(res, 200, { products, count: products.length, collections: watchCollections() });
     }
     if (url.pathname === '/api/collections' && req.method === 'GET')
-        return sendJson(res, 200, { collections: watchCollections() });
+        return sendJson(res, 200, { collections: watchCollections(), capabilities: { memberEditing: true } });
     if (url.pathname === '/api/collections' && req.method === 'POST') {
         const body = await readJsonBody(req);
         let name, slugs;

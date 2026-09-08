@@ -118,6 +118,7 @@ try {
   await request(memberships, { collections:[a.id,'missing'] }, 'PUT', 400);
   assert.equal((await details()).product.collections.length, 2, 'Invalid assignment changed valid membership.');
   const managed = await request('/api/collections', { name:'Managed project', slugs:[black,parent,black] });
+  assert.equal((await request('/api/collections')).capabilities.memberEditing, true, 'The server must advertise support for saving collection membership.');
   const managedPath = `/api/collections/${managed.id}`;
   const managedState = async () => (await request('/api/collections')).collections.find((collection) => collection.id === managed.id);
   assert.deepEqual(new Set((await managedState()).slugs), new Set([black,parent]), 'Create did not assign exact watches or deduplicate them.');
