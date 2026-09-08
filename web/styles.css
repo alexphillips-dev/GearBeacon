@@ -249,6 +249,9 @@ button.ghost { background: transparent; }
 .collection-detail-price { display:flex; flex-direction:column; gap:5px; margin-bottom:20px; }
 .collection-detail-price .price { margin:0; }
 .collection-detail-price > span { font-size:12px; line-height:1.6; color:var(--muted); }
+.collection-alert-settings { border-bottom:1px solid var(--border); margin-bottom:20px; padding-bottom:12px; }
+.collection-alert-settings h3 { margin:0 0 12px; font-size:16px; }
+.collection-alert-settings p { color:var(--muted); }
 .readiness-alert { display:flex; align-items:start; gap:8px; margin:12px 0; font-size:12px; line-height:1.5; }
 .readiness-alert input { flex:none; margin-top:3px; }
 .readiness-alert .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }

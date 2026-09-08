@@ -1756,13 +1756,13 @@ function renderCollections(force = false) {
   if (!force && key === app.collectionsRenderKey) return;
   app.collectionsRenderKey = key;
   const focused = document.activeElement;
-  const focusId = focused?.dataset?.editCollection || focused?.dataset?.viewCollection;
-  const focusAction = focused?.hasAttribute('data-edit-collection') ? 'edit' : 'view';
+  const focusAction = ['data-edit-collection','data-view-collection','data-collection-detail'].find((attribute) => focused?.hasAttribute(attribute));
+  const focusId = focusAction && focused.getAttribute(focusAction);
   $('collectionTotal').textContent = `${app.collections.length} collection${app.collections.length === 1 ? '' : 's'}`;
   $('collectionEmpty').classList.toggle('hidden', app.collections.length > 0);
   $('newCollection').classList.toggle('hidden', app.collections.length === 0);
-  $('collectionList').innerHTML = app.collections.map((collection) => `<article class="collection-row" data-collection-row="${escapeHtml(collection.id)}"><div class="collection-row-copy"><h3>${escapeHtml(collection.name)}</h3><p>${collection.slugs.length} watch${collection.slugs.length === 1 ? '' : 'es'}</p></div><div class="collection-row-actions"><button type="button" data-view-collection="${escapeHtml(collection.id)}" aria-label="View watches in ${escapeHtml(collection.name)}">View watches</button><button type="button" data-edit-collection="${escapeHtml(collection.id)}" aria-label="Edit ${escapeHtml(collection.name)}">Edit</button></div></article>`).join('');
-  if (focusId && !focused.isConnected) ($('collectionList').querySelector(`[data-${focusAction}-collection="${CSS.escape(focusId)}"]`) || $('newCollection').offsetParent && $('newCollection') || $('firstCollection')).focus();
+  $('collectionList').innerHTML = app.collections.map((collection) => `<article class="collection-row" data-collection-row="${escapeHtml(collection.id)}"><div class="collection-row-copy"><h3>${escapeHtml(collection.name)}</h3><p>${collection.slugs.length} watch${collection.slugs.length === 1 ? '' : 'es'}</p></div><div class="collection-row-actions"><button type="button" data-view-collection="${escapeHtml(collection.id)}" aria-label="View watches in ${escapeHtml(collection.name)}">View watches</button><button type="button" data-collection-detail="${escapeHtml(collection.id)}" aria-label="Configure alerts for ${escapeHtml(collection.name)}">Alerts</button><button type="button" data-edit-collection="${escapeHtml(collection.id)}" aria-label="Edit ${escapeHtml(collection.name)}">Edit</button></div></article>`).join('');
+  if (focusId && !focused.isConnected) ($('collectionList').querySelector(`[${focusAction}="${CSS.escape(focusId)}"]`) || $('newCollection').offsetParent && $('newCollection') || $('firstCollection')).focus();
 }
 
 function collectionView(view) {
@@ -1948,7 +1948,7 @@ function collectionCard(collection) {
     <div class="detail readiness-status" role="status">${escapeHtml(collectionStatusText(collection))}</div>
     <div class="rule-chips"><span class="rule-chip">${escapeHtml(collectionPriceNote(collection))}</span></div>
     <div class="rule-chips"><span class="rule-chip">Ready alerts ${collection.notifyReady ? 'on' : 'off'}</span></div>
-    <div class="card-actions"><button type="button" data-view-collection="${escapeHtml(collection.id)}">View items</button><button type="button" data-collection-detail="${escapeHtml(collection.id)}">Details</button><button type="button" data-edit-collection="${escapeHtml(collection.id)}">Edit</button></div>
+    <div class="card-actions"><button type="button" data-view-collection="${escapeHtml(collection.id)}">View items</button><button type="button" data-collection-detail="${escapeHtml(collection.id)}" aria-label="Configure alerts for ${escapeHtml(collection.name)}">Alerts</button><button type="button" data-edit-collection="${escapeHtml(collection.id)}">Edit</button></div>
   </article>`;
 }
 
@@ -1976,9 +1976,15 @@ function renderCollectionDetails() {
   const focusAction = focused?.closest('#collectionDetails') && ['data-view-collection','data-edit-collection'].find((name) => focused.hasAttribute(name));
   const text = collectionStatusText(collection);
   $('collectionDialogTitle').textContent = collection.name;
-  $('collectionDialogDescription').textContent = `${collection.slugs.length} items · Collection details`;
+  $('collectionDialogDescription').textContent = `${collection.slugs.length} items · Collection alerts and details`;
   const items = result.items.map((item) => `<li><span>${escapeHtml(item.name)}</span><strong>${escapeHtml(humanStatus(item.state))}</strong><small>${escapeHtml(item.reason)}</small></li>`).join('');
-  $('collectionDetails').innerHTML = `<div class="collection-detail-price"><strong class="price">${escapeHtml(collectionPriceText(collection))}</strong><span>${escapeHtml(collectionPriceNote(collection))}. Includes purchased items; based on current catalog prices.</span></div><p class="readiness-status" role="status">${escapeHtml(text)}</p><progress max="${Math.max(1, result.remaining)}" value="${result.qualifying}" aria-label="${escapeHtml(collection.name)}: ${escapeHtml(text)}"></progress><p>${result.purchased} already purchased${result.unknown ? ` · ${result.unknown} awaiting confirmed observations` : ''}</p><label class="readiness-alert"><input type="checkbox" data-notify-collection="${escapeHtml(collection.id)}" ${collection.notifyReady ? 'checked' : ''}/> Notify when all remaining items qualify<span class="sr-only"> in ${escapeHtml(collection.name)}</span></label><details data-readiness-items="${escapeHtml(collection.id)}" ${expanded ? 'open' : ''}><summary>Items and conditions</summary><ul>${items || '<li>No items assigned.</li>'}</ul><p>Each remaining watch needs availability and its target price, if set. Individual watch pauses do not pause this separate collection alert. Enabling alerts starts from the current state; it does not send an immediate alert for an already ready collection.</p></details><div class="collection-form-actions"><button type="button" data-view-collection="${escapeHtml(collection.id)}">View items</button><button type="button" data-edit-collection="${escapeHtml(collection.id)}">Edit collection</button></div>`;
+  $('collectionDetails').innerHTML = `<section class="collection-alert-settings" aria-labelledby="collectionAlertHeading">
+    <h3 id="collectionAlertHeading">Collection alerts</h3>
+    <label class="readiness-alert"><input type="checkbox" data-notify-collection="${escapeHtml(collection.id)}" aria-describedby="collectionAlertConditions collectionAlertInteraction collectionAlertDelivery" ${collection.notifyReady ? 'checked' : ''}/> Notify when all remaining items qualify<span class="sr-only"> in ${escapeHtml(collection.name)}</span></label>
+    <p id="collectionAlertConditions">Receive one alert when every unpurchased item is in stock and meets its individual target price, if set.</p>
+    <p id="collectionAlertInteraction">Individual item alerts continue using their own rules. This collection alert does not override them, and pausing an item does not pause the collection alert.</p>
+    <p id="collectionAlertDelivery">Saves automatically. Uses the channels and delivery settings in Settings &gt; Notifications. If the collection already qualifies, enabling this waits until it stops qualifying and becomes ready again.</p>
+    </section><div class="collection-detail-price"><strong class="price">${escapeHtml(collectionPriceText(collection))}</strong><span>${escapeHtml(collectionPriceNote(collection))}. Includes purchased items; based on current catalog prices.</span></div><p class="readiness-status" role="status">${escapeHtml(text)}</p><progress max="${Math.max(1, result.remaining)}" value="${result.qualifying}" aria-label="${escapeHtml(collection.name)}: ${escapeHtml(text)}"></progress><p>${result.purchased} already purchased${result.unknown ? ` · ${result.unknown} awaiting confirmed observations` : ''}</p><details data-readiness-items="${escapeHtml(collection.id)}" ${expanded ? 'open' : ''}><summary>Items and conditions</summary><ul>${items || '<li>No items assigned.</li>'}</ul></details><div class="collection-form-actions"><button type="button" data-view-collection="${escapeHtml(collection.id)}">View items</button><button type="button" data-edit-collection="${escapeHtml(collection.id)}">Edit collection</button></div>`;
   if (focusAlert) $('collectionDetails').querySelector('[data-notify-collection]')?.focus();
   if (focusSummary) $('collectionDetails').querySelector('[data-readiness-items] > summary')?.focus();
   if (focusAction) $('collectionDetails').querySelector(`[${focusAction}]`)?.focus();

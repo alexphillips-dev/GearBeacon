@@ -534,8 +534,12 @@ try {
   await waitForBrowser("!app.products.find((item) => item.slug === 'uvc-g5-ptz::mock-black').watchRule.pausedUntil", 'Collection bulk resume failed');
   await evaluate("api('/api/check', { method:'POST',body:'{}' }).then(() => refresh())");
   assert(await evaluate("app.collections[0].readiness.waiting === 1 && document.querySelector('.readiness-status').textContent.includes('0 of 1')"), 'Collection did not show its confirmed blocking item');
-  await evaluate("document.querySelector('.collection-card .card-actions [data-collection-detail]').focus(); document.activeElement.click(); document.querySelector('[data-notify-collection]').click()");
+  assert(await evaluate("document.querySelector('.collection-card .card-actions [data-collection-detail]').textContent === 'Alerts'"), 'Collection cards did not provide a clearly labeled Alerts action');
+  await evaluate("window.collectionAlertWatchRules=JSON.stringify(app.products.filter(item=>item.watched).map(item=>[item.slug,item.watchRule])); document.querySelector('.collection-card .card-actions [data-collection-detail]').focus(); document.activeElement.click()");
+  assert(await evaluate("document.getElementById('collectionAlertHeading').textContent === 'Collection alerts' && document.querySelector('[data-notify-collection]').getAttribute('aria-describedby').includes('collectionAlertInteraction') && document.getElementById('collectionAlertInteraction').offsetHeight > 0 && document.getElementById('collectionAlertInteraction').textContent.includes('does not override') && document.getElementById('collectionAlertDelivery').textContent.includes('Saves automatically')"), 'Collection alerts did not visibly explain saving, delivery, or their interaction with item rules');
+  await evaluate("document.querySelector('[data-notify-collection]').click()");
   await waitForBrowser("app.collections[0].notifyReady && document.activeElement.matches('[data-notify-collection]')", 'Collection notification opt-in failed or lost focus');
+  assert(await evaluate("window.collectionAlertWatchRules === JSON.stringify(app.products.filter(item=>item.watched).map(item=>[item.slug,item.watchRule]))"), 'Enabling collection alerts changed individual item rules');
   await evaluate(`(async () => {
     await api('/api/mock/product/uvc-g5-ptz', { method:'POST', body:JSON.stringify({ variants:[
       { id:'mock-black',slug:'uvc-g5-ptz-black',sku:'MOCK-G5-PTZ-B',title:'Black',status:'Available',displayPrice:'$299.00' },
@@ -705,6 +709,13 @@ try {
   assert(await evaluate("document.activeElement.closest('[data-collection-card]')?.dataset.collectionCard === window.previewCollectionId"), 'Closing collection details lost card focus');
   await evaluate("renderCollectionReadiness(true)");
   assert(await evaluate("document.activeElement.matches('.collection-card .card-actions [data-collection-detail]')"), 'Refreshing collection cards changed the focused action');
+  await evaluate("document.getElementById('openCollectionManager').focus(); document.getElementById('openCollectionManager').click(); document.querySelector('[data-collection-row=\"'+window.previewCollectionId+'\"] [data-collection-detail]').focus(); renderCollections(true)");
+  assert(await evaluate("document.activeElement.textContent === 'Alerts' && document.activeElement.dataset.collectionDetail === window.previewCollectionId"), 'Manage collections did not expose Alerts or preserve its keyboard focus on refresh');
+  await assertAccessible('Collection manager with Alerts actions');
+  await evaluate("document.activeElement.click()");
+  assert(await evaluate("document.querySelector('[data-notify-collection]').dataset.notifyCollection === window.previewCollectionId && !document.getElementById('collectionDetails').classList.contains('hidden')"), 'Manage collections Alerts opened the wrong collection');
+  await evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
+  assert(await evaluate("document.activeElement.id === 'openCollectionManager' && !document.querySelector('main').inert"), 'Closing alerts from Manage collections did not restore page focus');
   await evaluate("document.querySelector('[data-collection-card=\"'+window.previewCollectionId+'\"] [data-edit-collection]').click()");
   assert(await evaluate("app.collectionDraft.id === window.previewCollectionId && !document.getElementById('collectionForm').classList.contains('hidden')"), 'Edit did not open the selected collection from its card');
   await evaluate("document.getElementById('closeCollectionManager').click(); document.querySelector('[data-collection-card=\"'+window.previewCollectionId+'\"] [data-view-collection]').click()");
