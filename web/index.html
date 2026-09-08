@@ -129,8 +129,10 @@
         <button id="selectVisibleWatches" type="button">Select visible watches</button>
       </div>
       <div id="bulkActions" class="bulk-actions hidden"><strong id="bulkCount">0 selected</strong><button id="bulkAddCollection" type="button">Add to collection</button><select id="bulkPauseDuration" aria-label="Bulk pause duration"><option value="60">Pause 1 hour</option><option value="1440">Pause 1 day</option><option value="10080">Pause 1 week</option><option value="0">Pause until resumed</option></select><button id="bulkPause">Pause</button><button id="bulkResume">Resume</button><button id="bulkRemove" class="danger-button">Remove</button><button id="bulkClear" class="ghost">Clear selection</button></div>
-      <div id="collectionReadiness" class="collection-readiness"></div>
-      <div id="watchGrid" class="grid watch-grid"></div>
+      <div id="watchlistCards" class="grid watch-grid">
+        <div id="collectionReadiness" class="collection-readiness"></div>
+        <div id="watchGrid" class="watch-items"></div>
+      </div>
       <div id="watchEmpty" class="empty hidden">
         <div class="empty-icon">⌁</div>
         <h3>No products watched yet</h3>
@@ -429,6 +431,7 @@
           <div class="collection-form-actions"><button id="cancelCollectionEdit" type="button">Cancel</button><button id="saveCollection" class="primary" type="submit">Create collection</button></div>
           <div id="collectionDeleteArea" class="collection-delete-area hidden"><button id="askDeleteCollection" class="danger-button" type="button">Delete collection</button></div>
         </form>
+        <div id="collectionDetails" class="hidden"></div>
         <div id="collectionDeleteConfirm" class="collection-delete-confirm hidden"><h3>Delete this collection?</h3><p id="collectionDeleteDescription"></p><div class="collection-form-actions"><button id="cancelDeleteCollection" type="button">Keep collection</button><button id="confirmDeleteCollection" class="danger-button" type="button">Delete collection</button></div></div>
         <p id="collectionResult" class="collection-result" role="status" aria-live="polite"></p>
       </div>

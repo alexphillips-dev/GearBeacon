@@ -267,6 +267,31 @@ try {
   assert.equal((await details(white)).product.status, 'Available');
   await request(`/api/watch/${encodeURIComponent(black)}`, undefined, 'DELETE');
   assert.equal((await request('/api/collections')).collections[0].slugs.length, 0, 'Removed watch left orphan membership.');
+  // Collection totals use all assigned watches, exact variants, and their store's currency.
+  for (const slug of [black,white]) await request('/api/watch', { slug });
+  const pricedProject = await request('/api/collections', { name:'Price summary',slugs:[black,white,black] });
+  const priced = () => request('/api/collections').then((result) => result.collections.find((item) => item.id === pricedProject.id).pricing);
+  const expectedTotal = Math.round((email.numericPrice((await details(black)).product.price) + email.numericPrice((await details(white)).product.price)) * 100) / 100;
+  assert.deepEqual(await priced(), { total:expectedTotal,currency:'USD',priced:2,missing:0,items:2 });
+  await request('/api/watch/bulk', { action:'purchased',slugs:[black] });
+  assert.equal((await priced()).total, expectedTotal, 'Marking an item purchased changed the full collection total.');
+  for (const slug of ['u7-pro-xgs','unas-pro']) await request('/api/watch?region=ca', { slug });
+  await request('/api/mock/product/u7-pro-xgs', { price:'1.234,56 $' });
+  await request('/api/mock/product/unas-pro', { price:'0,44 $' });
+  await request('/api/check?region=ca', {}); await request('/api/check?region=ca', {});
+  const canadian = await request('/api/collections?region=ca', { name:'Canadian prices',slugs:['u7-pro-xgs','unas-pro'] });
+  const canadianPrice = () => request('/api/collections?region=ca').then((result) => result.collections.find((item) => item.id === canadian.id).pricing);
+  assert.deepEqual(await canadianPrice(), { total:1235,currency:'CAD',priced:2,missing:0,items:2 }, 'Localized decimals or region currency were incorrect.');
+  assert.equal((await priced()).total, expectedTotal, 'Another store changed a collection total.');
+  await request('/api/mock/product/unas-pro', { price:'' });
+  await request('/api/check?region=ca', {}); await request('/api/check?region=ca', {});
+  assert.equal((await canadianPrice()).total, 1235, 'An incomplete price observation discarded the last known catalog price.');
+  const missingPriceSnapshot = await request('/api/data/export');
+  missingPriceSnapshot.regions.ca.products['unas-pro'].price = '';
+  await request('/api/data/import', { backup:missingPriceSnapshot });
+  assert.deepEqual(await canadianPrice(), { total:1234.56,currency:'CAD',priced:1,missing:1,items:2 }, 'An unavailable price was silently included as zero.');
+  await request(`/api/collections/${canadian.id}?region=ca`, { slugs:[] }, 'PUT');
+  assert.deepEqual(await canadianPrice(), { total:0,currency:'CAD',priced:0,missing:0,items:0 }, 'An empty collection did not have an empty total.');
   console.log('PRECISION TEST PASSED: exact variants, imports, combined rules, collection isolation/deduplication, purchased state, confirmation, restart, and encrypted recovery.');
 } catch (err) {
   console.error(output.slice(-5000));

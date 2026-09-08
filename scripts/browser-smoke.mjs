@@ -534,7 +534,7 @@ try {
   await waitForBrowser("!app.products.find((item) => item.slug === 'uvc-g5-ptz::mock-black').watchRule.pausedUntil", 'Collection bulk resume failed');
   await evaluate("api('/api/check', { method:'POST',body:'{}' }).then(() => refresh())");
   assert(await evaluate("app.collections[0].readiness.waiting === 1 && document.querySelector('.readiness-status').textContent.includes('0 of 1')"), 'Collection did not show its confirmed blocking item');
-  await evaluate("document.querySelector('[data-notify-collection]').click()");
+  await evaluate("document.querySelector('.collection-card .card-actions [data-collection-detail]').focus(); document.activeElement.click(); document.querySelector('[data-notify-collection]').click()");
   await waitForBrowser("app.collections[0].notifyReady && document.activeElement.matches('[data-notify-collection]')", 'Collection notification opt-in failed or lost focus');
   await evaluate(`(async () => {
     await api('/api/mock/product/uvc-g5-ptz', { method:'POST', body:JSON.stringify({ variants:[
@@ -547,6 +547,8 @@ try {
   await evaluate("document.querySelector('[data-readiness-items]').open=true; document.querySelector('[data-readiness-items] > summary').focus()");
   await evaluate("api('/api/check', { method:'POST',body:'{}' }).then(() => refresh())");
   assert(await evaluate("document.activeElement.matches('[data-readiness-items] > summary') && document.querySelector('[data-readiness-items]').open"), 'Refreshing readiness lost expanded details or keyboard focus');
+  await evaluate("document.getElementById('closeCollectionManager').click()");
+  assert(await evaluate("document.activeElement.matches('.collection-card .card-actions [data-collection-detail]')"), 'Collection details did not restore focus after the card refreshed');
   await evaluate("activateTab('activity'); document.getElementById('activityType').value='collection_ready'; refreshActivity(1)");
   await waitForBrowser("app.activity.events.some((event) => event.type === 'collection_ready')", 'Collection readiness is missing from Activity');
   assert(await evaluate("Math.round(document.querySelector('#activityList .event').getBoundingClientRect().height) === 64"), 'Collection readiness changed compact Activity row height');
@@ -661,6 +663,50 @@ try {
   await waitForBrowser("app.collections.length === 1 && !app.collectionBusy", 'Confirmed collection deletion failed');
   assert(await evaluate(`${JSON.stringify(collectionTestSlugs)}.every((slug) => app.products.some((product) => product.slug === slug && product.watched))`), 'Collection deletion removed watched products');
   await evaluate("document.getElementById('closeCollectionManager').click(); app.selectedWatch.clear(); renderProducts(true)");
+  // Collections share the product grid and keep large checklists out of the card.
+  await evaluate(`(async () => {
+    for (const product of app.products.filter((item) => !item.variantId)) await api('/api/watch',{method:'POST',body:JSON.stringify({slug:product.slug})});
+    await api('/api/collections',{method:'POST',body:JSON.stringify({name:'Preview project'})});
+    await refresh(); resetWatchFilters();
+    window.previewCollectionId=app.collections.find((item) => item.name === 'Preview project').id;
+    window.previewSlugs=app.products.filter((item) => item.watched && !item.variantId).slice(0,5).map((item) => item.slug);
+  })()`);
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width:1280,height:900,deviceScaleFactor:1,mobile:false });
+  for (const count of [0,1,2,3,4,5]) {
+    await evaluate(`api('/api/collections/'+window.previewCollectionId,{method:'PUT',body:JSON.stringify({slugs:window.previewSlugs.slice(0,${count})})}).then(() => refresh())`);
+    assert(await evaluate(`(() => { const card=document.querySelector('[data-collection-card="'+window.previewCollectionId+'"]'); return card.querySelectorAll('.collection-preview-tile').length === ${Math.min(count,4)} && (card.querySelector('.collection-preview-more')?.textContent || '') === '${count > 4 ? '+1 more' : ''}' && !card.querySelector('details,progress,[data-notify-collection]'); })()`), `Collection preview for ${count} items was incorrect or expanded the card`);
+  }
+  const cardDimensions = await evaluate(`(() => {
+    const card=document.querySelector('[data-collection-card="'+window.previewCollectionId+'"]');
+    const product=document.querySelector('#watchGrid .watch-card');
+    const a=card.getBoundingClientRect(),b=product.getBoundingClientRect();
+    return { width:a.width,productWidth:b.width,height:a.height,productHeight:b.height,image:card.querySelector('.watch-image').getBoundingClientRect().height,productImage:product.querySelector('.watch-image').getBoundingClientRect().height,priceOffset:card.querySelector('.price').getBoundingClientRect().top-a.top,productPriceOffset:product.querySelector('.price').getBoundingClientRect().top-b.top };
+  })()`);
+  assert(Math.abs(cardDimensions.width-cardDimensions.productWidth) < 1 && Math.abs(cardDimensions.height-cardDimensions.productHeight) < 1 && cardDimensions.image === cardDimensions.productImage && Math.abs(cardDimensions.priceOffset-cardDimensions.productPriceOffset) < 1, `Collection card does not match product card dimensions/price position: ${JSON.stringify(cardDimensions)}`);
+  assert(await evaluate("(() => { const collection=app.collections.find(item=>item.id===window.previewCollectionId); const card=document.querySelector('[data-collection-card=\"'+collection.id+'\"]'); return card.querySelector('.price').textContent === insightMoney(collection.pricing.total,'USD') && card.querySelector('.rule-chips').textContent.includes('Total for 5 items'); })()"), 'Collection total price was missing from the product price position');
+  // Missing prices must be disclosed, rather than implying that the subtotal is complete.
+  await evaluate("window.savedPreviewPricing={...app.collections.find(item=>item.id===window.previewCollectionId).pricing}; Object.assign(app.collections.find(item=>item.id===window.previewCollectionId).pricing,{total:123.45,priced:4,missing:1}); renderCollectionReadiness()");
+  assert(await evaluate("(() => { const card=document.querySelector('[data-collection-card=\"'+window.previewCollectionId+'\"]'); return card.querySelector('.price').textContent.endsWith('+') && card.textContent.includes('1 price unavailable'); })()"), 'A partial collection total was presented as complete');
+  await evaluate("app.collections.find(item=>item.id===window.previewCollectionId).pricing=window.savedPreviewPricing; renderCollectionReadiness()");
+  for (const theme of ['dark','light']) {
+    await evaluate(`applyTheme(${JSON.stringify(theme)})`); await delay(250);
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width:390,height:844,deviceScaleFactor:1,mobile:false });
+    assert(await evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1 && document.querySelector('.collection-card').getBoundingClientRect().width === document.querySelector('.watch-card').getBoundingClientRect().width"), 'Collection cards overflowed or changed width on mobile');
+    await assertAccessible(`Collection product cards ${theme}`);
+  }
+  await evaluate("document.querySelector('[data-collection-card=\"'+window.previewCollectionId+'\"] .card-actions [data-collection-detail]').focus(); document.activeElement.click()");
+  assert(await evaluate("!document.getElementById('collectionDetails').classList.contains('hidden') && document.getElementById('collectionDialogTitle').textContent === 'Preview project'"), 'Collection Details did not open from its card');
+  await assertAccessible('Collection details dialog');
+  await evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
+  assert(await evaluate("document.activeElement.closest('[data-collection-card]')?.dataset.collectionCard === window.previewCollectionId"), 'Closing collection details lost card focus');
+  await evaluate("renderCollectionReadiness(true)");
+  assert(await evaluate("document.activeElement.matches('.collection-card .card-actions [data-collection-detail]')"), 'Refreshing collection cards changed the focused action');
+  await evaluate("document.querySelector('[data-collection-card=\"'+window.previewCollectionId+'\"] [data-edit-collection]').click()");
+  assert(await evaluate("app.collectionDraft.id === window.previewCollectionId && !document.getElementById('collectionForm').classList.contains('hidden')"), 'Edit did not open the selected collection from its card');
+  await evaluate("document.getElementById('closeCollectionManager').click(); document.querySelector('[data-collection-card=\"'+window.previewCollectionId+'\"] [data-view-collection]').click()");
+  assert(await evaluate("document.getElementById('watchCollection').value === window.previewCollectionId && document.querySelectorAll('.collection-card').length === 1"), 'View items did not filter the selected collection');
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width:640,height:450,screenWidth:1280,screenHeight:900,deviceScaleFactor:2,mobile:false });
+  assert(await evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), 'Collection cards overflowed at 200% equivalent zoom');
   // Paginate more than 100 real API entries in the isolated browser fixture.
   await evaluate(`(async () => {
     const backup = await api('/api/data/export');

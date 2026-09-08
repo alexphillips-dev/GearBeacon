@@ -3079,7 +3079,11 @@ function watchCollections(region = currentRegion()) {
     return db.prepare('SELECT id,name,created_at AS createdAt,notify_ready AS notifyReady,ready_state AS readyState FROM watch_collections WHERE region=? ORDER BY name COLLATE NOCASE').all(region)
         .map((collection) => {
         const value = { ...collection, notifyReady: Boolean(collection.notifyReady), slugs: db.prepare('SELECT slug FROM watch_collection_members WHERE region=? AND collection_id=? ORDER BY slug').all(region, collection.id).map((row) => row.slug) };
-        return { ...value, readiness: collectionReadiness(value, region) };
+        const prices = value.slugs.map((slug) => priceValue(states[region]?.products[slug]?.price));
+        const known = prices.filter((price) => price !== null && price >= 0);
+        const cents = known.reduce((sum, price) => sum + Math.round(price * 100), 0);
+        const pricing = { total: cents / 100, currency: REGIONS[region].currency, priced: known.length, missing: prices.length - known.length, items: prices.length };
+        return { ...value, pricing, readiness: collectionReadiness(value, region) };
     });
 }
 function collectionName(value) {

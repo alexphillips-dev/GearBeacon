@@ -174,7 +174,7 @@ button.ghost { background: transparent; }
   border:1px solid var(--border); background:var(--panel); border-radius:14px; padding:16px;
   min-height:178px; display:flex; flex-direction:column; overflow:hidden;
 }
-.watch-card .watch-image { margin:-16px -16px 15px; border-radius:14px 14px 0 0; height:190px; }
+.watch-card .watch-image,.collection-card .watch-image { margin:-16px -16px 15px; border-radius:14px 14px 0 0; height:190px; flex-shrink:0; }
 .media-shell { position:relative; overflow:hidden; background:var(--image-bg); display:block; }
 .image-placeholder { position:absolute; inset:0; background:var(--image-bg); display:grid; place-items:center; color:var(--muted2); font-size:11px; }
 .image-placeholder.image-error::before { content:"◇"; display:block; margin-right:7px; font-size:18px; }
@@ -227,18 +227,31 @@ button.ghost { background: transparent; }
 .watch-collection-choices input { width:auto; }
 .rule-help { color:var(--muted); font-size:12px; line-height:1.6; }
 .collection-row,.collection-panel,.rule-chips,.settings-result { overflow-wrap:anywhere; }
-.collection-readiness { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr)); gap:14px; margin:16px 0; }
-.readiness-card { min-width:0; border:1px solid var(--border); border-radius:12px; background:var(--panel); padding:16px; overflow-wrap:anywhere; }
-.readiness-card h3 { margin:0 0 8px; }
-.readiness-card p,.readiness-card li { font-size:12px; line-height:1.6; }
-.readiness-card progress { width:100%; accent-color:var(--accent); }
+.collection-readiness,.watch-items { display:contents; }
+.collection-card { min-width:0; overflow-wrap:anywhere; }
+.collection-preview { position:relative; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); grid-template-rows:repeat(2,minmax(0,1fr)); gap:8px; padding:14px; background:var(--image-bg); }
+.collection-preview[data-preview-count="0"],.collection-preview[data-preview-count="1"] { grid-template-columns:1fr; grid-template-rows:1fr; }
+.collection-preview[data-preview-count="2"] { grid-template-rows:1fr; }
+.collection-preview-tile { min-width:0; min-height:0; border-radius:8px; }
+.collection-preview-tile .product-image { padding:4px; }
+.collection-preview[data-preview-count="1"] .product-image { padding:0; }
+.collection-preview-more { position:absolute; right:10px; bottom:10px; z-index:2; padding:5px 9px; border:1px solid var(--border); border-radius:99px; color:var(--text); background:var(--panel); font-size:11px; }
+.collection-preview-empty { align-self:center; color:var(--muted); font-size:13px; }
+.collection-image-missing { position:absolute; inset:0; display:grid; place-items:center; color:var(--muted); font-size:11px; }
+.collection-preview .image-placeholder { padding:4px; font-size:10px; }
+.collection-preview .image-placeholder::before { display:none; }
+#collectionDetails p,#collectionDetails li { font-size:12px; line-height:1.6; }
+#collectionDetails progress { width:100%; accent-color:var(--accent); }
+.collection-detail-price { display:flex; flex-direction:column; gap:5px; margin-bottom:20px; }
+.collection-detail-price .price { margin:0; }
+.collection-detail-price > span { font-size:12px; line-height:1.6; color:var(--muted); }
 .readiness-alert { display:flex; align-items:start; gap:8px; margin:12px 0; font-size:12px; line-height:1.5; }
 .readiness-alert input { flex:none; margin-top:3px; }
 .readiness-alert .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
-.readiness-card summary,.insight-observations summary { cursor:pointer; font-size:12px; }
-.readiness-card ul { list-style:none; padding:0; }
-.readiness-card li { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:4px 10px; border-top:1px solid var(--border); padding:8px 0; }
-.readiness-card li small { grid-column:1 / -1; color:var(--muted); }
+#collectionDetails summary,.insight-observations summary { cursor:pointer; font-size:12px; }
+#collectionDetails ul { list-style:none; padding:0; }
+#collectionDetails li { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:4px 10px; border-top:1px solid var(--border); padding:8px 0; }
+#collectionDetails li small { grid-column:1 / -1; color:var(--muted); }
 .insight-heading { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; }
 .insight-heading select { min-width:100px; }
 .insight-summary { font-weight:600; font-size:13px; }
