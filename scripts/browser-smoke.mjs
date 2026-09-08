@@ -571,10 +571,10 @@ try {
   await waitForBrowser(`app.products.some((item) => item.slug === 'uvc-g5-ptz::mock-black') && document.getElementById('watchCollection').value === ${JSON.stringify(selectedCollection)}`, 'Collection filter did not survive reload');
   await cdp.send('Page.navigate', { url:`${baseUrl}/?region=us&collection=${encodeURIComponent(selectedCollection)}#watchlist` });
   await waitForBrowser(`app.activeTab === 'watchlist' && document.getElementById('watchCollection').value === ${JSON.stringify(selectedCollection)} && app.pendingCollectionId === null`, 'Collection notification deep link did not open its Watchlist collection');
-  await evaluate("document.getElementById('openCollectionManager').click(); document.querySelector('[data-edit-collection]').click(); document.getElementById('askDeleteCollection').click(); document.getElementById('confirmDeleteCollection').click()");
-  await waitForBrowser("app.collections.length === 0", 'Collection deletion failed');
+  await evaluate("document.getElementById('openCollectionManager').focus(); document.getElementById('openCollectionManager').click(); document.querySelector('[data-edit-collection]').click(); document.getElementById('askDeleteCollection').click(); document.getElementById('confirmDeleteCollection').click()");
+  await waitForBrowser("app.collections.length === 0 && !app.collectionBusy", 'Collection deletion failed');
   assert(await evaluate("app.products.some((item) => item.slug === 'uvc-g5-ptz::mock-black' && item.watched)"), 'Collection deletion removed its watch');
-  await evaluate("document.getElementById('closeCollectionManager').click()");
+  assert(await evaluate("document.getElementById('collectionDialog').classList.contains('hidden') && !document.querySelector('main').inert && !document.getElementById('toTop').inert && !document.body.classList.contains('dialog-open') && document.activeElement.id === 'openCollectionManager'"), 'Deleting the last collection reopened its empty manager or failed to restore page focus');
 
   // Collection management keeps name/membership edits together and preserves drafts until saved.
   const collectionTestSlugs = await evaluate("app.products.filter((product) => product.watched).slice(0,2).map((product) => product.slug)");
@@ -654,7 +654,7 @@ try {
   assert(await evaluate("document.getElementById('collectionDialog').classList.contains('hidden') && app.selectedWatch.size === 2"), 'Escape saved bulk collection changes or lost the watch selection');
   await evaluate(`document.getElementById('openCollectionManager').click(); document.querySelector('[data-edit-collection="${cameraCollection}"]').click(); document.getElementById('collectionName').value='Camera upgrade edited'; document.querySelector('[data-collection-watch="${collectionTestSlugs[1]}"]').click(); document.getElementById('collectionForm').requestSubmit()`);
   await waitForBrowser(`app.collections.find((item) => item.id === '${cameraCollection}').name === 'Camera upgrade edited' && app.collections.find((item) => item.id === '${cameraCollection}').slugs.length === 1`, 'Editing membership and name together failed');
-  await evaluate(`document.querySelector('[data-edit-collection="${cameraCollection}"]').click(); document.getElementById('askDeleteCollection').click()`);
+  await evaluate(`document.getElementById('closeCollectionManager').click(); const edit=document.querySelector('[data-collection-card="${cameraCollection}"] [data-edit-collection]'); edit.focus(); edit.click(); document.getElementById('askDeleteCollection').click()`);
   assert(await evaluate("document.activeElement.id === 'cancelDeleteCollection' && document.getElementById('collectionDeleteDescription').textContent.includes('watches, alert rules, and history will be kept')"), 'Delete confirmation did not explain retained watches or focus the safe action');
   await assertAccessible('Collection deletion confirmation');
   await evaluate("document.getElementById('cancelDeleteCollection').click()");
@@ -662,7 +662,8 @@ try {
   await evaluate("document.getElementById('askDeleteCollection').click(); document.getElementById('confirmDeleteCollection').click()");
   await waitForBrowser("app.collections.length === 1 && !app.collectionBusy", 'Confirmed collection deletion failed');
   assert(await evaluate(`${JSON.stringify(collectionTestSlugs)}.every((slug) => app.products.some((product) => product.slug === slug && product.watched))`), 'Collection deletion removed watched products');
-  await evaluate("document.getElementById('closeCollectionManager').click(); app.selectedWatch.clear(); renderProducts(true)");
+  assert(await evaluate(`document.getElementById('collectionDialog').classList.contains('hidden') && !document.querySelector('main').inert && document.activeElement.id === 'openCollectionManager' && !document.querySelector('[data-collection-card="${cameraCollection}"]')`), 'Deleting from a collection card reopened the manager or left focus on the removed card');
+  await evaluate("app.selectedWatch.clear(); renderProducts(true)");
   // Collections share the product grid and keep large checklists out of the card.
   await evaluate(`(async () => {
     for (const product of app.products.filter((item) => !item.variantId)) await api('/api/watch',{method:'POST',body:JSON.stringify({slug:product.slug})});

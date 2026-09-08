@@ -1911,7 +1911,7 @@ function confirmCollectionDeletion() {
 async function deleteCollection() {
   const result = await commitCollection('DELETE', app.collectionDraft?.id);
   if (!result) return;
-  showCollectionOverview();
+  closeCollectionManager();
   toast('Collection deleted. Watches retained.', 'success');
 }
 
