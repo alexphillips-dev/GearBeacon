@@ -97,6 +97,13 @@ async function waitForBrowser(expression, message, attempts = 200) {
   await waitFor(async () => Boolean(await evaluate(`Boolean(${expression})`)), message, attempts, 100);
 }
 
+async function reloadBrowserPage() {
+  const previousDocument = await evaluate('performance.timeOrigin');
+  await cdp.send('Page.reload');
+  // Reload is asynchronous: the old document can still satisfy a saved-state check.
+  await waitForBrowser(`performance.timeOrigin !== ${previousDocument} && typeof app !== 'undefined'`, 'Browser reload did not initialize a new document');
+}
+
 async function assertAccessible(label) {
   if (!await evaluate("Boolean(globalThis.axe?.run)")) {
     const injected = await cdp.send('Runtime.evaluate', { expression:axeSource });
@@ -545,7 +552,8 @@ try {
   await evaluate("document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabSecurity').click()");
   await waitForBrowser("document.querySelectorAll('#sessionList [data-revoke-session]').length >= 1", 'Authenticated session management did not render');
 
-  await evaluate("history.replaceState(null, '', location.pathname + '#settings'); location.reload()");
+  await evaluate("history.replaceState(null, '', location.pathname + '#settings')");
+  await reloadBrowserPage();
   await waitForBrowser("!document.getElementById('appShell').classList.contains('hidden') && document.getElementById('settings').classList.contains('active') && !document.getElementById('settingsPanelSecurity').hidden", 'Selected tab and Settings subsection did not survive refresh');
   await evaluate(`(() => {
     document.querySelector('[data-tab="browse"]').click();
@@ -555,7 +563,7 @@ try {
     const sort=document.getElementById('browseSort'); sort.value='price-high'; sort.dispatchEvent(new Event('change',{bubbles:true}));
   })()`);
   await waitForBrowser("app.browseCategory === 'WiFi' && document.getElementById('search').value === 'U7' && JSON.parse(localStorage.getItem('gearbeacon.uiState.v1')).browse.search === 'U7' && document.querySelectorAll('#browseGrid .store-card').length === 1", 'Browse state was not ready to persist');
-  await evaluate("location.reload()");
+  await reloadBrowserPage();
   await waitForBrowser("!document.getElementById('appShell').classList.contains('hidden') && app.products.length >= 5", 'Dashboard did not reload for filter persistence');
   const restoredBrowse = await evaluate("({ active:document.getElementById('browse').classList.contains('active'), category:app.browseCategory, search:document.getElementById('search').value, cards:document.querySelectorAll('#browseGrid .store-card').length, stored:JSON.parse(localStorage.getItem('gearbeacon.uiState.v1')) })");
   assert(restoredBrowse.active && restoredBrowse.category === 'WiFi' && restoredBrowse.search === 'U7' && restoredBrowse.cards === 1, `Browse filters and active tab did not survive refresh: ${JSON.stringify(restoredBrowse)}`);
@@ -656,7 +664,7 @@ try {
   await assertAccessible('Mobile collections and precision watchlist');
   await evaluate("document.getElementById('closeCollectionManager').click()");
   const selectedCollection = await evaluate("document.getElementById('watchCollection').value");
-  await cdp.send('Page.reload');
+  await reloadBrowserPage();
   await waitForBrowser(`app.products.some((item) => item.slug === 'uvc-g5-ptz::mock-black') && document.getElementById('watchCollection').value === ${JSON.stringify(selectedCollection)}`, 'Collection filter did not survive reload');
   await cdp.send('Page.navigate', { url:`${baseUrl}/?region=us&collection=${encodeURIComponent(selectedCollection)}#watchlist` });
   await waitForBrowser(`app.activeTab === 'watchlist' && document.getElementById('watchCollection').value === ${JSON.stringify(selectedCollection)} && app.pendingCollectionId === null`, 'Collection notification deep link did not open its Watchlist collection');
@@ -842,7 +850,7 @@ try {
   assert(await evaluate("window.groupingWatchSnapshot === JSON.stringify(app.products.filter(item=>item.watched).map(({slug,watchRule,collections})=>({slug,watchRule,collections}))) && Number(document.getElementById('watchCount').textContent) === app.products.filter(item=>item.watched).length"), 'Grouping changed watch data or the total monitored count');
   await evaluate("document.getElementById('selectVisibleWatches').click()");
   assert(await evaluate("[...app.selectedWatch].every(slug=>!app.products.find(item=>item.slug===slug).collections.length)"), 'Select visible watches included hidden collection members');
-  await cdp.send('Page.reload');
+  await reloadBrowserPage();
   await waitForBrowser("app.collections.length > 0 && document.getElementById('groupCollectedWatches').checked && document.getElementById('watchCollection').value === 'all'", 'The grouping preference did not survive reload');
   assert(await evaluate("document.querySelectorAll('#watchGrid .watch-card').length === app.products.filter(item=>item.watched && !item.collections.length).length"), 'Reload displayed duplicate collection members');
   await evaluate(`document.querySelector('[data-collection-card="${groupedCollectionId}"] [data-view-collection]').click()`);
@@ -947,7 +955,7 @@ try {
   assert(await evaluate(`app.collections.find(item=>item.id==='${workflowCollection}').items[0].paidTotal===300`), 'Repeated Add erased the purchase record');
   await evaluate("activateTab('watchlist'); document.getElementById('groupCollectedWatches').checked=true; document.querySelector('[data-watch-overview=\"target\"]').click()");
   assert(await evaluate("app.watchQuickFilter==='target' && document.querySelector('[data-watch-overview=\"target\"]').getAttribute('aria-pressed')==='true' && document.querySelectorAll('#watchGrid .watch-card').length===app.watchOverview.targetMet.length && document.querySelectorAll('#collectionReadiness .collection-card').length===0"), 'Overview count did not open exactly its matching items through grouped mode');
-  await cdp.send('Page.reload');
+  await reloadBrowserPage();
   await waitForBrowser("app.watchQuickFilter==='target' && app.watchOverview && document.querySelectorAll('#watchGrid .watch-card').length===app.watchOverview.targetMet.length", 'Overview filter did not survive reload');
   await evaluate("document.querySelector('[data-watch-overview=\"collections\"]').click()");
   assert(await evaluate("document.querySelectorAll('#collectionReadiness .collection-card').length===app.watchOverview.collectionsReady.length && document.querySelectorAll('#watchGrid .watch-card').length===0"), 'Collections-ready overview included individual cards or waiting collections');
@@ -996,7 +1004,7 @@ try {
   assert(await evaluate("document.getElementById('activityNext').disabled && !document.getElementById('activityPrevious').disabled"), 'Activity did not stop at its last page');
   await evaluate("document.getElementById('activityPrevious').click()");
   await waitForBrowser("app.activity.page === 1 && document.querySelectorAll('#activityList .event').length === 100", 'Previous did not restore the first Activity page');
-  await cdp.send('Page.reload');
+  await reloadBrowserPage();
   await waitForBrowser("app.activity.loaded && app.activity.limit === 100 && document.getElementById('activityPageSize').value === '100'", 'Activity page size did not survive reload');
   await evaluate("document.getElementById('activityNext').click()");
   await waitForBrowser("app.activity.page === 2 && app.activity.events.length === 15", 'Saved Activity page size was not used for navigation');
