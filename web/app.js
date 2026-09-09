@@ -349,7 +349,12 @@ function watchPaused(p) {
   const until = p.watchRule?.pausedUntil;
   return p.watchRule?.enabled === false || until === 'indefinite' || Boolean(until && new Date(until).getTime() > Date.now());
 }
+function collectionAlertSources(p, collections = app.collections) {
+  return collections.filter((collection) => collection.notifyReady && collection.alertsOnly && collection.slugs.includes(p.slug));
+}
 function ruleSummary(p) {
+  const sources = collectionAlertSources(p);
+  if (sources.length) return `<span class="rule-chip" title="${escapeHtml(sources.map(item=>item.name).join(', '))}">Collection alerts only: ${escapeHtml(sources.map(item=>item.name).join(', '))}</span>`;
   if (p.watchRule?.purchasedAt) return '<span class="rule-chip">Purchased · alerts stopped</span>';
   if (watchPaused(p)) return '<span class="rule-chip paused">Alerts paused</span>';
   const rule = p.watchRule || {};
@@ -526,7 +531,7 @@ function renderProducts(force = false) {
   const watched = filteredWatchlist();
   $('watchCount').textContent = allWatched.length;
   if ($('settingsWatchCount')) $('settingsWatchCount').textContent = `${allWatched.length} product${allWatched.length === 1 ? '' : 's'}`;
-  const watchKey = JSON.stringify([watched.map((p) => [p.slug,p.status,p.price,p.lastChangedAt,p.watchRule,p.collections]), app.collections.map(({ id,name }) => [id,name]), [...app.selectedWatch]]);
+  const watchKey = JSON.stringify([watched.map((p) => [p.slug,p.status,p.price,p.lastChangedAt,p.watchRule,p.collections]), app.collections.map(({ id,name,notifyReady,alertsOnly }) => [id,name,notifyReady,alertsOnly]), [...app.selectedWatch]]);
   if (force || watchKey !== app.watchRenderKey) {
     $('watchGrid').innerHTML = watched.map(watchCard).join('');
     app.watchRenderKey = watchKey;
@@ -760,6 +765,7 @@ function renderProductDialog(details) {
     <div class="inline-checks"><label><input name="availableUnderTarget" type="checkbox" ${rule.availableUnderTarget ? 'checked' : ''} /> Alert when available at or below the target price</label></div>
     <p class="rule-help">This condition alerts on a qualifying restock or a confirmed price reaching the target while available. It replaces the separate restock and price-change choices. Prices use this Store region's currency and exclude checkout costs.</p>
     ${collectionFields}
+    ${collectionAlertSources(p, details.collections).length ? `<p class="rule-help">Individual alerts are suppressed by: ${escapeHtml(collectionAlertSources(p, details.collections).map(item=>item.name).join(", "))}. They use Collection alerts only. Your item rules stay saved and resume when no collection suppresses them.</p>` : ""}
     <div class="settings-actions wrap"><button class="primary" type="submit">Save alert rules</button><button type="button" data-preview-rule>Preview rule & notification</button><button type="button" data-purchased="${escapeHtml(p.slug)}">${rule.purchasedAt ? 'Still wanted' : 'Mark purchased'}</button><button type="button" data-watch="${escapeHtml(p.slug)}">Remove from watchlist</button></div>
     ${rule.purchasedAt ? '<p class="rule-help">Purchased: alerts are stopped. Mark this watch as still wanted to enable it again.</p>' : ''}
     <div class="settings-result hidden" data-rule-result role="status" aria-live="polite"></div>
@@ -1768,7 +1774,7 @@ function renderCollections(force = false) {
 function collectionView(view) {
   if (view !== 'details') app.collectionDetailId = null;
   if (view !== 'alerts') app.collectionAlertId = null;
-  for (const [id, name] of [['collectionOverview','list'],['collectionBulk','bulk'],['collectionForm','edit'],['collectionDetails','details'],['collectionAlerts','alerts'],['collectionDeleteConfirm','delete']]) $(id).classList.toggle('hidden', name !== view);
+  for (const [id, name] of [['collectionOverview','list'],['collectionBulk','bulk'],['collectionForm','edit'],['collectionDetails','details'],['collectionItemForm','item'],['collectionAlerts','alerts'],['collectionDeleteConfirm','delete']]) $(id).classList.toggle('hidden', name !== view);
   $('collectionResult').textContent = '';
   $('collectionResult').classList.remove('error');
 }
@@ -1798,12 +1804,15 @@ function closeCollectionManager() {
   app.collectionDetailId = null;
   app.collectionAlertId = null;
   app.collectionAlertReturn = null;
+  app.collectionItemDraft = null;
   const original = app.collectionLastFocus;
   const replacement = app.collectionLastCardSelector && document.querySelector(app.collectionLastCardSelector);
   (original?.isConnected && original.offsetParent !== null ? original : replacement || $('openCollectionManager')).focus();
 }
 
 function dismissCollectionManager() {
+  if (app.collectionBusy) return;
+  if (!$('collectionItemForm').classList.contains('hidden')) { closeCollectionItem(); return; }
   if (!$('collectionAlerts').classList.contains('hidden') && app.collectionAlertReturn?.view) returnFromCollectionAlerts();
   else closeCollectionManager();
 }
@@ -1831,6 +1840,7 @@ function editCollection(id = null) {
   $('collectionDialogTitle').textContent = id ? 'Edit collection' : 'New collection';
   $('collectionDialogDescription').textContent = 'Keep the gear for your next project together.';
   $('collectionName').value = collection?.name || '';
+  $('collectionBudget').value = collection?.budget ?? '';
   $('collectionWatchSearch').value = '';
   $('saveCollection').textContent = id ? 'Save changes' : 'Create collection';
   $('collectionDeleteArea').classList.toggle('hidden', !id);
@@ -1859,8 +1869,9 @@ async function commitCollection(method, id, body) {
   controls.forEach(([control]) => { control.disabled = true; });
   try {
     const editsMembers = body?.slugs !== undefined || body?.addSlugs !== undefined;
-    if (editsMembers) {
+    if (editsMembers || body?.budget !== undefined) {
       const server = await api('/api/collections');
+      if (body?.budget !== undefined && server.capabilities?.purchasePlanning !== true) throw new Error('The running server needs to be updated and restarted before it can save purchase plans. Your edits are still here.');
       if (server.capabilities?.memberEditing !== true) throw new Error('The running server needs to be updated and restarted before it can save collection items. Your selections are still here. Restart GearBeacon, then try saving again.');
     }
     const result = await api(id ? `/api/collections/${encodeURIComponent(id)}` : '/api/collections', { method, ...(body ? { body:JSON.stringify(body) } : {}) });
@@ -1875,6 +1886,7 @@ async function commitCollection(method, id, body) {
       const membersSaved = Array.isArray(saved?.slugs) && expected.every((slug) => saved.slugs.includes(slug)) && (body.slugs === undefined || saved.slugs.length === expected.length);
       if (!membersSaved) throw new Error('The server did not confirm your collection items were saved. Your selections are still here. Restart GearBeacon after updating, then try saving again.');
     }
+    if (body?.budget !== undefined && result.collections?.find(item=>item.id===(id || result.id))?.budget !== body.budget) throw new Error('The server did not confirm your budget was saved. Restart GearBeacon after updating and try again.');
     app.collections = result.collections;
     for (const product of app.products) product.collections = app.collections.filter((collection) => collection.slugs.includes(product.slug)).map((collection) => collection.id);
     renderCollections(); renderProducts(true);
@@ -1893,7 +1905,7 @@ async function saveCollection() {
   const draft = app.collectionDraft;
   if (!draft) return;
   const creating = !draft.id;
-  const result = await commitCollection(draft.id ? 'PUT' : 'POST', draft.id, { name:$('collectionName').value, slugs:[...draft.slugs] });
+  const result = await commitCollection(draft.id ? 'PUT' : 'POST', draft.id, { name:$('collectionName').value, budget:$('collectionBudget').value === '' ? null : Number($('collectionBudget').value), slugs:[...draft.slugs] });
   if (!result) return;
   if (app.collectionBulkSlugs) { app.selectedWatch.clear(); renderProducts(true); closeCollectionManager(); }
   else showCollectionOverview(draft.id || result.id);
@@ -1926,14 +1938,21 @@ async function deleteCollection() {
 
 function collectionPriceText(collection) {
   const price = collection.pricing;
-  if (!price || (price.items > 0 && price.priced === 0)) return 'Price unavailable';
+  if (!price || (price.items > 0 && price.priced === 0 && price.total === 0)) return 'Price unavailable';
   return `${insightMoney(price.total, price.currency)}${price.missing ? '+' : ''}`;
 }
 
 function collectionPriceNote(collection) {
   const price = collection.pricing;
   if (!price) return 'Total price unavailable';
-  return price.missing ? `Subtotal · ${price.missing} price${price.missing === 1 ? '' : 's'} unavailable` : `Total for ${price.items} item${price.items === 1 ? '' : 's'}`;
+  return price.missing ? `Subtotal · ${price.missing} item${price.missing === 1 ? '' : 's'} with unknown costs` : `Total for ${collection.planning?.quantity ?? price.items} units`;
+}
+
+function collectionBudgetText(collection) {
+  if (collection.budget === null || collection.budget === undefined) return 'No budget set';
+  const delta = collection.planning?.budgetDifference;
+  if (delta === null || delta === undefined) return `Budget ${insightMoney(collection.budget, collection.pricing.currency)} · costs incomplete`;
+  return delta === 0 ? 'On budget' : `${insightMoney(Math.abs(delta), collection.pricing.currency)} ${delta < 0 ? 'over' : 'under'} budget`;
 }
 
 function collectionStatusText(collection) {
@@ -1952,11 +1971,11 @@ function collectionCard(collection) {
     <button class="watch-image collection-preview" data-preview-count="${previews.length}" type="button" data-collection-detail="${escapeHtml(collection.id)}" aria-label="View ${escapeHtml(collection.name)} collection details">${preview || '<span class="collection-preview-empty">Add gear to your collection</span>'}${members.length > 4 ? `<span class="collection-preview-more">+${members.length - 4} more</span>` : ''}</button>
     <div class="card-top"><span class="badge ${badgeClass}">${badge}</span><span class="meta">Collection</span></div>
     <button class="product-name-button" type="button" data-collection-detail="${escapeHtml(collection.id)}"><h3>${escapeHtml(collection.name)}</h3></button>
-    <div class="meta">${members.length} item${members.length === 1 ? '' : 's'} · ${result.purchased} purchased</div>
+    <div class="meta">${collection.planning?.purchasedQuantity ?? result.purchased} of ${collection.planning?.quantity ?? members.length} units purchased</div>
     <div class="price" title="${escapeHtml(collectionPriceNote(collection))}">${escapeHtml(collectionPriceText(collection))}</div>
     <div class="detail readiness-status" role="status">${escapeHtml(collectionStatusText(collection))}</div>
     <div class="rule-chips"><span class="rule-chip">${escapeHtml(collectionPriceNote(collection))}</span></div>
-    <div class="rule-chips"><span class="rule-chip">Ready alerts ${collection.notifyReady ? 'on' : 'off'}</span></div>
+    <div class="rule-chips"><span class="rule-chip">${collection.notifyReady && collection.alertsOnly ? 'Collection alerts only' : `Ready alerts ${collection.notifyReady ? 'on' : 'off'}`}</span>${collection.budget !== null && collection.budget !== undefined ? `<span class="rule-chip">${escapeHtml(collectionBudgetText(collection))}</span>` : ''}</div>
     <div class="card-actions"><button type="button" data-view-collection="${escapeHtml(collection.id)}">View items</button><button type="button" data-collection-alerts="${escapeHtml(collection.id)}" aria-label="Configure alerts for ${escapeHtml(collection.name)}">Alerts</button><button type="button" data-edit-collection="${escapeHtml(collection.id)}">Edit</button></div>
   </article>`;
 }
@@ -1976,11 +1995,11 @@ function renderCollectionDetails() {
   if (!collection || $('collectionDetails').classList.contains('hidden') || $('collectionDialog').classList.contains('hidden')) return;
   const result = collection.readiness;
   const members = result.items.map((item) => ({ item, product:app.products.find((product) => product.slug === item.slug) || { slug:item.slug, name:item.name } }));
-  const key = JSON.stringify({ ...collection, readiness:{ ...result, checkedAt:null }, products:members.map(({ product }) => [product.name,product.sku,product.variantTitle,product.price,product.imageUrl]) });
+  const key = JSON.stringify({ ...collection, readiness:{ ...result, checkedAt:null }, products:members.map(({ product }) => [product.name,product.sku,product.variantTitle,product.price,product.imageUrl,product.watchRule?.targetPrice,collectionAlertSources(product).map(value=>[value.id,value.name])]) });
   if (key === app.collectionDetailsKey) return;
   app.collectionDetailsKey = key;
   const focused = document.activeElement;
-  const focusAction = focused?.closest('#collectionDetails') && ['data-view-collection','data-edit-collection','data-collection-alerts','data-collection-image'].find((name) => focused.hasAttribute(name));
+  const focusAction = focused?.closest('#collectionDetails') && ['data-view-collection','data-edit-collection','data-collection-alerts','data-collection-image','data-collection-item-edit','data-collection-item-purchase','data-collection-item-remove'].find((name) => focused.hasAttribute(name));
   const focusValue = focusAction && focused.getAttribute(focusAction);
   const text = collectionStatusText(collection);
   $('collectionDialogTitle').textContent = collection.name;
@@ -1989,12 +2008,92 @@ function renderCollectionDetails() {
     <button class="collection-watch-image media-shell" type="button" data-collection-image="${escapeHtml(product.slug)}" aria-label="Retry image for ${escapeHtml(product.name)}">${imageMarkup(product)}</button>
     <div class="collection-watch-copy"><strong>${escapeHtml(product.name)}</strong><small>${escapeHtml([product.variantTitle || (product.variantId ? '' : 'Any variant'),product.sku,product.price || 'Price unavailable'].filter(Boolean).join(' · '))}</small><small>${escapeHtml(item.reason)}</small></div>
     <span class="collection-member-status">${escapeHtml(humanStatus(item.state))}</span>
+    <div class="collection-member-plan"><span>${item.purchasedQuantity ?? 0} of ${item.quantity ?? 1} purchased</span><span>Target: ${item.targetPrice === null ? 'None' : escapeHtml(insightMoney(item.targetPrice, collection.pricing.currency))}</span><span>${collectionAlertSources(product).length ? `Item alerts suppressed by: ${escapeHtml(collectionAlertSources(product).map(value=>value.name).join(', '))}` : 'Individual alerts use saved watch rules'}</span></div>
+    <div class="collection-member-actions"><button type="button" data-collection-item-edit="${escapeHtml(item.slug)}">Edit item</button><button type="button" data-collection-item-purchase="${escapeHtml(item.slug)}">Record purchase</button>${product.url ? `<a class="button-link" href="${escapeHtml(product.url)}" target="_blank" rel="noopener">Store ↗</a>` : ''}<button type="button" data-collection-item-remove="${escapeHtml(item.slug)}">Remove</button></div>
   </li>`).join('');
-  $('collectionDetails').innerHTML = `<div class="collection-detail-price"><strong class="price">${escapeHtml(collectionPriceText(collection))}</strong><span>${escapeHtml(collectionPriceNote(collection))}. Includes purchased items; based on current catalog prices.</span></div><p class="readiness-status" role="status">${escapeHtml(text)}</p><progress max="${Math.max(1, result.remaining)}" value="${result.qualifying}" aria-label="${escapeHtml(collection.name)}: ${escapeHtml(text)}"></progress><p>${result.purchased} already purchased${result.unknown ? ` · ${result.unknown} awaiting confirmed observations` : ''}</p>
+  $('collectionDetails').innerHTML = `<div class="collection-detail-price"><strong class="price">${escapeHtml(collectionPriceText(collection))}</strong><span>${escapeHtml(collectionPriceNote(collection))}. Recorded spending plus the current cost of remaining units.</span></div>
+    ${collection.planning ? `<dl class="collection-plan-summary"><div><dt>Spent</dt><dd>${escapeHtml(insightMoney(collection.planning.spent,collection.pricing.currency))}${collection.planning.missingPaid ? ' + unknown payments' : ''}</dd></div><div><dt>Remaining cost</dt><dd>${escapeHtml(insightMoney(collection.planning.remainingCost,collection.pricing.currency))}${collection.planning.missingPrices ? ' + unavailable prices' : ''}</dd></div><div><dt>Budget</dt><dd>${collection.budget === null ? 'Not set' : escapeHtml(insightMoney(collection.budget,collection.pricing.currency))}</dd></div><div><dt>Budget status</dt><dd>${escapeHtml(collectionBudgetText(collection))}</dd></div></dl><p>${collection.planning.purchasedQuantity} of ${collection.planning.quantity} units purchased · ${collection.planning.completedItems} of ${collection.slugs.length} items complete</p>` : ''}
+    <p class="collection-help">Quantities are for planning; availability does not confirm how many units the store has. Prices exclude shipping and additional checkout costs.</p><p class="readiness-status" role="status">${escapeHtml(text)}</p><progress max="${Math.max(1, result.remaining)}" value="${result.qualifying}" aria-label="${escapeHtml(collection.name)}: ${escapeHtml(text)}"></progress><p>${result.purchased} items fully purchased${result.unknown ? ` · ${result.unknown} awaiting confirmed observations` : ''}</p>
     <section class="collection-members" aria-labelledby="collectionItemsHeading"><h3 id="collectionItemsHeading">Items and conditions</h3><ul>${items || '<li class="collection-no-watches">No items assigned.</li>'}</ul></section>
     <div class="collection-form-actions"><button type="button" data-view-collection="${escapeHtml(collection.id)}">View items</button><button type="button" data-collection-alerts="${escapeHtml(collection.id)}">Alerts</button><button type="button" data-edit-collection="${escapeHtml(collection.id)}">Edit collection</button></div>`;
   wireProductImages($('collectionDetails'));
   if (focusAction) $('collectionDetails').querySelector(`[${focusAction}="${CSS.escape(focusValue)}"]`)?.focus();
+}
+
+function openCollectionItem(slug, purchase = false) {
+  const collection = app.collections.find(item=>item.id===app.collectionDetailId);
+  const item = collection?.items?.find(item=>item.slug===slug);
+  const product = app.products.find(item=>item.slug===slug);
+  if (app.collectionBusy || !collection || !product) return;
+  if (!item) { toast('Update and restart GearBeacon to edit purchase plans.','error'); return; }
+  app.collectionItemDraft = { collectionId:collection.id, slug, action:purchase ? 'data-collection-item-purchase' : 'data-collection-item-edit' };
+  collectionView('item');
+  $('collectionDialogTitle').textContent = purchase ? 'Record purchase' : 'Edit collection item';
+  $('collectionDialogDescription').textContent = `${collection.name} · ${collection.pricing.currency}`;
+  $('collectionItemSummary').innerHTML = `<div class="collection-item-heading"><button class="collection-watch-image media-shell" type="button" data-collection-image="${escapeHtml(product.slug)}" aria-label="Retry image for ${escapeHtml(product.name)}">${imageMarkup(product)}</button><div class="collection-watch-copy"><strong>${escapeHtml(product.name)}</strong><small>${escapeHtml([product.variantTitle,product.sku,product.price].filter(Boolean).join(' · '))}</small></div></div>`;
+  wireProductImages($('collectionItemSummary'));
+  $('collectionItemQuantity').value=item.quantity;
+  $('collectionItemPurchased').value=purchase ? item.quantity : item.purchasedQuantity;
+  let paid = item.paidTotal;
+  if (purchase && item.purchasedQuantity < item.quantity) {
+    const current = collection.readiness.items.find(value=>value.slug===slug)?.unitPrice;
+    paid = Number.isFinite(current) && (!item.purchasedQuantity || item.paidTotal !== null) ? Math.round(((item.paidTotal || 0) + current * (item.quantity - item.purchasedQuantity)) * 100) / 100 : null;
+  }
+  $('collectionItemPaid').value=paid ?? '';
+  $('collectionItemTarget').value=product.watchRule?.targetPrice ?? '';
+  $(purchase ? 'collectionItemPaid' : 'collectionItemQuantity').focus();
+}
+
+function closeCollectionItem() {
+  if (app.collectionBusy) return;
+  const draft=app.collectionItemDraft;
+  app.collectionItemDraft=null;
+  if (!draft) { closeCollectionManager(); return; }
+  openCollectionDetails(draft.collectionId);
+  ($('collectionDetails').querySelector(`[${draft.action}="${CSS.escape(draft.slug)}"]`) || $('closeCollectionManager')).focus();
+}
+
+async function mutateCollectionItem(method, id, slug, body) {
+  if (app.collectionBusy) return null;
+  if (app.collectionRegion !== app.currentRegion) { toast('The store region changed. Reopen the collection.','error'); return null; }
+  app.collectionBusy=true;
+  $('collectionResult').textContent=method==='DELETE' ? 'Removing item…' : 'Saving item…';
+  $('collectionResult').classList.remove('error');
+  const controls=[...$('collectionDialog').querySelectorAll('button,input,select')].map(control=>[control,control.disabled]);
+  controls.forEach(([control])=>control.disabled=true);
+  try {
+    await requireCollectionPlanning();
+    const result=await api(`/api/collections/${encodeURIComponent(id)}/items/${encodeURIComponent(slug)}`,{method,...(body ? {body:JSON.stringify(body)} : {})});
+    const collection=result.collections?.find(item=>item.id===id);
+    const saved=collection?.items?.find(item=>item.slug===slug);
+    if (!collection || (method==='DELETE' ? collection.slugs.includes(slug) : !saved || ['quantity','purchasedQuantity','paidTotal'].some(key=>saved[key]!==body[key]) || result.product?.watchRule?.targetPrice!==body.targetPrice)) throw new Error('The server did not confirm your item changes. Your edits are still here.');
+    app.collections=result.collections;
+    const product=app.products.find(item=>item.slug===slug);
+    if (product && result.product) Object.assign(product,result.product);
+    for (const product of app.products) product.collections=app.collections.filter(item=>item.slugs.includes(product.slug)).map(item=>item.id);
+    renderCollections(); renderProducts(true);
+    $('collectionResult').textContent='';
+    return result;
+  } catch (err) { $('collectionResult').textContent=err.message; $('collectionResult').classList.add('error'); return null; }
+  finally { app.collectionBusy=false; controls.forEach(([control,disabled])=>control.disabled=disabled); }
+}
+
+async function saveCollectionItem() {
+  const draft=app.collectionItemDraft;
+  if (!draft) return;
+  const body={quantity:Number($('collectionItemQuantity').value),purchasedQuantity:Number($('collectionItemPurchased').value),paidTotal:$('collectionItemPaid').value==='' ? null : Number($('collectionItemPaid').value),targetPrice:$('collectionItemTarget').value==='' ? null : Number($('collectionItemTarget').value)};
+  const result=await mutateCollectionItem('PUT',draft.collectionId,draft.slug,body);
+  if (result) { closeCollectionItem(); toast('Collection item saved.'); }
+}
+
+async function removeCollectionItem(slug) {
+  const id=app.collectionDetailId;
+  if (!id) return;
+  if (await mutateCollectionItem('DELETE',id,slug)) {
+    app.collectionDetailsKey=null; renderCollectionDetails();
+    ($('collectionDetails').querySelector('[data-collection-item-edit]') || $('collectionDetails').querySelector('[data-edit-collection]')).focus();
+    toast('Item removed from this collection. Its watch and other collections are kept.');
+  }
 }
 
 function openCollectionAlerts(id) {
@@ -2032,24 +2131,27 @@ function renderCollectionAlerts() {
   const collection = app.collections.find((item) => item.id === app.collectionAlertId);
   if (!collection || $('collectionAlerts').classList.contains('hidden') || $('collectionDialog').classList.contains('hidden')) return;
   const returnView = app.collectionAlertReturn?.view;
-  const key = JSON.stringify([collection.id,collection.name,collection.notifyReady,returnView]);
+  const key = JSON.stringify([collection.id,collection.name,collection.notifyReady,collection.alertsOnly,returnView]);
   if (key === app.collectionAlertsKey) return;
   app.collectionAlertsKey = key;
   const focused = document.activeElement;
   const focusAlert = focused?.matches('[data-notify-collection]');
   const focusBack = focused?.hasAttribute('data-close-collection-alerts');
+  const focusMode = focused?.hasAttribute('data-collection-alert-mode');
   $('collectionDialogTitle').textContent = collection.name;
   $('collectionDialogDescription').textContent = 'Collection alert settings';
   $('collectionAlerts').innerHTML = `<section class="collection-alert-settings" aria-labelledby="collectionAlertHeading">
     <h3 id="collectionAlertHeading">Collection alerts</h3>
     <label class="readiness-alert"><input type="checkbox" data-notify-collection="${escapeHtml(collection.id)}" aria-describedby="collectionAlertConditions collectionAlertInteraction collectionAlertDelivery" ${collection.notifyReady ? 'checked' : ''}/> Notify when all remaining items qualify<span class="sr-only"> in ${escapeHtml(collection.name)}</span></label>
     <p id="collectionAlertConditions">Receive one alert when every unpurchased item is in stock and meets its individual target price, if set.</p>
-    <p id="collectionAlertInteraction">Individual item alerts continue using their own rules. This collection alert does not override them, and pausing an item does not pause the collection alert.</p>
+    <label class="field"><span>Individual item alerts</span><select data-collection-alert-mode="${escapeHtml(collection.id)}" aria-describedby="collectionAlertInteraction"><option value="both" ${!collection.alertsOnly ? 'selected' : ''}>Collection and item alerts</option><option value="only" ${collection.alertsOnly ? 'selected' : ''}>Collection alerts only</option></select></label>
+    <p id="collectionAlertInteraction">${collection.notifyReady && collection.alertsOnly ? 'Individual item alerts are suppressed while this collection alert is enabled. Their rules stay saved.' : 'Individual item alerts continue using their own rules unless another collection suppresses them.'} If any collection containing an item uses Collection alerts only with alerts enabled, it suppresses that item's notifications, including All activity and immediate restocks. Turning off the last override restores item alerts. Pausing an item does not pause collection alerts.</p>
     <p id="collectionAlertDelivery">Saves automatically. Uses the channels and delivery settings in Settings &gt; Notifications. If the collection already qualifies, enabling this waits until it stops qualifying and becomes ready again.</p>
     ${returnView === 'edit' ? '<p>Your name and item selections stay in the editor. Alerts apply to saved items; choose Save changes after returning to apply your collection edits.</p>' : ''}
     </section><div class="collection-form-actions"><button type="button" data-close-collection-alerts>${returnView === 'edit' ? 'Back to editing' : returnView === 'details' ? 'Back to collection' : returnView === 'list' ? 'Back to collections' : 'Done'}</button></div>`;
   if (focusAlert) $('collectionAlerts').querySelector('[data-notify-collection]')?.focus();
   if (focusBack) $('collectionAlerts').querySelector('[data-close-collection-alerts]')?.focus();
+  if (focusMode) $('collectionAlerts').querySelector('[data-collection-alert-mode]')?.focus();
 }
 
 function renderCollectionReadiness(force = false) {
@@ -2077,15 +2179,32 @@ function renderCollectionReadiness(force = false) {
   if (focusId) ($('collectionReadiness').querySelector(`${focusSelector}[${attribute}="${CSS.escape(focusId)}"]`) || $('watchCollection')).focus();
 }
 
+async function requireCollectionPlanning() {
+  const server = await api('/api/collections');
+  if (!server.capabilities?.purchasePlanning) throw new Error('Update and restart GearBeacon to use purchase plans and collection-only alerts. Your changes have not been saved.');
+}
+
 async function setCollectionNotification(input) {
-  const id = input.dataset.notifyCollection; const enabled = input.checked;
-  input.disabled = true;
+  const id = input.dataset.notifyCollection || input.dataset.collectionAlertMode;
+  const selector = input.hasAttribute('data-notify-collection') ? '[data-notify-collection]' : '[data-collection-alert-mode]';
+  const enabled = $('collectionAlerts').querySelector('[data-notify-collection]').checked;
+  const alertsOnly = $('collectionAlerts').querySelector('[data-collection-alert-mode]').value === 'only';
+  const controls = [...$('collectionAlerts').querySelectorAll('input,select')];
+  controls.forEach(control=>control.disabled=true);
   try {
-    const result = await api(`/api/collections/${encodeURIComponent(id)}`, { method:'PUT', body:JSON.stringify({ notifyReady:enabled }) });
-    app.collections = result.collections; renderCollectionReadiness();
-    toast(enabled ? 'Collection readiness alerts enabled. Current conditions set the starting point.' : 'Collection readiness alerts disabled. Pending deliveries cancelled.');
-  } catch (err) { input.checked = !enabled; toast(err.message, 'error'); }
-  finally { input.disabled = false; if (app.collectionAlertId === id && !$('collectionDialog').classList.contains('hidden')) $('collectionAlerts').querySelector('[data-notify-collection]')?.focus(); }
+    await requireCollectionPlanning();
+    const result = await api(`/api/collections/${encodeURIComponent(id)}`, { method:'PUT', body:JSON.stringify({ notifyReady:enabled, alertsOnly }) });
+    const saved = result.collections?.find(item=>item.id===id);
+    if (!saved || saved.notifyReady !== enabled || saved.alertsOnly !== alertsOnly) throw new Error('The server did not confirm the collection alert settings. Restart after updating and try again.');
+    app.collections = result.collections; renderProducts(true);
+    toast(!enabled ? 'Collection alerts disabled. Item rules apply unless another collection suppresses them.' : alertsOnly ? 'Collection-only alerts enabled. Individual item rules are preserved.' : 'Collection and item alerts enabled.');
+  } catch (err) {
+    if (app.collectionAlertId === id) { app.collectionAlertsKey=null; renderCollectionAlerts(); }
+    toast(err.message,'error');
+  } finally {
+    controls.forEach(control=>control.disabled=false);
+    if (app.collectionAlertId === id && !$('collectionDialog').classList.contains('hidden')) $('collectionAlerts').querySelector(selector)?.focus();
+  }
 }
 
 async function openCollection(id, region) {
@@ -2134,6 +2253,12 @@ document.addEventListener('click', (event) => {
   if (purchased) { markPurchased(purchased.dataset.purchased); return; }
   const preview = event.target.closest('[data-preview-rule]');
   if (preview) { previewProductRule(preview.closest('form')); return; }
+  const itemEdit=event.target.closest('[data-collection-item-edit]');
+  if (itemEdit) { openCollectionItem(itemEdit.dataset.collectionItemEdit); return; }
+  const purchaseItem=event.target.closest('[data-collection-item-purchase]');
+  if (purchaseItem) { openCollectionItem(purchaseItem.dataset.collectionItemPurchase,true); return; }
+  const removeItem=event.target.closest('[data-collection-item-remove]');
+  if (removeItem) { removeCollectionItem(removeItem.dataset.collectionItemRemove); return; }
   const edit = event.target.closest('[data-edit-collection]');
   if (edit) { if ($('collectionDialog').classList.contains('hidden')) openCollectionManager(); editCollection(edit.dataset.editCollection); return; }
   if (event.target.closest('[data-close-collection-alerts]')) { returnFromCollectionAlerts(); return; }
@@ -2145,7 +2270,7 @@ document.addEventListener('click', (event) => {
   if (viewCollection) { closeCollectionManager(); openCollection(viewCollection.dataset.viewCollection, app.currentRegion); return; }
   const collectionImage = event.target.closest('[data-collection-image]');
   if (collectionImage) {
-    const products = collectionImage.closest('#collectionDetails') ? app.products : app.collectionDraft?.products;
+    const products = collectionImage.closest('#collectionDetails, #collectionItemSummary') ? app.products : app.collectionDraft?.products;
     const product = products?.find((item) => item.slug === collectionImage.dataset.collectionImage);
     if (product?.imageUrl) { app.brokenImages.delete(product.imageUrl); collectionImage.innerHTML = imageMarkup(product); wireProductImages(collectionImage); }
     return;
@@ -2187,7 +2312,7 @@ document.addEventListener('click', (event) => {
 document.addEventListener('change', (event) => {
   const days = event.target.closest('[data-insight-days]');
   if (days) { changeInsightWindow(Number(days.value)); return; }
-  const notification = event.target.closest('[data-notify-collection]');
+  const notification = event.target.closest('[data-notify-collection], [data-collection-alert-mode]');
   if (notification) { setCollectionNotification(notification); return; }
   const variant = event.target.closest('[data-variant-selector]');
   if (variant) { openProductDialog(variant.value, true).then(() => document.querySelector('[data-variant-selector]')?.focus()); return; }
@@ -2287,6 +2412,8 @@ for (const id of ['newCollection','firstCollection','newBulkCollection']) $(id).
 $('collectionForm').addEventListener('submit', (event) => { event.preventDefault(); saveCollection(); });
 $('cancelCollectionEdit').addEventListener('click', () => showCollectionOverview(app.collectionDraft?.id));
 $('collectionWatchSearch').addEventListener('input', renderCollectionChoices);
+$('collectionItemForm').addEventListener('submit', (event) => { event.preventDefault(); saveCollectionItem(); });
+$('cancelCollectionItem').addEventListener('click', closeCollectionItem);
 $('editCollectionAlerts').addEventListener('click', () => openCollectionAlerts(app.collectionDraft?.id));
 $('collectionWatchChoices').addEventListener('change', (event) => {
   const input = event.target.closest('[data-collection-watch]');

@@ -259,6 +259,19 @@ button.ghost { background: transparent; }
 .collection-members ul { list-style:none; padding:0; margin:0; display:grid; gap:8px; }
 .collection-member-row { display:grid; grid-template-columns:52px minmax(0,1fr) auto; align-items:center; gap:12px; padding:10px 12px; border:1px solid var(--border); border-radius:12px; background:var(--panel); }
 .collection-member-status { border:1px solid var(--border); border-radius:99px; padding:4px 7px; font-size:10px; color:var(--muted); }
+.collection-member-plan { grid-column:2 / -1; display:flex; flex-wrap:wrap; gap:5px 12px; color:var(--muted); font-size:11px; }
+.collection-member-plan span:last-child { flex-basis:100%; }
+.collection-member-actions { grid-column:2 / -1; display:flex; flex-wrap:wrap; gap:6px; }
+.collection-member-actions button,.collection-member-actions .button-link { display:inline-flex; align-items:center; justify-content:center; min-height:36px; margin-top:0; padding:6px 9px; font-size:11px; line-height:1.4; }
+.collection-plan-summary { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin:18px 0; }
+.collection-plan-summary > div { padding:12px; border:1px solid var(--border); border-radius:10px; background:var(--panel); }
+.collection-plan-summary dt { font-size:11px; color:var(--muted); margin-bottom:5px; }
+.collection-plan-summary dd { margin:0; font-size:14px; font-weight:600; overflow-wrap:anywhere; }
+.collection-budget-field { margin-top:16px; }
+.collection-item-heading { display:flex; align-items:center; gap:12px; margin-bottom:20px; }
+.collection-item-heading .collection-watch-image { flex:none; }
+#collectionItemForm .form-row { grid-template-columns:repeat(2,minmax(0,1fr)); }
+#collectionItemForm > .field { margin-top:16px; }
 .insight-heading { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; }
 .insight-heading select { min-width:100px; }
 .insight-summary { font-weight:600; font-size:13px; }
@@ -696,6 +709,7 @@ button.watch-import-backdrop:hover { border:0; background:rgba(0,0,0,.64); trans
   .collection-form-actions { flex-wrap:wrap; }
   .collection-form-actions button { flex:1; }
   .collection-member-row { grid-template-columns:52px minmax(0,1fr); gap:6px 12px; }
+  .collection-member-actions { grid-column:1 / -1; margin-top:4px; }
   .collection-member-row .collection-watch-image { grid-row:1 / span 2; align-self:start; }
   .collection-member-status { grid-column:2; justify-self:start; }
   .watch-import-intro { align-items:stretch; flex-direction:column; gap:10px; }

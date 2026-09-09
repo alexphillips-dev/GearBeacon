@@ -84,7 +84,7 @@ try {
   await start();
   const config = await request('/api/config');
   await request('/api/config', { config:{ ...config.config,digestEnabled:true,digestTime:'12:34',notificationTimeZone:'UTC',notificationCooldownMinutes:0 } }, 'PUT');
-  assert.equal((await request('/api/status')).storage.schemaVersion, 9);
+  assert.equal((await request('/api/status')).storage.schemaVersion, 10);
   const initial = await details();
   assert.equal(initial.product.sku, 'MOCK-G5-PTZ-B');
   assert.equal(initial.product.price, '$299.00');
@@ -136,12 +136,13 @@ try {
   const collectionDatabase = new DatabaseSync(join(dataDir, 'gearbeacon.mock.sqlite3'));
   try {
     collectionDatabase.exec("CREATE TRIGGER test_collection_save_failure BEFORE INSERT ON watch_collection_members BEGIN SELECT RAISE(ABORT, 'mock collection save failure'); END");
+    collectionDatabase.exec("CREATE TRIGGER test_collection_delete_failure BEFORE DELETE ON watch_collection_members BEGIN SELECT RAISE(ABORT, 'mock collection removal failure'); END");
     await request(managedPath, { name:'Must roll back',slugs:[black] }, 'PUT', 500);
     assert.equal((await managedState()).name, 'Edited project', 'Failed save committed the new name.');
     assert.deepEqual(new Set((await managedState()).slugs), new Set([black,parent]), 'Failed save committed partial membership.');
     await request('/api/collections', { name:'Must not exist',slugs:[black] }, 'POST', 500);
     assert(!(await request('/api/collections')).collections.some((collection) => collection.name === 'Must not exist'), 'Failed member insertion committed a new collection.');
-  } finally { collectionDatabase.exec('DROP TRIGGER IF EXISTS test_collection_save_failure'); collectionDatabase.close(); }
+  } finally { collectionDatabase.exec('DROP TRIGGER IF EXISTS test_collection_save_failure; DROP TRIGGER IF EXISTS test_collection_delete_failure'); collectionDatabase.close(); }
   await request(managedPath, { slugs:[] }, 'PUT');
   assert.equal((await managedState()).slugs.length, 0, 'Saving an empty collection did not remove its membership.');
   assert.equal((await details()).product.watchedAt, createdAt, 'Collection edits changed the watch itself.');
@@ -231,7 +232,7 @@ try {
   assert.ok((await details()).history.length > retainedHistory);
   const backup = await request('/api/data/export/encrypted', { passphrase:'precision test recovery passphrase' });
   const snapshot = await request('/api/data/export');
-  assert.equal(snapshot.formatVersion, 5);
+  assert.equal(snapshot.formatVersion, 6);
   const invalidSnapshot = structuredClone(snapshot);
   invalidSnapshot.regions.us.collections[0].slugs.push('not-a-watch');
   await request('/api/data/preview', { backup:invalidSnapshot }, 'POST', 400);
@@ -274,7 +275,9 @@ try {
   const expectedTotal = Math.round((email.numericPrice((await details(black)).product.price) + email.numericPrice((await details(white)).product.price)) * 100) / 100;
   assert.deepEqual(await priced(), { total:expectedTotal,currency:'USD',priced:2,missing:0,items:2 });
   await request('/api/watch/bulk', { action:'purchased',slugs:[black] });
-  assert.equal((await priced()).total, expectedTotal, 'Marking an item purchased changed the full collection total.');
+  assert.equal((await priced()).missing, 1, 'An unrecorded purchase cost was presented as known.');
+  await request(`/api/collections/${pricedProject.id}/items/${encodeURIComponent(black)}`, { paidTotal:email.numericPrice((await details(black)).product.price) }, 'PUT');
+  assert.equal((await priced()).total, expectedTotal, 'Recording the actual purchase cost changed the expected collection total.');
   for (const slug of ['u7-pro-xgs','unas-pro']) await request('/api/watch?region=ca', { slug });
   await request('/api/mock/product/u7-pro-xgs', { price:'1.234,56 $' });
   await request('/api/mock/product/unas-pro', { price:'0,44 $' });
@@ -282,6 +285,8 @@ try {
   const canadian = await request('/api/collections?region=ca', { name:'Canadian prices',slugs:['u7-pro-xgs','unas-pro'] });
   const canadianPrice = () => request('/api/collections?region=ca').then((result) => result.collections.find((item) => item.id === canadian.id).pricing);
   assert.deepEqual(await canadianPrice(), { total:1235,currency:'CAD',priced:2,missing:0,items:2 }, 'Localized decimals or region currency were incorrect.');
+  const canadianPlan = (await request('/api/collections?region=ca')).collections.find(item=>item.id===canadian.id);
+  assert.equal(canadianPlan.readiness.items.find(item=>item.slug==='u7-pro-xgs').unitPrice, 1234.56, 'Purchase entry received an incorrectly parsed localized price.');
   assert.equal((await priced()).total, expectedTotal, 'Another store changed a collection total.');
   await request('/api/mock/product/unas-pro', { price:'' });
   await request('/api/check?region=ca', {}); await request('/api/check?region=ca', {});

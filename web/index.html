@@ -425,6 +425,7 @@
         </div>
         <form id="collectionForm" class="hidden">
           <label class="field"><span>Collection name</span><input id="collectionName" maxlength="80" required autocomplete="off" placeholder="e.g. Home network" /></label>
+          <label class="field collection-budget-field"><span>Project budget (optional, store currency)</span><input id="collectionBudget" type="number" min="0" max="1000000000" step="0.01" placeholder="No budget" /></label>
           <div class="collection-picker-heading"><h3>Watches</h3><span id="collectionSelection" role="status">0 selected</span></div>
           <p class="collection-help">Choose watches for this project, or save an empty collection and add them later.</p>
           <label class="field"><span class="sr-only">Search watches to include</span><input id="collectionWatchSearch" type="search" placeholder="Search name, SKU, or variant" autocomplete="off" /></label>
@@ -433,6 +434,15 @@
           <div id="collectionDeleteArea" class="collection-delete-area hidden"><button id="askDeleteCollection" class="danger-button" type="button">Delete collection</button></div>
         </form>
         <div id="collectionDetails" class="hidden"></div>
+        <form id="collectionItemForm" class="hidden">
+          <div id="collectionItemSummary"></div>
+          <div class="form-row"><label class="field"><span>Desired quantity</span><input id="collectionItemQuantity" type="number" min="1" max="1000" step="1" required /></label><label class="field"><span>Purchased quantity</span><input id="collectionItemPurchased" type="number" min="0" max="1000" step="1" required /></label></div>
+          <label class="field"><span>Total paid for purchased units</span><input id="collectionItemPaid" type="number" min="0" max="1000000000" step="0.01" placeholder="Unknown" /></label>
+          <p class="collection-help">Enter the combined amount actually paid for all purchased units, in this store's currency. Record purchase suggests the current remaining cost plus any recorded spending; adjust it to what you paid. Leave it empty if unknown. Quantities and purchase records apply only to this collection.</p>
+          <label class="field"><span>Item target price (per unit)</span><input id="collectionItemTarget" type="number" min="0" max="1000000" step="0.01" placeholder="No target" /></label>
+          <p class="collection-help">The target price is shared with this item's watch and its other collections. Clearing it also turns off the item's available-at-target alert condition.</p>
+          <div class="collection-form-actions"><button id="cancelCollectionItem" type="button">Cancel</button><button id="saveCollectionItem" class="primary" type="submit">Save item</button></div>
+        </form>
         <div id="collectionAlerts" class="hidden"></div>
         <div id="collectionDeleteConfirm" class="collection-delete-confirm hidden"><h3>Delete this collection?</h3><p id="collectionDeleteDescription"></p><div class="collection-form-actions"><button id="cancelDeleteCollection" type="button">Keep collection</button><button id="confirmDeleteCollection" class="danger-button" type="button">Delete collection</button></div></div>
         <p id="collectionResult" class="collection-result" role="status" aria-live="polite"></p>
