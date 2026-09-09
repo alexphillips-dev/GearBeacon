@@ -232,7 +232,7 @@ try {
   await waitForBrowser("document.querySelectorAll('#browseGrid .store-card').length === 1", 'Debounced Browse search failed');
   assert(await evaluate("!document.getElementById('resetBrowseFilters').classList.contains('hidden')"), 'Browse reset action did not appear for an active search.');
   await evaluate("document.getElementById('search').focus(); openProductDialog('u7-pro-xgs')");
-  await waitForBrowser("!document.getElementById('productDialog').classList.contains('hidden') && document.querySelector('#productDialogBody .product-watch-prompt [data-watch]')", 'Unwatched product details did not render');
+  await waitForBrowser("!document.getElementById('productDialog').classList.contains('hidden') && document.querySelector('#productDialogBody .product-watch-prompt [data-add-watch]')", 'Unwatched product details did not render');
   await assertAccessible('Product details dialog');
   const dialogTrap = await evaluate(`(() => {
     const dialog=document.getElementById('productDialog');
@@ -248,13 +248,15 @@ try {
   await evaluate("openProductDialog('u7-pro-xgs')");
   await waitForBrowser("!document.getElementById('productDialog').classList.contains('hidden')", 'Product details did not reopen after the Escape test');
   const productPromptActions = await evaluate(`(() => {
-    const watchButton=document.querySelector('#productDialogBody .product-watch-prompt [data-watch]');
+    const watchButton=document.querySelector('#productDialogBody .product-watch-prompt [data-add-watch]');
     const storeButton=document.querySelector('#productDialogBody .product-link-actions a.button-link');
     return { watchHeight:watchButton?.getBoundingClientRect().height, storeHeight:storeButton?.getBoundingClientRect().height, watchFont:getComputedStyle(watchButton).fontSize, storeFont:getComputedStyle(storeButton).fontSize };
   })()`);
   assert(Math.abs(productPromptActions.watchHeight - productPromptActions.storeHeight) <= 1 && productPromptActions.watchFont === productPromptActions.storeFont, `Product watch action does not match the compact store action: ${JSON.stringify(productPromptActions)}`);
   await evaluate("document.getElementById('closeProductDialog').click()");
-  await evaluate("document.querySelector('#browseGrid [data-watch=\"u7-pro-xgs\"]').click()");
+  await evaluate("document.querySelector('#browseGrid [data-add-watch=\"u7-pro-xgs\"]').click()");
+  await waitForBrowser("!document.getElementById('saveAddWatch').disabled", 'Browse destination picker did not load');
+  await evaluate("document.getElementById('addWatchForm').requestSubmit()");
   await waitForBrowser("app.products.find((product) => product.slug === 'u7-pro-xgs')?.watched === true", 'Browser watch action failed');
   await evaluate(`(() => { const input=document.getElementById('search'); input.value=''; input.dispatchEvent(new Event('input',{bubbles:true})); })()`);
   await waitForBrowser("document.querySelectorAll('#browseGrid .store-card').length >= 5", 'Browse search did not clear');
@@ -497,7 +499,9 @@ try {
   await evaluate("(() => { const picker=document.querySelector('[data-variant-selector]'); picker.value='uvc-g5-ptz::mock-black'; picker.dispatchEvent(new Event('change',{bubbles:true})); })()");
   await waitForBrowser("app.currentProductDetails?.product.variantId === 'mock-black' && document.activeElement.matches('[data-variant-selector]')", 'Variant selection did not restore keyboard focus');
   assert(await evaluate("document.getElementById('productDialogBody').textContent.includes('MOCK-G5-PTZ-B') && document.querySelector('.product-link-actions a').href.includes('variant=uvc-g5-ptz-black')"), 'Variant SKU or exact Store link is incorrect');
-  await evaluate("document.querySelector('.product-watch-prompt [data-watch]').click()");
+  await evaluate("document.querySelector('.product-watch-prompt [data-add-watch]').click()");
+  await waitForBrowser("!document.getElementById('saveAddWatch').disabled", 'Variant destination picker did not load');
+  await evaluate("document.getElementById('addWatchForm').requestSubmit()");
   await waitForBrowser("document.getElementById('productRuleForm') && app.currentProductDetails?.product.watched", 'Exact variant watch could not be added');
   await evaluate("(() => { const form=document.getElementById('productRuleForm'); form.elements.targetPrice.value='320'; form.elements.availableUnderTarget.checked=true; form.querySelector('[name=collection]').checked=true; form.querySelector('[data-preview-rule]').click(); })()");
   await waitForBrowser("/Black.*320 USD/.test(document.querySelector('[data-rule-result]')?.textContent || '')", 'Combined rule preview did not describe the selected variant and regional target');
@@ -832,6 +836,60 @@ try {
   await waitForBrowser(`!app.collectionBusy && app.collections.find(item=>item.id==='${purchaseCollectionId}').slugs.length===0`, 'Remove did not remove the item from its collection');
   assert(await evaluate("app.products.find(item=>item.slug==='udm-se').watched && !document.getElementById('collectionDetails').classList.contains('hidden') && document.querySelector('#collectionDetails .collection-no-watches') && !document.querySelector('#watchGrid [data-product-card=\"udm-se\"]').textContent.includes('Collection alerts only: Purchase test')"), 'Removing a collection item lost its watch, left an override, or reopened the manager');
   await evaluate("document.getElementById('closeCollectionManager').click()");
+  // Add from Browse, preserve existing plans, filter by readiness, and archive/undo through real controls.
+  await evaluate("activateTab('browse'); resetBrowseFilters(); document.querySelector('#browseGrid [data-add-watch=\"uvc-g5-ptz\"]').focus(); document.activeElement.click()");
+  await waitForBrowser("!document.getElementById('saveAddWatch').disabled && document.getElementById('addWatchVariant').options.length===3", 'Add picker did not load the product variants');
+  await evaluate("document.getElementById('addWatchVariant').value='uvc-g5-ptz::mock-white'; document.getElementById('addWatchVariant').dispatchEvent(new Event('change')); document.getElementById('addWatchDestination').value='new'; document.getElementById('addWatchDestination').dispatchEvent(new Event('change')); document.getElementById('addWatchName').value='Browse project'; document.getElementById('addWatchQuantity').value='4'");
+  for (const theme of ['dark','light']) {
+    await evaluate(`applyTheme(${JSON.stringify(theme)})`); await delay(250);
+    await cdp.send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:false});
+    await assertAccessible(`Browse collection destination ${theme}`);
+    assert(await evaluate("document.documentElement.scrollWidth <= window.innerWidth+1 && document.querySelector('.collection-panel').scrollWidth <= document.querySelector('.collection-panel').clientWidth+1"), 'Add destination form overflowed at 390px');
+  }
+  await evaluate("document.getElementById('addWatchForm').requestSubmit()");
+  await waitForBrowser("!app.collectionBusy && app.collections.some(item=>item.name==='Browse project') && document.getElementById('collectionDialog').classList.contains('hidden')", 'Direct Browse add did not save and close');
+  const workflowCollection=await evaluate("app.collections.find(item=>item.name==='Browse project').id");
+  assert(await evaluate(`app.collections.find(item=>item.id==='${workflowCollection}').items[0].quantity===4 && app.products.find(item=>item.slug==='uvc-g5-ptz::mock-white').watched && document.activeElement.dataset.addWatch==='uvc-g5-ptz'`), 'Direct add lost its quantity, selected variant, or Browse focus');
+  await evaluate(`activateTab('watchlist'); resetWatchFilters(); document.querySelector('[data-collection-card="${workflowCollection}"] .collection-preview').click(); document.querySelector('#collectionDetails [data-collection-item-edit]').click(); document.getElementById('collectionItemPurchased').value='1'; document.getElementById('collectionItemPaid').value='300'; document.getElementById('collectionItemTarget').value='400'; document.getElementById('collectionItemForm').requestSubmit()`);
+  await waitForBrowser(`!app.collectionBusy && app.collections.find(item=>item.id==='${workflowCollection}').planning.spent===300`, 'Workflow purchase record did not save');
+  await evaluate("document.querySelector('#collectionDetails [data-collection-item-remove]').click()");
+  await waitForBrowser(`!app.collectionBusy && app.collections.find(item=>item.id==='${workflowCollection}').items.length===0`, 'Workflow removal failed');
+  const undoKey=await evaluate(`app.collectionUndos.find(item=>item.id==='${workflowCollection}').key`);
+  await assertAccessible('Collection removal Undo');
+  await evaluate(`document.querySelector('[data-undo-collection="${undoKey}"]').click()`);
+  await waitForBrowser(`!app.collectionBusy && app.collections.find(item=>item.id==='${workflowCollection}').items.length===1`, 'Undo did not restore the collection item');
+  assert(await evaluate(`(() => { const item=app.collections.find(item=>item.id==='${workflowCollection}').items[0]; return item.quantity===4 && item.purchasedQuantity===1 && item.paidTotal===300 && document.activeElement.dataset.collectionItemEdit==='uvc-g5-ptz::mock-white'; })()`), 'Undo lost quantities, payment, or keyboard focus');
+  await evaluate("document.getElementById('closeCollectionManager').click(); activateTab('browse'); document.querySelector('#browseGrid [data-add-watch=\"uvc-g5-ptz\"]').click()");
+  await waitForBrowser("!document.getElementById('saveAddWatch').disabled", 'Repeated Add picker did not load');
+  await evaluate(`document.getElementById('addWatchVariant').value='uvc-g5-ptz::mock-white'; document.getElementById('addWatchDestination').value='${workflowCollection}'; document.getElementById('addWatchDestination').dispatchEvent(new Event('change'))`);
+  assert(await evaluate("document.getElementById('addWatchHint').textContent.includes('Already in this collection') && document.getElementById('addWatchQuantity').disabled && document.getElementById('addWatchQuantity').value==='4'"), 'Existing collection membership was not clearly identified');
+  await evaluate("document.getElementById('addWatchForm').requestSubmit()");
+  await waitForBrowser("document.getElementById('collectionDialog').classList.contains('hidden') && !app.collectionBusy", 'Repeated Add did not complete');
+  assert(await evaluate(`app.collections.find(item=>item.id==='${workflowCollection}').items[0].paidTotal===300`), 'Repeated Add erased the purchase record');
+  await evaluate("activateTab('watchlist'); document.getElementById('groupCollectedWatches').checked=true; document.querySelector('[data-watch-overview=\"target\"]').click()");
+  assert(await evaluate("app.watchQuickFilter==='target' && document.querySelector('[data-watch-overview=\"target\"]').getAttribute('aria-pressed')==='true' && document.querySelectorAll('#watchGrid .watch-card').length===app.watchOverview.targetMet.length && document.querySelectorAll('#collectionReadiness .collection-card').length===0"), 'Overview count did not open exactly its matching items through grouped mode');
+  await cdp.send('Page.reload');
+  await waitForBrowser("app.watchQuickFilter==='target' && app.watchOverview && document.querySelectorAll('#watchGrid .watch-card').length===app.watchOverview.targetMet.length", 'Overview filter did not survive reload');
+  await evaluate("document.querySelector('[data-watch-overview=\"collections\"]').click()");
+  assert(await evaluate("document.querySelectorAll('#collectionReadiness .collection-card').length===app.watchOverview.collectionsReady.length && document.querySelectorAll('#watchGrid .watch-card').length===0"), 'Collections-ready overview included individual cards or waiting collections');
+  await cdp.send('Emulation.setDeviceMetricsOverride',{width:640,height:450,deviceScaleFactor:2,mobile:false});
+  assert(await evaluate("document.documentElement.scrollWidth <= window.innerWidth+1"), 'Watchlist overview overflowed at 200% equivalent zoom');
+  await assertAccessible('Actionable Watchlist overview');
+  await evaluate(`document.querySelector('[data-collection-card="${workflowCollection}"] [data-collection-alerts]').click(); document.querySelector('[data-notify-collection]').click()`);
+  await waitForBrowser(`app.collections.find(item=>item.id==='${workflowCollection}').notifyReady && !document.querySelector('[data-notify-collection]').disabled`, 'Workflow collection alerts did not enable');
+  await evaluate("document.querySelector('[data-collection-alert-mode]').value='only'; document.querySelector('[data-collection-alert-mode]').dispatchEvent(new Event('change',{bubbles:true}))");
+  await waitForBrowser(`app.collections.find(item=>item.id==='${workflowCollection}').alertsOnly && !document.querySelector('[data-collection-alert-mode]').disabled`, 'Workflow override did not save');
+  await evaluate(`document.getElementById('closeCollectionManager').click(); resetWatchFilters(); document.querySelector('[data-collection-card="${workflowCollection}"] [data-edit-collection]').click(); document.getElementById('archiveCollection').click()`);
+  await waitForBrowser(`!app.collectionBusy && app.collections.find(item=>item.id==='${workflowCollection}').archived && document.getElementById('collectionDialog').classList.contains('hidden')`, 'Archive did not save or close the editor');
+  assert(await evaluate(`!document.querySelector('[data-collection-card="${workflowCollection}"]') && !app.watchOverview.collectionsReady.includes('${workflowCollection}') && collectionAlertSources(app.products.find(item=>item.slug==='uvc-g5-ptz::mock-white')).length===0`), 'Archive remained in active cards, ready counts, or item-alert overrides');
+  await evaluate("document.getElementById('openCollectionManager').click(); document.getElementById('collectionArchiveFilter').value='archived'; document.getElementById('collectionArchiveFilter').dispatchEvent(new Event('change'))");
+  await assertAccessible('Archived collection manager');
+  await evaluate(`document.querySelector('#collectionList [data-view-collection="${workflowCollection}"]').click()`);
+  assert(await evaluate(`document.getElementById('watchCollection').value==='${workflowCollection}' && document.querySelector('[data-collection-card="${workflowCollection}"] .badge').textContent==='Archived'`), 'Archived collection could not be opened from the manager');
+  await evaluate(`document.querySelector('[data-collection-card="${workflowCollection}"] [data-edit-collection]').click(); document.getElementById('archiveCollection').click()`);
+  await waitForBrowser(`!app.collectionBusy && !app.collections.find(item=>item.id==='${workflowCollection}').archived`, 'Restore did not reactivate the archived collection');
+  assert(await evaluate(`app.collections.find(item=>item.id==='${workflowCollection}').items[0].paidTotal===300 && collectionAlertSources(app.products.find(item=>item.slug==='uvc-g5-ptz::mock-white')).some(item=>item.id==='${workflowCollection}')`), 'Restore lost purchase records or saved alert mode');
+  await evaluate("resetWatchFilters(); document.getElementById('groupCollectedWatches').checked=false; document.getElementById('collectionArchiveFilter').value='active'; renderProducts(true)");
   // Paginate more than 100 real API entries in the isolated browser fixture.
   await evaluate(`(async () => {
     const backup = await api('/api/data/export');

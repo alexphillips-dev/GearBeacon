@@ -117,6 +117,12 @@
         <div><h2>Your watchlist</h2><p>Watch exact variants, set availability and price conditions, and organize your gear.</p></div>
         <div class="watch-heading-actions"><button id="openCollectionManager" type="button">Manage collections</button><button id="openWatchImport" class="primary" type="button">Import watchlist</button></div>
       </div>
+      <div id="watchOverview" class="watch-overview" aria-label="Watchlist overview">
+        <button type="button" data-watch-overview="ready" aria-pressed="false"><strong id="overviewReady">0</strong><span>Ready to buy</span></button>
+        <button type="button" data-watch-overview="target" aria-pressed="false"><strong id="overviewTarget">0</strong><span>At target price</span></button>
+        <button type="button" data-watch-overview="collections" aria-pressed="false"><strong id="overviewCollections">0</strong><span>Collections ready</span></button>
+      </div>
+      <p id="watchOverviewHint" class="collection-help">Confirmed availability and targets for remaining purchases in this store. Select a count to filter.</p>
       <div class="watch-toolbar" aria-label="Watchlist filters">
         <input id="watchSearch" type="search" placeholder="Search watchlist" autocomplete="off" aria-label="Search watchlist" />
         <select id="watchStatus" aria-label="Filter watchlist by status"><option value="all">All statuses</option><option value="in">In stock</option><option value="out">Unavailable</option><option value="paused">Paused</option><option value="purchased">Purchased</option><option value="wanted">Still wanted</option></select>
@@ -416,7 +422,7 @@
       <div class="collection-body">
         <div id="collectionOverview">
           <div class="collection-list-heading"><span id="collectionTotal"></span><button id="newCollection" class="primary" type="button">+ New collection</button></div>
-          <div id="collectionList"></div>
+          <label class="field collection-list-filter"><span>Show collections</span><select id="collectionArchiveFilter"><option value="active">Active</option><option value="archived">Archived</option><option value="all">All</option></select></label><div id="collectionList"></div>
           <div id="collectionEmpty" class="collection-empty hidden"><span class="collection-empty-icon" aria-hidden="true">▦</span><h3>A place for every project</h3><p>Group your watches into projects, like Home network or Camera upgrade.</p><button id="firstCollection" class="primary" type="button">Create your first collection</button></div>
         </div>
         <div id="collectionBulk" class="hidden">
@@ -431,7 +437,16 @@
           <label class="field"><span class="sr-only">Search watches to include</span><input id="collectionWatchSearch" type="search" placeholder="Search name, SKU, or variant" autocomplete="off" /></label>
           <div id="collectionWatchChoices" class="collection-watch-choices"></div>
           <div class="collection-form-actions"><button id="editCollectionAlerts" class="hidden" type="button">Alerts</button><button id="cancelCollectionEdit" type="button">Cancel</button><button id="saveCollection" class="primary" type="submit">Create collection</button></div>
-          <div id="collectionDeleteArea" class="collection-delete-area hidden"><button id="askDeleteCollection" class="danger-button" type="button">Delete collection</button></div>
+          <div id="collectionDeleteArea" class="collection-delete-area hidden"><button id="archiveCollection" type="button">Archive collection</button><p class="collection-help">Archiving keeps purchase records, stops this collection's alerts, and releases its item-alert override. You can restore it from Manage collections.</p><button id="askDeleteCollection" class="danger-button" type="button">Delete collection</button></div>
+        </form>
+        <form id="addWatchForm" class="hidden">
+          <div id="addWatchSummary"></div>
+          <label class="field"><span>Product variant</span><select id="addWatchVariant" required></select></label>
+          <label class="field"><span>Add to</span><select id="addWatchDestination"><option value="watchlist">Watchlist</option></select></label>
+          <label id="addWatchNameField" class="field hidden"><span>New collection name</span><input id="addWatchName" maxlength="80" autocomplete="off" disabled /></label>
+          <label id="addWatchQuantityField" class="field hidden"><span>Desired quantity</span><input id="addWatchQuantity" type="number" min="1" max="1000" step="1" value="1" required disabled /></label>
+          <p id="addWatchHint" class="collection-help" role="status"></p>
+          <div class="collection-form-actions"><button id="cancelAddWatch" type="button">Cancel</button><button id="saveAddWatch" class="primary" type="submit" disabled>Add product</button></div>
         </form>
         <div id="collectionDetails" class="hidden"></div>
         <form id="collectionItemForm" class="hidden">
@@ -445,6 +460,7 @@
         </form>
         <div id="collectionAlerts" class="hidden"></div>
         <div id="collectionDeleteConfirm" class="collection-delete-confirm hidden"><h3>Delete this collection?</h3><p id="collectionDeleteDescription"></p><div class="collection-form-actions"><button id="cancelDeleteCollection" type="button">Keep collection</button><button id="confirmDeleteCollection" class="danger-button" type="button">Delete collection</button></div></div>
+        <div id="collectionUndo" class="collection-undo hidden" aria-label="Recently removed collection items"></div>
         <p id="collectionResult" class="collection-result" role="status" aria-live="polite"></p>
       </div>
     </article>

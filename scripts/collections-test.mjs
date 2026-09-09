@@ -75,7 +75,7 @@ const editItem = (id, value, slug = black, status = 200) => request(itemUrl(id,s
 const preview = async (slug = black) => (await request(`/api/watch/${encodeURIComponent(slug)}/preview`,{ rule:{} })).decision;
 try {
   await start();
-  assert.equal((await request('/api/status')).storage.schemaVersion,10);
+  assert.equal((await request('/api/status')).storage.schemaVersion,11);
   assert.equal((await request('/api/collections')).capabilities.purchasePlanning,true);
   for (const slug of [black,white]) await request('/api/watch',{slug});
   const project=(await request('/api/collections',{name:'Purchase plan',slugs:[black,white],budget:2000})).id;
@@ -155,7 +155,7 @@ try {
   const saved=(await collection(project)).items;
   const exported=await request('/api/data/export');
   const encrypted=await request('/api/data/export/encrypted',{passphrase:'collection plans test recovery passphrase'});
-  assert.equal(exported.formatVersion,6);
+  assert.equal(exported.formatVersion,7);
   await stop(); await start();
   assert.deepEqual((await collection(project)).items,saved,'Restart lost purchases.');
   assert.equal((await preview()).reason,'collection-only','Restart lost alert suppression.');
@@ -188,7 +188,7 @@ try {
   // Re-create the shipped schema-v9 layout in this disposable fixture and prove the real migration backfill.
   await stop();
   const migrationDb=new DatabaseSync(join(dataDir,'gearbeacon.mock.sqlite3'));
-  migrationDb.exec('DELETE FROM schema_migrations WHERE version=10; ALTER TABLE watch_collections DROP COLUMN budget; ALTER TABLE watch_collections DROP COLUMN alerts_only; ALTER TABLE watch_collection_members DROP COLUMN paid_total; ALTER TABLE watch_collection_members DROP COLUMN purchased_quantity; ALTER TABLE watch_collection_members DROP COLUMN quantity;');
+  migrationDb.exec('DELETE FROM schema_migrations WHERE version>9; ALTER TABLE watch_collections DROP COLUMN archived; ALTER TABLE watch_collections DROP COLUMN budget; ALTER TABLE watch_collections DROP COLUMN alerts_only; ALTER TABLE watch_collection_members DROP COLUMN paid_total; ALTER TABLE watch_collection_members DROP COLUMN purchased_quantity; ALTER TABLE watch_collection_members DROP COLUMN quantity;');
   const oldBackupCount=migrationDb.prepare('SELECT COUNT(*) AS count FROM backup_log').get().count;
   migrationDb.close();
   await start();

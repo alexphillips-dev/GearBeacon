@@ -42,6 +42,9 @@ const app = {
   status: null,
   products: [],
   collections: [],
+  watchOverview: null,
+  watchQuickFilter: ["ready","target","collections"].includes(savedUiState.watch?.overview) ? savedUiState.watch.overview : "all",
+  collectionUndos: [],
   pendingWatchCollection:typeof savedUiState.watch?.collection === 'string' ? savedUiState.watch.collection : 'all',
   events: [],
   activity: { events:[], count:0, page:1, pages:1, limit:[20,50,100].includes(Number(savedUiState.activity?.limit)) ? Number(savedUiState.activity.limit) : 20, loaded:false },
@@ -96,7 +99,7 @@ function persistUiState() {
   const state = {
     activeTab:app.activeTab,
     browse:{ search:$('search')?.value || '', category:app.browseCategory },
-    watch:{ search:$('watchSearch')?.value || '', status:$('watchStatus')?.value || 'all', category:app.pendingWatchCategory || $('watchCategory')?.value || 'all', sort:$('watchSort')?.value || 'changed', collection:app.pendingWatchCollection || $('watchCollection').value || 'all', groupCollections:$('groupCollectedWatches').checked },
+    watch:{ overview:app.watchQuickFilter, search:$('watchSearch')?.value || '', status:$('watchStatus')?.value || 'all', category:app.pendingWatchCategory || $('watchCategory')?.value || 'all', sort:$('watchSort')?.value || 'changed', collection:app.pendingWatchCollection || $('watchCollection').value || 'all', groupCollections:$('groupCollectedWatches').checked },
     activity:{ search:$('activitySearch')?.value || '', scope:app.pendingActivityRegion || $('activityRegion')?.value || 'all', type:$('activityType')?.value || 'all', delivery:$('activityDelivery')?.value || 'all', from:$('activityFrom')?.value || '', to:$('activityTo')?.value || '', limit:Number($('activityPageSize')?.value || 20) },
   };
   try { localStorage.setItem(UI_STATE_KEY, JSON.stringify(state)); } catch {}
@@ -350,7 +353,7 @@ function watchPaused(p) {
   return p.watchRule?.enabled === false || until === 'indefinite' || Boolean(until && new Date(until).getTime() > Date.now());
 }
 function collectionAlertSources(p, collections = app.collections) {
-  return collections.filter((collection) => collection.notifyReady && collection.alertsOnly && collection.slugs.includes(p.slug));
+  return collections.filter((collection) => !collection.archived && collection.notifyReady && collection.alertsOnly && collection.slugs.includes(p.slug));
 }
 function ruleSummary(p) {
   const sources = collectionAlertSources(p);
@@ -434,11 +437,11 @@ function storeCard(p) {
     <div class="store-card-body">
       <div class="store-card-heading">
         <button type="button" data-product-detail="${escapeHtml(p.slug)}" class="store-product-link"><h3>${escapeHtml(p.name)}</h3></button>
-        <button class="watch-icon ${p.watched ? 'watching' : ''}" data-watch="${escapeHtml(p.slug)}" title="${p.watched ? 'Remove from watchlist' : 'Watch this product'}" aria-label="${p.watched ? 'Remove from watchlist' : 'Watch this product'}">${p.watched ? '✓' : '+'}</button>
+        <button class="watch-icon ${p.watched ? 'watching' : ''}" data-add-watch="${escapeHtml(p.slug)}" title="${p.watched ? 'Add watched product to a collection' : 'Add product to Watchlist or a collection'}" aria-label="${p.watched ? 'Add watched product to a collection' : 'Add product to Watchlist or a collection'}">${p.watched ? '✓' : '+'}</button>
       </div>
       <div class="store-sku">${escapeHtml(p.slug)}</div>
       <div class="store-price-row"><strong>${escapeHtml(p.price || 'Price unavailable')}</strong><span class="stock-label ${statusClass}">${status}</span></div>
-      <button class="store-watch ${p.watched ? 'watching' : ''}" data-watch="${escapeHtml(p.slug)}">${p.watched ? 'Watching · alert enabled' : 'Notify me when available'}</button>
+      <button class="store-watch ${p.watched ? 'watching' : ''}" data-add-watch="${escapeHtml(p.slug)}">${p.watched ? 'Watching · add to collection' : 'Add to Watchlist or collection'}</button>
     </div>
   </article>`;
 }
@@ -462,12 +465,30 @@ function renderCategoryTabs() {
     return `<button class="store-category-tab ${app.browseCategory === category ? 'active' : ''}" data-category="${escapeHtml(category)}" role="tab" aria-selected="${app.browseCategory === category}">${escapeHtml(category)} <span>${count}</span></button>`;
   }).join('');
 }
-function filteredWatchlist({ includeCollected = false } = {}) {
+function renderWatchOverview() {
+  const summary=app.watchOverview;
+  $('watchOverview').classList.toggle('hidden',!summary);
+  $('watchOverviewHint').classList.toggle('hidden',!summary);
+  if (!summary) return;
+  for (const [id,key] of [['overviewReady','readyToBuy'],['overviewTarget','targetMet'],['overviewCollections','collectionsReady']]) $(id).textContent=summary[key].length;
+  for (const button of $('watchOverview').querySelectorAll('button')) button.setAttribute('aria-pressed',String(app.watchQuickFilter===button.dataset.watchOverview));
+}
+
+function filterWatchOverview(value) {
+  const next=app.watchQuickFilter===value ? 'all' : value;
+  resetWatchFilters(); app.watchQuickFilter=next; app.selectedWatch.clear(); persistUiState(); renderProducts(true);
+  $('watchOverview').querySelector(`[data-watch-overview="${value}"]`)?.focus();
+}
+
+function filteredWatchlist({ includeCollected = false, ignoreQuick = false } = {}) {
   const query = $('watchSearch').value.trim().toLowerCase();
   const status = $('watchStatus').value;
   const category = $('watchCategory').value;
   const sort = $('watchSort').value;
+  const quick=ignoreQuick ? 'all' : app.watchQuickFilter;
+  const matches=quick==='ready' ? app.watchOverview?.readyToBuy : quick==='target' ? app.watchOverview?.targetMet : null;
   const products = app.products.filter((p) => p.watched).filter((p) => {
+    if (quick==='collections' || (matches && !matches.includes(p.slug))) return false;
     if (query && !`${p.name} ${p.slug} ${p.category}`.toLowerCase().includes(query)) return false;
     if (category !== 'all' && p.category !== category) return false;
     if (status === 'in' && !p.inStock) return false;
@@ -476,7 +497,7 @@ function filteredWatchlist({ includeCollected = false } = {}) {
     if (status === 'purchased' && !p.watchRule?.purchasedAt) return false;
     if (status === 'wanted' && p.watchRule?.purchasedAt) return false;
     const collection = $('watchCollection').value;
-    if (!includeCollected && $('groupCollectedWatches').checked && collection === 'all' && p.collections?.length) return false;
+    if (quick==='all' && !includeCollected && $('groupCollectedWatches').checked && collection === 'all' && p.collections?.length) return false;
     if (collection === 'none' && p.collections?.length) return false;
     if (!['all','none'].includes(collection) && !p.collections?.includes(collection)) return false;
     return true;
@@ -493,7 +514,7 @@ function filteredWatchlist({ includeCollected = false } = {}) {
 }
 function renderWatchFilters(watched) {
   const collection = app.pendingWatchCollection || $('watchCollection').value || 'all';
-  $('watchCollection').innerHTML = '<option value="all">All collections</option><option value="none">Uncollected</option>' + app.collections.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join('');
+  $('watchCollection').innerHTML = '<option value="all">All collections</option><option value="none">Uncollected</option>' + app.collections.filter(item=>!item.archived || item.id===collection).map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join('');
   $('watchCollection').value = ['all','none',...app.collections.map((item) => item.id)].includes(collection) ? collection : 'all';
   app.pendingWatchCollection = null;
   const selected = app.pendingWatchCategory || $('watchCategory').value || 'all';
@@ -502,10 +523,11 @@ function renderWatchFilters(watched) {
   $('watchCategory').value = choices.includes(selected) ? selected : 'all';
   if (choices.includes(selected) || watched.length) app.pendingWatchCategory = null;
 }
-function watchFiltersActive() { return Boolean($('watchSearch').value.trim() || $('watchStatus').value !== 'all' || $('watchCategory').value !== 'all' || $('watchSort').value !== 'changed' || $('watchCollection').value !== 'all'); }
+function watchFiltersActive() { return Boolean(app.watchQuickFilter !== 'all' || $('watchSearch').value.trim() || $('watchStatus').value !== 'all' || $('watchCategory').value !== 'all' || $('watchSort').value !== 'changed' || $('watchCollection').value !== 'all'); }
 function browseFiltersActive() { return Boolean($('search').value.trim() || app.browseCategory !== 'All'); }
 function activityFiltersActive() { return Boolean($('activitySearch').value.trim() || $('activityRegion').value !== 'all' || $('activityType').value !== 'all' || $('activityDelivery').value !== 'all' || $('activityFrom').value || $('activityTo').value); }
 function resetWatchFilters() {
+  app.watchQuickFilter='all';
   $('watchCollection').value = 'all'; app.pendingWatchCollection = null;
   $('watchSearch').value = ''; $('watchStatus').value = 'all'; $('watchCategory').value = 'all'; $('watchSort').value = 'changed'; app.pendingWatchCategory = null;
   persistUiState(); renderProducts(true);
@@ -523,15 +545,15 @@ function renderBulkActions() {
 }
 function renderProducts(force = false) {
   const allWatched = app.products.filter((p) => p.watched);
-  renderWatchFilters(allWatched);
-  if ($('groupCollectedWatches').checked && $('watchCollection').value === 'all') {
+  renderWatchFilters(allWatched); renderWatchOverview();
+  if (app.watchQuickFilter==='all' && $('groupCollectedWatches').checked && $('watchCollection').value === 'all') {
     for (const product of allWatched) if (product.collections?.length) app.selectedWatch.delete(product.slug);
   }
   renderCollectionReadiness();
   const watched = filteredWatchlist();
   $('watchCount').textContent = allWatched.length;
   if ($('settingsWatchCount')) $('settingsWatchCount').textContent = `${allWatched.length} product${allWatched.length === 1 ? '' : 's'}`;
-  const watchKey = JSON.stringify([watched.map((p) => [p.slug,p.status,p.price,p.lastChangedAt,p.watchRule,p.collections]), app.collections.map(({ id,name,notifyReady,alertsOnly }) => [id,name,notifyReady,alertsOnly]), [...app.selectedWatch]]);
+  const watchKey = JSON.stringify([watched.map((p) => [p.slug,p.status,p.price,p.lastChangedAt,p.watchRule,p.collections]), app.collections.map(({ id,name,notifyReady,alertsOnly,archived }) => [id,name,notifyReady,alertsOnly,archived]), [...app.selectedWatch]]);
   if (force || watchKey !== app.watchRenderKey) {
     $('watchGrid').innerHTML = watched.map(watchCard).join('');
     app.watchRenderKey = watchKey;
@@ -769,10 +791,10 @@ function renderProductDialog(details) {
     <div class="settings-actions wrap"><button class="primary" type="submit">Save alert rules</button><button type="button" data-preview-rule>Preview rule & notification</button><button type="button" data-purchased="${escapeHtml(p.slug)}">${rule.purchasedAt ? 'Still wanted' : 'Mark purchased'}</button><button type="button" data-watch="${escapeHtml(p.slug)}">Remove from watchlist</button></div>
     ${rule.purchasedAt ? '<p class="rule-help">Purchased: alerts are stopped. Mark this watch as still wanted to enable it again.</p>' : ''}
     <div class="settings-result hidden" data-rule-result role="status" aria-live="polite"></div>
-  </form>` : `<div class="product-watch-prompt"><p>Add this product to your watchlist to configure its alert rules.</p><button class="primary button-link" data-watch="${escapeHtml(p.slug)}">Watch this product</button></div>`;
+  </form>` : `<div class="product-watch-prompt"><p>Add this product to your watchlist to configure its alert rules.</p><button class="primary button-link" data-add-watch="${escapeHtml(p.slug)}">Add to Watchlist or collection</button></div>`;
   const changes = details.history.slice(0, 12).map((item) => `<div class="product-change"><span class="connection-dot ${item.inStock ? 'enabled' : ''}"></span><div><strong>${escapeHtml(item.changeType.replaceAll('-', ' '))}</strong><small>${escapeHtml(item.status || 'Unknown')}${item.price ? ` · ${escapeHtml(item.price)}` : ''}</small></div><time>${escapeHtml(relativeTime(item.observedAt))}</time></div>`).join('');
   $('productDialogBody').innerHTML = `<div class="product-hero"><div class="product-hero-image media-shell">${imageMarkup(p, 'product-image')}</div><div><div class="product-status-row"><span class="badge ${p.inStock ? 'in' : p.comingSoon ? 'soon' : 'out'}">${p.unlisted ? 'Unlisted' : p.inStock ? 'In stock' : p.comingSoon ? 'Coming soon' : 'Sold out'}</span><strong>${escapeHtml(p.price || 'Price unavailable')}</strong></div><div class="product-sku-row"><p>${escapeHtml(p.sku || p.slug)}</p><button class="copy-button" type="button" data-copy-text="${escapeHtml(p.sku || p.slug)}" data-copy-label="SKU">Copy SKU</button></div><dl class="settings-details"><div><dt>Store region</dt><dd>${escapeHtml(String(p.region || app.currentRegion || '').toUpperCase())}</dd></div><div><dt>First observed</dt><dd>${escapeHtml(relativeTime(details.firstObservedAt))}</dd></div><div><dt>Last checked</dt><dd>${escapeHtml(relativeTime(p.lastSeenAt))}</dd></div><div><dt>Last changed</dt><dd>${escapeHtml(relativeTime(details.lastChangedAt))}</dd></div><div><dt>History retention</dt><dd>${details.historyRetentionDays} days</dd></div></dl><div class="product-link-actions"><a class="button-link" href="${escapeHtml(p.url)}" target="_blank" rel="noopener">Open UniFi Store ↗</a><button class="copy-button" type="button" data-copy-text="${escapeHtml(p.url)}" data-copy-label="Store link">Copy link</button></div></div></div>
-    ${variantSelector}${ruleForm}<section class="product-history" data-product-insights>${renderInsights(details.insights)}</section><section class="product-history"><h3>Recent changes</h3><div class="product-change-list">${changes || '<div class="history-empty">No changes recorded yet.</div>'}</div></section>`;
+    ${variantSelector}${p.watched ? `<div class="product-watch-prompt"><button class="button-link" type="button" data-add-watch="${escapeHtml(p.slug)}">Add to collection</button></div>` : ''}${ruleForm}<section class="product-history" data-product-insights>${renderInsights(details.insights)}</section><section class="product-history"><h3>Recent changes</h3><div class="product-change-list">${changes || '<div class="history-empty">No changes recorded yet.</div>'}</div></section>`;
   wireProductImages($('productDialogBody'));
 }
 
@@ -823,7 +845,7 @@ async function saveProductRule(form) {
   try {
     const result = await api(`/api/watch/${encodeURIComponent(form.dataset.ruleSlug)}/rules`, { method:'PUT', body:JSON.stringify({ rule }) });
     const membership = await api(`/api/watch/${encodeURIComponent(form.dataset.ruleSlug)}/collections`, { method:'PUT', body:JSON.stringify({ collections:[...form.querySelectorAll('[name="collection"]:checked')].map((input) => input.value) }) });
-    app.collections = membership.collections;
+    app.collections = membership.collections; app.watchOverview=membership.overview || app.watchOverview;
     const product = app.products.find((item) => item.slug === form.dataset.ruleSlug); if (product) Object.assign(product, membership.product, { watchRule:result.rule });
     renderProducts(true); await openProductDialog(form.dataset.ruleSlug, true); toast('Product alert rules saved');
   } catch (err) { resultBox.classList.remove('hidden'); resultBox.textContent = err.message; button.disabled = false; button.textContent = 'Save alert rules'; }
@@ -1716,7 +1738,7 @@ async function refresh() {
     app.reconnectPending = false;
     app.status = status;
     app.products = products.products || [];
-    app.collections = products.collections || [];
+    app.collections = products.collections || []; app.watchOverview=products.overview || null;
     renderCollections();
     maybeBrowserNotify(events.events || []);
     app.events = events.events || [];
@@ -1751,36 +1773,147 @@ async function toggleWatch(slug) {
       Object.assign(product, result.product || {}, { watched:true });
       if (!app.products.some((item) => item.slug === slug)) app.products.push(product);
     }
+    await refresh();
     renderProducts(true);
     toast(product.watched ? `Watching ${product.name}` : `Stopped watching ${product.name}`);
     if (!$('productDialog').classList.contains('hidden')) openProductDialog(slug, true);
   } catch (err) { toast(err.message, 'error'); }
 }
 
+async function requireWatchWorkflow() {
+  const result=await api('/api/collections');
+  if (!result.capabilities?.watchWorkflow) throw new Error('Update and restart GearBeacon to use the new Watchlist workflow. Your changes have not been saved.');
+  return result;
+}
+
+async function openAddWatch(slug) {
+  const returnProduct=!$('productDialog').classList.contains('hidden') ? app.currentProductDetails?.product.slug : null;
+  if (returnProduct) closeProductDialog();
+  openCollectionManager(); app.addWatchReturn=returnProduct;
+  const draft={slug,products:[],region:app.currentRegion}; app.addWatchDraft=draft;
+  collectionView('add'); $('collectionDialogTitle').textContent='Add product';
+  $('collectionDialogDescription').textContent='Choose a variant and where to keep it.';
+  $('addWatchSummary').innerHTML=''; $('addWatchVariant').innerHTML='';
+  $('addWatchDestination').innerHTML='<option value="watchlist">Watchlist</option>';
+  $('addWatchName').value=''; $('addWatchQuantity').value='1';
+  $('saveAddWatch').disabled=true; renderAddWatch();
+  $('collectionResult').textContent='Loading product…';
+  try {
+    const [details,result]=await Promise.all([api(`/api/products/${encodeURIComponent(slug)}`),requireWatchWorkflow()]);
+    if (app.addWatchDraft!==draft || draft.region!==app.currentRegion) return;
+    app.collections=result.collections; app.watchOverview=result.overview;
+    draft.products=[details.parent || details.product,...details.variants].filter((product,index,all)=>all.findIndex(item=>item.slug===product.slug)===index);
+    $('addWatchVariant').innerHTML=draft.products.map(product=>`<option value="${escapeHtml(product.slug)}">${escapeHtml(product.variantTitle || (product.variantId ? product.sku || product.name : 'Any variant'))}${product.sku ? ` · ${escapeHtml(product.sku)}` : ''}</option>`).join('');
+    $('addWatchVariant').value=slug;
+    $('addWatchDestination').innerHTML='<option value="watchlist">Watchlist</option>'+app.collections.filter(item=>!item.archived).map(item=>`<option value="${escapeHtml(item.id)}">Collection: ${escapeHtml(item.name)}</option>`).join('')+'<option value="new">+ New collection</option>';
+    $('collectionResult').textContent=''; renderAddWatch(); $('addWatchVariant').focus();
+  } catch (err) { if (app.addWatchDraft===draft) { $('collectionResult').textContent=err.message; $('collectionResult').classList.add('error'); } }
+}
+
+function renderAddWatch() {
+  const draft=app.addWatchDraft; if (!draft) return;
+  const product=draft.products.find(item=>item.slug===$('addWatchVariant').value);
+  const destination=$('addWatchDestination').value;
+  const member=app.collections.find(item=>item.id===destination)?.items.find(item=>item.slug===product?.slug);
+  $('addWatchNameField').classList.toggle('hidden',destination!=='new');
+  $('addWatchName').disabled=destination!=='new'; $('addWatchName').required=destination==='new';
+  $('addWatchQuantityField').classList.toggle('hidden',destination==='watchlist');
+  $('addWatchQuantity').disabled=destination==='watchlist' || Boolean(member);
+  if (member) $('addWatchQuantity').value=member.quantity;
+  else if (draft.lastMember) $('addWatchQuantity').value='1';
+  draft.lastMember=Boolean(member);
+  $('saveAddWatch').disabled=!product;
+  $('saveAddWatch').textContent=member || (destination==='watchlist' && product?.watched) ? 'Done' : 'Add product';
+  $('addWatchHint').textContent=member ? `Already in this collection: ${member.purchasedQuantity} of ${member.quantity} purchased. Its quantity and recorded costs will be kept.` : destination==='watchlist' ? product?.watched ? 'Already watched. Its existing rules and collections will be kept.' : 'Watch this product using your global notification settings.' : 'An existing watch is reused with its rules preserved. New collection items start with this desired quantity and no purchases recorded.';
+  if (!product) return;
+  $('addWatchSummary').innerHTML=`<div class="collection-item-heading"><button class="collection-watch-image media-shell" type="button" data-collection-image="${escapeHtml(product.slug)}" aria-label="Retry image for ${escapeHtml(product.name)}">${imageMarkup(product)}</button><div class="collection-watch-copy"><strong>${escapeHtml(product.name)}</strong><small>${escapeHtml([product.sku,product.price].filter(Boolean).join(' · '))}</small></div></div>`;
+  wireProductImages($('addWatchSummary'));
+}
+
+async function saveAddedWatch() {
+  const draft=app.addWatchDraft;
+  if (!draft || app.collectionBusy || draft.region!==app.currentRegion) return;
+  const slug=$('addWatchVariant').value; const destination=$('addWatchDestination').value;
+  const body={slug,...(destination==='watchlist' ? {} : {quantity:Number($('addWatchQuantity').value),...(destination==='new' ? {collectionName:$('addWatchName').value} : {collectionId:destination})})};
+  const controls=[...$('collectionDialog').querySelectorAll('button,input,select')].map(node=>[node,node.disabled]);
+  app.collectionBusy=true; controls.forEach(([node])=>node.disabled=true);
+  $('collectionResult').textContent='Adding product…'; $('collectionResult').classList.remove('error');
+  let saved=false;
+  try {
+    const result=await api('/api/watch/add',{method:'POST',body:JSON.stringify(body)});
+    const collection=result.collections?.find(item=>item.id===result.collectionId);
+    if (!result.product?.watched || result.product.slug!==slug || (destination!=='watchlist' && (!collection?.slugs.includes(slug) || (destination!=='new' && collection.id!==destination) || (!result.alreadyMember && collection.items.find(item=>item.slug===slug)?.quantity!==body.quantity)))) throw new Error('The server did not confirm the product was added. Your selections are still here.');
+    app.collections=result.collections; app.watchOverview=result.overview;
+    const product=app.products.find(item=>item.slug===slug);
+    if (product) Object.assign(product,result.product); else app.products.push(result.product);
+    renderCollections(true); renderProducts(true);
+    saved=true;
+    if (app.addWatchReturn) app.addWatchReturn=slug;
+    toast(result.alreadyMember ? 'Already in this collection. Purchase records kept.' : collection ? `Added to ${collection.name}.` : result.alreadyWatched ? 'Already watched. Existing rules kept.' : 'Added to Watchlist.');
+  } catch (err) { $('collectionResult').textContent=err.message; $('collectionResult').classList.add('error'); }
+  finally { app.collectionBusy=false; controls.forEach(([node,disabled])=>node.disabled=disabled); }
+  if (saved) closeCollectionManager();
+}
+
+async function archiveCollection(id) {
+  const collection=app.collections.find(item=>item.id===id); if (!collection) return;
+  const overviewVisible=!$('collectionOverview').classList.contains('hidden');
+  const result=await commitCollection('PUT',id,{archived:!collection.archived});
+  if (!result) return;
+  if ($('watchCollection').value===id && !collection.archived) { $('watchCollection').value='all'; app.pendingWatchCollection=null; persistUiState(); }
+  renderProducts(true);
+  toast(collection.archived ? 'Collection restored. Current conditions establish a new alert baseline.' : 'Collection archived. Purchases kept; collection alerts and its override are inactive.');
+  if (overviewVisible) { renderCollections(true); $('collectionArchiveFilter').focus(); }
+  else closeCollectionManager();
+}
+
+function renderCollectionUndos() {
+  const entries=app.collectionUndos.filter(item=>item.region===app.currentRegion);
+  $('collectionUndo').classList.toggle('hidden',!entries.length);
+  $('collectionUndo').innerHTML=entries.length ? '<p>Recently removed · Undo remains available until you dismiss it or refresh this page.</p>'+entries.map(item=>`<div><span>${escapeHtml(item.name)} removed from ${escapeHtml(app.collections.find(collection=>collection.id===item.id)?.name || 'collection')}</span><button type="button" data-undo-collection="${escapeHtml(item.key)}" aria-label="Undo removal of ${escapeHtml(item.name)}">Undo</button><button type="button" data-dismiss-collection-undo="${escapeHtml(item.key)}" aria-label="Dismiss undo for ${escapeHtml(item.name)}">Dismiss</button></div>`).join('') : '';
+}
+
+async function undoCollectionRemoval(key) {
+  const entry=app.collectionUndos.find(item=>item.key===key && item.region===app.currentRegion); if (!entry) return;
+  if (await mutateCollectionItem('POST',entry.id,entry.slug,entry.plan)) {
+    app.collectionUndos=app.collectionUndos.filter(item=>item.key!==key); renderCollectionUndos();
+    openCollectionDetails(entry.id);
+    $('collectionDetails').querySelector(`[data-collection-item-edit="${CSS.escape(entry.slug)}"]`)?.focus();
+    toast('Item restored with its quantity and purchase record.');
+  }
+}
+
 function renderCollections(force = false) {
-  const key = JSON.stringify(app.collections.map(({ id,name,slugs }) => ({ id,name,slugs })));
+  const archiveFilter=$('collectionArchiveFilter').value;
+  const visible=app.collections.filter(item=>archiveFilter==='all' || Boolean(item.archived)===(archiveFilter==='archived'));
+  const key = JSON.stringify([archiveFilter,app.collections.map(({ id,name,slugs,archived }) => ({ id,name,slugs,archived }))]);
   if (!force && key === app.collectionsRenderKey) return;
   app.collectionsRenderKey = key;
   const focused = document.activeElement;
   const focusAction = ['data-edit-collection','data-view-collection','data-collection-alerts'].find((attribute) => focused?.hasAttribute(attribute));
   const focusId = focusAction && focused.getAttribute(focusAction);
-  $('collectionTotal').textContent = `${app.collections.length} collection${app.collections.length === 1 ? '' : 's'}`;
-  $('collectionEmpty').classList.toggle('hidden', app.collections.length > 0);
+  $('collectionTotal').textContent = `${visible.length} collection${visible.length === 1 ? '' : 's'}`;
+  $('collectionEmpty').classList.toggle('hidden', visible.length > 0);
+  $('collectionEmpty').querySelector('h3').textContent=archiveFilter==='archived' ? 'No archived collections' : 'A place for every project';
+  $('collectionEmpty').querySelector('p').textContent=archiveFilter==='archived' ? 'Archived projects keep their purchase records here until you restore or delete them.' : 'Group your watches into projects, like Home network or Camera upgrade.';
+  $('firstCollection').classList.toggle('hidden',archiveFilter==='archived');
   $('newCollection').classList.toggle('hidden', app.collections.length === 0);
-  $('collectionList').innerHTML = app.collections.map((collection) => `<article class="collection-row" data-collection-row="${escapeHtml(collection.id)}"><div class="collection-row-copy"><h3>${escapeHtml(collection.name)}</h3><p>${collection.slugs.length} watch${collection.slugs.length === 1 ? '' : 'es'}</p></div><div class="collection-row-actions"><button type="button" data-view-collection="${escapeHtml(collection.id)}" aria-label="View watches in ${escapeHtml(collection.name)}">View watches</button><button type="button" data-collection-alerts="${escapeHtml(collection.id)}" aria-label="Configure alerts for ${escapeHtml(collection.name)}">Alerts</button><button type="button" data-edit-collection="${escapeHtml(collection.id)}" aria-label="Edit ${escapeHtml(collection.name)}">Edit</button></div></article>`).join('');
+  $('collectionList').innerHTML = visible.map((collection) => `<article class="collection-row" data-collection-row="${escapeHtml(collection.id)}"><div class="collection-row-copy"><h3>${escapeHtml(collection.name)}</h3><p>${collection.slugs.length} watch${collection.slugs.length === 1 ? '' : 'es'}${collection.archived ? ' · Archived' : ''}</p></div><div class="collection-row-actions"><button type="button" data-view-collection="${escapeHtml(collection.id)}" aria-label="View watches in ${escapeHtml(collection.name)}">View watches</button><button type="button" data-collection-alerts="${escapeHtml(collection.id)}" aria-label="Configure alerts for ${escapeHtml(collection.name)}">Alerts</button><button type="button" data-edit-collection="${escapeHtml(collection.id)}" aria-label="Edit ${escapeHtml(collection.name)}">Edit</button><button type="button" data-archive-collection="${escapeHtml(collection.id)}" aria-label="${collection.archived ? 'Restore' : 'Archive'} ${escapeHtml(collection.name)}">${collection.archived ? 'Restore' : 'Archive'}</button></div></article>`).join('');
   if (focusId && !focused.isConnected) ($('collectionList').querySelector(`[${focusAction}="${CSS.escape(focusId)}"]`) || $('newCollection').offsetParent && $('newCollection') || $('firstCollection')).focus();
 }
 
 function collectionView(view) {
   if (view !== 'details') app.collectionDetailId = null;
   if (view !== 'alerts') app.collectionAlertId = null;
-  for (const [id, name] of [['collectionOverview','list'],['collectionBulk','bulk'],['collectionForm','edit'],['collectionDetails','details'],['collectionItemForm','item'],['collectionAlerts','alerts'],['collectionDeleteConfirm','delete']]) $(id).classList.toggle('hidden', name !== view);
+  for (const [id, name] of [['collectionOverview','list'],['addWatchForm','add'],['collectionBulk','bulk'],['collectionForm','edit'],['collectionDetails','details'],['collectionItemForm','item'],['collectionAlerts','alerts'],['collectionDeleteConfirm','delete']]) $(id).classList.toggle('hidden', name !== view);
   $('collectionResult').textContent = '';
   $('collectionResult').classList.remove('error');
 }
 
 function openCollectionManager(bulk = false) {
   app.collectionLastFocus = document.activeElement;
+  const add=app.collectionLastFocus?.closest('[data-add-watch]');
+  app.collectionLastAddSelector=add ? `#browseGrid .${add.classList.contains('watch-icon') ? 'watch-icon' : 'store-watch'}[data-add-watch="${CSS.escape(add.dataset.addWatch)}"]` : null;
   const card = app.collectionLastFocus?.closest('[data-collection-card]');
   const action = ['data-collection-detail','data-collection-alerts','data-edit-collection','data-view-collection'].find((name) => app.collectionLastFocus?.hasAttribute(name));
   app.collectionLastCardSelector = card && action ? `[data-collection-card="${CSS.escape(card.dataset.collectionCard)}"] ${app.collectionLastFocus.classList.contains('collection-preview') ? '.collection-preview' : app.collectionLastFocus.classList.contains('product-name-button') ? '.product-name-button' : '.card-actions button'}[${action}]` : null;
@@ -1791,7 +1924,7 @@ function openCollectionManager(bulk = false) {
   document.body.classList.add('dialog-open');
   document.querySelector('main').inert = true;
   $('toTop').inert = true;
-  showCollectionOverview();
+  showCollectionOverview(); renderCollectionUndos();
 }
 
 function closeCollectionManager() {
@@ -1805,9 +1938,12 @@ function closeCollectionManager() {
   app.collectionAlertId = null;
   app.collectionAlertReturn = null;
   app.collectionItemDraft = null;
+  app.addWatchDraft=null;
+  const returnProduct=app.addWatchReturn; app.addWatchReturn=null;
   const original = app.collectionLastFocus;
-  const replacement = app.collectionLastCardSelector && document.querySelector(app.collectionLastCardSelector);
+  const replacement = (app.collectionLastCardSelector && document.querySelector(app.collectionLastCardSelector)) || (app.collectionLastAddSelector && document.querySelector(app.collectionLastAddSelector));
   (original?.isConnected && original.offsetParent !== null ? original : replacement || $('openCollectionManager')).focus();
+  if (returnProduct) openProductDialog(returnProduct);
 }
 
 function dismissCollectionManager() {
@@ -1825,9 +1961,9 @@ function showCollectionOverview(focusId = null) {
   $('collectionDialogTitle').textContent = bulk ? 'Add to collection' : 'Manage collections';
   $('collectionDialogDescription').textContent = bulk ? `${bulk.length} selected watch${bulk.length === 1 ? '' : 'es'} · choose a project for your gear.` : 'Group your watched gear by project.';
   renderCollections(true);
-  $('collectionDestination').innerHTML = app.collections.map((collection) => `<option value="${escapeHtml(collection.id)}">${escapeHtml(collection.name)}</option>`).join('');
-  $('collectionBulkForm').classList.toggle('hidden', !app.collections.length);
-  const target = bulk ? (app.collections.length ? $('collectionDestination') : $('newBulkCollection')) : focusId ? $('collectionList').querySelector(`[data-edit-collection="${CSS.escape(focusId)}"]`) : null;
+  $('collectionDestination').innerHTML = app.collections.filter(item=>!item.archived).map((collection) => `<option value="${escapeHtml(collection.id)}">${escapeHtml(collection.name)}</option>`).join('');
+  $('collectionBulkForm').classList.toggle('hidden', !$('collectionDestination').options.length);
+  const target = bulk ? ($('collectionDestination').options.length ? $('collectionDestination') : $('newBulkCollection')) : focusId ? $('collectionList').querySelector(`[data-edit-collection="${CSS.escape(focusId)}"]`) : null;
   (target || (app.collections.length ? $('newCollection') : $('firstCollection'))).focus();
 }
 
@@ -1844,6 +1980,7 @@ function editCollection(id = null) {
   $('collectionWatchSearch').value = '';
   $('saveCollection').textContent = id ? 'Save changes' : 'Create collection';
   $('collectionDeleteArea').classList.toggle('hidden', !id);
+  $('archiveCollection').textContent=collection?.archived ? 'Restore collection' : 'Archive collection';
   $('editCollectionAlerts').classList.toggle('hidden', !id);
   renderCollectionChoices();
   $('collectionName').focus();
@@ -1868,6 +2005,7 @@ async function commitCollection(method, id, body) {
   const controls = [...$('collectionDialog').querySelectorAll('button,input,select')].map((control) => [control,control.disabled]);
   controls.forEach(([control]) => { control.disabled = true; });
   try {
+    if (body?.archived !== undefined) await requireWatchWorkflow();
     const editsMembers = body?.slugs !== undefined || body?.addSlugs !== undefined;
     if (editsMembers || body?.budget !== undefined) {
       const server = await api('/api/collections');
@@ -1887,7 +2025,8 @@ async function commitCollection(method, id, body) {
       if (!membersSaved) throw new Error('The server did not confirm your collection items were saved. Your selections are still here. Restart GearBeacon after updating, then try saving again.');
     }
     if (body?.budget !== undefined && result.collections?.find(item=>item.id===(id || result.id))?.budget !== body.budget) throw new Error('The server did not confirm your budget was saved. Restart GearBeacon after updating and try again.');
-    app.collections = result.collections;
+    if (body?.archived !== undefined && result.collections?.find(item=>item.id===id)?.archived !== body.archived) throw new Error('The server did not confirm the archive change.');
+    app.collections = result.collections; app.watchOverview=result.overview || app.watchOverview;
     for (const product of app.products) product.collections = app.collections.filter((collection) => collection.slugs.includes(product.slug)).map((collection) => collection.id);
     renderCollections(); renderProducts(true);
     return result;
@@ -1964,7 +2103,7 @@ function collectionCard(collection) {
   const result = collection.readiness;
   const members = collection.slugs.map((slug) => app.products.find((product) => product.slug === slug) || { slug, name:slug });
   const previews = members.slice(0,4);
-  const badge = !members.length ? 'Empty' : !result.remaining ? 'Purchased' : result.ready ? 'Ready' : result.unknown ? 'Awaiting check' : 'Waiting';
+  const badge = collection.archived ? 'Archived' : !members.length ? 'Empty' : !result.remaining ? 'Purchased' : result.ready ? 'Ready' : result.unknown ? 'Awaiting check' : 'Waiting';
   const badgeClass = result.ready ? 'in' : result.waiting ? 'out' : 'soon';
   const preview = previews.map((product) => `<span class="collection-preview-tile media-shell">${imageMarkup(product)}${!product.imageUrl ? '<span class="collection-image-missing" aria-hidden="true">No image</span>' : ''}</span>`).join('');
   return `<article class="card collection-card" data-collection-card="${escapeHtml(collection.id)}">
@@ -1975,7 +2114,7 @@ function collectionCard(collection) {
     <div class="price" title="${escapeHtml(collectionPriceNote(collection))}">${escapeHtml(collectionPriceText(collection))}</div>
     <div class="detail readiness-status" role="status">${escapeHtml(collectionStatusText(collection))}</div>
     <div class="rule-chips"><span class="rule-chip">${escapeHtml(collectionPriceNote(collection))}</span></div>
-    <div class="rule-chips"><span class="rule-chip">${collection.notifyReady && collection.alertsOnly ? 'Collection alerts only' : `Ready alerts ${collection.notifyReady ? 'on' : 'off'}`}</span>${collection.budget !== null && collection.budget !== undefined ? `<span class="rule-chip">${escapeHtml(collectionBudgetText(collection))}</span>` : ''}</div>
+    <div class="rule-chips"><span class="rule-chip">${collection.archived ? 'Archived · alerts off' : !collection.archived && collection.notifyReady && collection.alertsOnly ? 'Collection alerts only' : `Ready alerts ${collection.notifyReady ? 'on' : 'off'}`}</span>${collection.budget !== null && collection.budget !== undefined ? `<span class="rule-chip">${escapeHtml(collectionBudgetText(collection))}</span>` : ''}</div>
     <div class="card-actions"><button type="button" data-view-collection="${escapeHtml(collection.id)}">View items</button><button type="button" data-collection-alerts="${escapeHtml(collection.id)}" aria-label="Configure alerts for ${escapeHtml(collection.name)}">Alerts</button><button type="button" data-edit-collection="${escapeHtml(collection.id)}">Edit</button></div>
   </article>`;
 }
@@ -2003,7 +2142,7 @@ function renderCollectionDetails() {
   const focusValue = focusAction && focused.getAttribute(focusAction);
   const text = collectionStatusText(collection);
   $('collectionDialogTitle').textContent = collection.name;
-  $('collectionDialogDescription').textContent = `${collection.slugs.length} item${collection.slugs.length === 1 ? '' : 's'} · Collection details`;
+  $('collectionDialogDescription').textContent = `${collection.slugs.length} item${collection.slugs.length === 1 ? '' : 's'} · ${collection.archived ? 'Archived collection' : 'Collection details'}`;
   const items = members.map(({ item, product }) => `<li class="collection-member-row">
     <button class="collection-watch-image media-shell" type="button" data-collection-image="${escapeHtml(product.slug)}" aria-label="Retry image for ${escapeHtml(product.name)}">${imageMarkup(product)}</button>
     <div class="collection-watch-copy"><strong>${escapeHtml(product.name)}</strong><small>${escapeHtml([product.variantTitle || (product.variantId ? '' : 'Any variant'),product.sku,product.price || 'Price unavailable'].filter(Boolean).join(' · '))}</small><small>${escapeHtml(item.reason)}</small></div>
@@ -2062,12 +2201,12 @@ async function mutateCollectionItem(method, id, slug, body) {
   const controls=[...$('collectionDialog').querySelectorAll('button,input,select')].map(control=>[control,control.disabled]);
   controls.forEach(([control])=>control.disabled=true);
   try {
-    await requireCollectionPlanning();
+    await requireWatchWorkflow();
     const result=await api(`/api/collections/${encodeURIComponent(id)}/items/${encodeURIComponent(slug)}`,{method,...(body ? {body:JSON.stringify(body)} : {})});
     const collection=result.collections?.find(item=>item.id===id);
     const saved=collection?.items?.find(item=>item.slug===slug);
-    if (!collection || (method==='DELETE' ? collection.slugs.includes(slug) : !saved || ['quantity','purchasedQuantity','paidTotal'].some(key=>saved[key]!==body[key]) || result.product?.watchRule?.targetPrice!==body.targetPrice)) throw new Error('The server did not confirm your item changes. Your edits are still here.');
-    app.collections=result.collections;
+    if (!collection || (method==='DELETE' ? collection.slugs.includes(slug) : !saved || ['quantity','purchasedQuantity','paidTotal'].some(key=>saved[key]!==body[key]) || (body.targetPrice !== undefined && result.product?.watchRule?.targetPrice!==body.targetPrice))) throw new Error('The server did not confirm your item changes. Your edits are still here.');
+    app.collections=result.collections; app.watchOverview=result.overview || app.watchOverview;
     const product=app.products.find(item=>item.slug===slug);
     if (product && result.product) Object.assign(product,result.product);
     for (const product of app.products) product.collections=app.collections.filter(item=>item.slugs.includes(product.slug)).map(item=>item.id);
@@ -2089,7 +2228,10 @@ async function saveCollectionItem() {
 async function removeCollectionItem(slug) {
   const id=app.collectionDetailId;
   if (!id) return;
-  if (await mutateCollectionItem('DELETE',id,slug)) {
+  const result=await mutateCollectionItem('DELETE',id,slug);
+  if (result) {
+    if (result.removedItem) app.collectionUndos.push({key:crypto.randomUUID(),id,slug,region:app.currentRegion,plan:result.removedItem,name:app.products.find(item=>item.slug===slug)?.name || slug});
+    renderCollectionUndos();
     app.collectionDetailsKey=null; renderCollectionDetails();
     ($('collectionDetails').querySelector('[data-collection-item-edit]') || $('collectionDetails').querySelector('[data-edit-collection]')).focus();
     toast('Item removed from this collection. Its watch and other collections are kept.');
@@ -2131,7 +2273,7 @@ function renderCollectionAlerts() {
   const collection = app.collections.find((item) => item.id === app.collectionAlertId);
   if (!collection || $('collectionAlerts').classList.contains('hidden') || $('collectionDialog').classList.contains('hidden')) return;
   const returnView = app.collectionAlertReturn?.view;
-  const key = JSON.stringify([collection.id,collection.name,collection.notifyReady,collection.alertsOnly,returnView]);
+  const key = JSON.stringify([collection.id,collection.name,collection.notifyReady,collection.alertsOnly,collection.archived,returnView]);
   if (key === app.collectionAlertsKey) return;
   app.collectionAlertsKey = key;
   const focused = document.activeElement;
@@ -2141,11 +2283,11 @@ function renderCollectionAlerts() {
   $('collectionDialogTitle').textContent = collection.name;
   $('collectionDialogDescription').textContent = 'Collection alert settings';
   $('collectionAlerts').innerHTML = `<section class="collection-alert-settings" aria-labelledby="collectionAlertHeading">
-    <h3 id="collectionAlertHeading">Collection alerts</h3>
+    <h3 id="collectionAlertHeading">Collection alerts</h3>${collection.archived ? '<p><strong>This collection is archived.</strong> Its alerts and item-alert override are inactive. Restore it to use the saved settings.</p>' : ''}
     <label class="readiness-alert"><input type="checkbox" data-notify-collection="${escapeHtml(collection.id)}" aria-describedby="collectionAlertConditions collectionAlertInteraction collectionAlertDelivery" ${collection.notifyReady ? 'checked' : ''}/> Notify when all remaining items qualify<span class="sr-only"> in ${escapeHtml(collection.name)}</span></label>
     <p id="collectionAlertConditions">Receive one alert when every unpurchased item is in stock and meets its individual target price, if set.</p>
     <label class="field"><span>Individual item alerts</span><select data-collection-alert-mode="${escapeHtml(collection.id)}" aria-describedby="collectionAlertInteraction"><option value="both" ${!collection.alertsOnly ? 'selected' : ''}>Collection and item alerts</option><option value="only" ${collection.alertsOnly ? 'selected' : ''}>Collection alerts only</option></select></label>
-    <p id="collectionAlertInteraction">${collection.notifyReady && collection.alertsOnly ? 'Individual item alerts are suppressed while this collection alert is enabled. Their rules stay saved.' : 'Individual item alerts continue using their own rules unless another collection suppresses them.'} If any collection containing an item uses Collection alerts only with alerts enabled, it suppresses that item's notifications, including All activity and immediate restocks. Turning off the last override restores item alerts. Pausing an item does not pause collection alerts.</p>
+    <p id="collectionAlertInteraction">${!collection.archived && collection.notifyReady && collection.alertsOnly ? 'Individual item alerts are suppressed while this collection alert is enabled. Their rules stay saved.' : 'Individual item alerts continue using their own rules unless another collection suppresses them.'} If any collection containing an item uses Collection alerts only with alerts enabled, it suppresses that item's notifications, including All activity and immediate restocks. Turning off the last override restores item alerts. Pausing an item does not pause collection alerts.</p>
     <p id="collectionAlertDelivery">Saves automatically. Uses the channels and delivery settings in Settings &gt; Notifications. If the collection already qualifies, enabling this waits until it stops qualifying and becomes ready again.</p>
     ${returnView === 'edit' ? '<p>Your name and item selections stay in the editor. Alerts apply to saved items; choose Save changes after returning to apply your collection edits.</p>' : ''}
     </section><div class="collection-form-actions"><button type="button" data-close-collection-alerts>${returnView === 'edit' ? 'Back to editing' : returnView === 'details' ? 'Back to collection' : returnView === 'list' ? 'Back to collections' : 'Done'}</button></div>`;
@@ -2156,12 +2298,14 @@ function renderCollectionAlerts() {
 
 function renderCollectionReadiness(force = false) {
   const selected = $('watchCollection').value;
-  let collections = app.collections.filter((collection) => selected === 'all' || collection.id === selected);
+  let collections = app.collections.filter((collection) => selected === 'all' ? !collection.archived : collection.id === selected);
+  if (['ready','target'].includes(app.watchQuickFilter)) collections=[];
+  if (app.watchQuickFilter==='collections') collections=collections.filter(item=>app.watchOverview?.collectionsReady.includes(item.id));
   if ($('groupCollectedWatches').checked && selected === 'all') {
     const query = $('watchSearch').value.trim().toLowerCase();
     const memberFilters = $('watchStatus').value !== 'all' || $('watchCategory').value !== 'all';
     if (query || memberFilters) {
-      const matching = new Set(filteredWatchlist({ includeCollected:true }).map((product) => product.slug));
+      const matching = new Set(filteredWatchlist({ includeCollected:true, ignoreQuick:app.watchQuickFilter==='collections' }).map((product) => product.slug));
       collections = collections.filter((collection) => (!memberFilters && collection.name.toLowerCase().includes(query)) || collection.slugs.some((slug) => matching.has(slug)));
     }
   }
@@ -2196,8 +2340,8 @@ async function setCollectionNotification(input) {
     const result = await api(`/api/collections/${encodeURIComponent(id)}`, { method:'PUT', body:JSON.stringify({ notifyReady:enabled, alertsOnly }) });
     const saved = result.collections?.find(item=>item.id===id);
     if (!saved || saved.notifyReady !== enabled || saved.alertsOnly !== alertsOnly) throw new Error('The server did not confirm the collection alert settings. Restart after updating and try again.');
-    app.collections = result.collections; renderProducts(true);
-    toast(!enabled ? 'Collection alerts disabled. Item rules apply unless another collection suppresses them.' : alertsOnly ? 'Collection-only alerts enabled. Individual item rules are preserved.' : 'Collection and item alerts enabled.');
+    app.collections = result.collections; app.watchOverview=result.overview || app.watchOverview; renderProducts(true);
+    toast(saved.archived ? 'Settings saved. This collection is archived, so its alerts and override stay inactive.' : !enabled ? 'Collection alerts disabled. Item rules apply unless another collection suppresses them.' : alertsOnly ? 'Collection-only alerts enabled. Individual item rules are preserved.' : 'Collection and item alerts enabled.');
   } catch (err) {
     if (app.collectionAlertId === id) { app.collectionAlertsKey=null; renderCollectionAlerts(); }
     toast(err.message,'error');
@@ -2213,7 +2357,7 @@ async function openCollection(id, region) {
   }
   if (!app.collections.some((collection) => collection.id === id)) { toast('This collection is no longer available.', 'error'); return; }
   closeActivityDialog(); activateTab('watchlist'); resetWatchFilters();
-  $('watchCollection').value = id; persistUiState(); renderProducts(true); $('watchCollection').focus();
+  app.pendingWatchCollection=id; renderProducts(true); persistUiState(); $('watchCollection').focus();
 }
 
 async function markPurchased(slug) {
@@ -2223,7 +2367,7 @@ async function markPurchased(slug) {
   try {
     const result = await api('/api/watch/bulk', { method:'POST', body:JSON.stringify({ action, slugs:[slug] }) });
     Object.assign(product, result.products[0]);
-    const collections = await api('/api/collections'); app.collections = collections.collections;
+    const collections = await api('/api/collections'); app.collections = collections.collections; app.watchOverview=collections.overview || app.watchOverview;
     renderProducts(true);
     if (app.currentProductDetails?.product.slug === slug) {
       await openProductDialog(slug, true);
@@ -2243,6 +2387,7 @@ async function bulkWatchAction(action) {
     const result = await api('/api/watch/bulk', { method:'POST', body:JSON.stringify({ action, slugs, minutes:Number($('bulkPauseDuration').value) }) });
     if (action === 'remove') for (const product of app.products.filter((item) => slugs.includes(item.slug))) { product.watched = false; product.watchRule = null; }
     else for (const changed of result.products || []) { const product = app.products.find((item) => item.slug === changed.slug); if (product) Object.assign(product, changed); }
+    const workspace=await api('/api/collections'); app.collections=workspace.collections; app.watchOverview=workspace.overview;
     app.selectedWatch.clear(); renderProducts(true); toast(`${result.affected} product${result.affected === 1 ? '' : 's'} ${action === 'pause' ? 'paused' : action === 'resume' ? 'resumed' : 'removed'}`);
   } catch (err) { toast(err.message, 'error'); }
   finally { buttons.forEach((button) => { button.disabled = false; }); }
@@ -2270,7 +2415,7 @@ document.addEventListener('click', (event) => {
   if (viewCollection) { closeCollectionManager(); openCollection(viewCollection.dataset.viewCollection, app.currentRegion); return; }
   const collectionImage = event.target.closest('[data-collection-image]');
   if (collectionImage) {
-    const products = collectionImage.closest('#collectionDetails, #collectionItemSummary') ? app.products : app.collectionDraft?.products;
+    const products = collectionImage.closest('#collectionDetails, #collectionItemSummary') ? app.products : (app.addWatchDraft?.products || app.collectionDraft?.products);
     const product = products?.find((item) => item.slug === collectionImage.dataset.collectionImage);
     if (product?.imageUrl) { app.brokenImages.delete(product.imageUrl); collectionImage.innerHTML = imageMarkup(product); wireProductImages(collectionImage); }
     return;
@@ -2286,6 +2431,16 @@ document.addEventListener('click', (event) => {
     else renderProducts(true);
     return;
   }
+  const addWatch=event.target.closest('[data-add-watch]');
+  if (addWatch) { openAddWatch(addWatch.dataset.addWatch); return; }
+  const quickWatch=event.target.closest('[data-watch-overview]');
+  if (quickWatch) { filterWatchOverview(quickWatch.dataset.watchOverview); return; }
+  const archive=event.target.closest('[data-archive-collection]');
+  if (archive) { archiveCollection(archive.dataset.archiveCollection); return; }
+  const undo=event.target.closest('[data-undo-collection]');
+  if (undo) { undoCollectionRemoval(undo.dataset.undoCollection); return; }
+  const dismissUndo=event.target.closest('[data-dismiss-collection-undo]');
+  if (dismissUndo) { app.collectionUndos=app.collectionUndos.filter(item=>item.key!==dismissUndo.dataset.dismissCollectionUndo); renderCollectionUndos(); $('closeCollectionManager').focus(); return; }
   const watch = event.target.closest('[data-watch]');
   if (watch) { event.preventDefault(); toggleWatch(watch.dataset.watch); return; }
   const activityEvent = event.target.closest('[data-activity-event]');
@@ -2412,6 +2567,11 @@ for (const id of ['newCollection','firstCollection','newBulkCollection']) $(id).
 $('collectionForm').addEventListener('submit', (event) => { event.preventDefault(); saveCollection(); });
 $('cancelCollectionEdit').addEventListener('click', () => showCollectionOverview(app.collectionDraft?.id));
 $('collectionWatchSearch').addEventListener('input', renderCollectionChoices);
+$('collectionArchiveFilter').addEventListener('change',()=>renderCollections(true));
+$('archiveCollection').addEventListener('click',()=>archiveCollection(app.collectionDraft?.id));
+$('addWatchForm').addEventListener('submit',event=>{event.preventDefault();saveAddedWatch();});
+$('cancelAddWatch').addEventListener('click',closeCollectionManager);
+for (const id of ['addWatchVariant','addWatchDestination']) $(id).addEventListener('change',renderAddWatch);
 $('collectionItemForm').addEventListener('submit', (event) => { event.preventDefault(); saveCollectionItem(); });
 $('cancelCollectionItem').addEventListener('click', closeCollectionItem);
 $('editCollectionAlerts').addEventListener('click', () => openCollectionAlerts(app.collectionDraft?.id));

@@ -745,3 +745,20 @@ button.watch-import-backdrop:hover { border:0; background:rgba(0,0,0,.64); trans
 .setting-toggle input:checked + .toggle-ui { background:var(--text); border-color:var(--text); }
 .setting-toggle input:checked + .toggle-ui::after { transform:translateX(16px); background:var(--bg); }
 .setting-toggle:focus-within .toggle-ui { outline:2px solid var(--accent); outline-offset:2px; }
+
+.watch-overview { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin:16px 0 8px; }
+.watch-overview button { display:flex; align-items:center; gap:12px; text-align:left; min-width:0; }
+.watch-overview strong { font-size:22px; }
+.watch-overview span { font-size:12px; }
+.watch-overview button[aria-pressed="true"] { border-color:var(--accent); background:var(--panel2); }
+.collection-list-filter { margin:12px 0; }
+.collection-undo { margin-top:18px; padding:12px; border:1px solid var(--border); border-radius:10px; background:var(--panel); }
+.collection-undo p { color:var(--muted); font-size:12px; }
+.collection-undo > div { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:10px; }
+.collection-undo span { flex:1 1 200px; overflow-wrap:anywhere; font-size:12px; }
+.collection-undo button { font-size:12px; }
+#addWatchForm > .field { margin-top:16px; }
+@media (max-width:590px) {
+  .watch-overview { gap:6px; }
+  .watch-overview button { flex-direction:column; align-items:flex-start; gap:4px; padding:10px; }
+}
