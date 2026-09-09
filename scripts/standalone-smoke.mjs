@@ -1,11 +1,12 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const packageDir = resolve(process.argv[2] || '');
 if (!process.argv[2]) throw new Error('Usage: node scripts/standalone-smoke.mjs <standalone-package-directory>');
+const release = JSON.parse(await readFile(new URL('../release-manifest.json', import.meta.url), 'utf8'));
 const executable = join(packageDir, process.platform === 'win32' ? 'GearBeacon.exe' : 'gearbeacon');
 const dataDir = await mkdtemp(join(tmpdir(), 'gearbeacon-standalone-smoke-'));
 const port = 8921 + (process.pid % 500);
@@ -21,10 +22,11 @@ try {
     try { const response = await fetch(`http://127.0.0.1:${port}/api/status`); if (response.ok) { status = await response.json(); break; } } catch {}
     await delay(100);
   }
-  if (status?.version !== '1.0.0' || status?.storage?.schemaVersion !== 7) {
+  if (!status) {
     const detail = spawnError ? `spawn error: ${spawnError.message}` : exit ? `process exited: ${JSON.stringify(exit)}` : 'startup timed out after 30 seconds';
-    throw new Error(`Standalone did not start correctly (${detail}): ${JSON.stringify(status)}`);
+    throw new Error(`Standalone did not start correctly (${detail}).`);
   }
+  if (status.version !== release.latestVersion || status.storage?.schemaVersion !== release.maximumSchemaVersion) throw new Error(`Standalone release identity mismatch: expected V${release.latestVersion} / schema v${release.maximumSchemaVersion}, received V${status.version} / schema v${status.storage?.schemaVersion}.`);
   const dashboard = await fetch(`http://127.0.0.1:${port}/`);
   if (!dashboard.ok || !(await dashboard.text()).includes('Guided first run')) throw new Error('Standalone dashboard assets were not served.');
   const operations = await (await fetch(`http://127.0.0.1:${port}/api/operations`)).json();

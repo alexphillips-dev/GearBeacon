@@ -6,9 +6,9 @@ LABEL org.opencontainers.image.source="https://github.com/alexphillips-dev/GearB
       org.opencontainers.image.description="Private self-hosted Ubiquiti product monitor" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.revision="$VCS_REF"
-COPY --chown=node:node backend/dist ./backend/dist
-COPY --chown=node:node web ./web
-COPY --chown=node:node release-manifest.json ./release-manifest.json
+COPY --chown=root:root backend/dist ./backend/dist
+COPY --chown=root:root web ./web
+COPY --chown=root:root release-manifest.json ./release-manifest.json
 RUN apk upgrade --no-cache libcrypto3 libssl3 \
     && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/pnpm \
     && mkdir -p /data \

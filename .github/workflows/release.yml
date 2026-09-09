@@ -88,8 +88,9 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft >/tmp/gearbeacon-release-state 2>/dev/null; then
             test "$(cat /tmp/gearbeacon-release-state)" = true || { echo 'A published release already exists for this tag.' >&2; exit 1; }
             gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
+            gh release edit "$GITHUB_REF_NAME" --notes-file RELEASE_NOTES.md
           else
-            gh release create "$GITHUB_REF_NAME" release-assets/* --draft --title "GearBeacon V${GITHUB_REF_NAME#v}" --generate-notes "${PRERELEASE[@]}"
+            gh release create "$GITHUB_REF_NAME" release-assets/* --draft --title "GearBeacon V${GITHUB_REF_NAME#v}" --notes-file RELEASE_NOTES.md "${PRERELEASE[@]}"
           fi
       - uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0

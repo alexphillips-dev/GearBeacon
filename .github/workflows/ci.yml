@@ -30,10 +30,18 @@ jobs:
         run: |
           npm run build
           npm run check
-      - name: Fresh install, V0.1.5-V0.1.7 upgrades, reliability, recovery and integration tests
+      - name: Fresh install, development and 1.0.x upgrades, reliability, recovery and integration tests
         run: node --no-warnings scripts/self-test.mjs
       - name: Deterministic fault, restart, recovery and scale tests
         run: node --no-warnings scripts/fault-test.mjs
+      - name: Exact variants, conditions, collections and recovery
+        run: node --no-warnings scripts/precision-test.mjs
+      - name: Stock insights, coverage and collection readiness
+        run: node --no-warnings scripts/insights-test.mjs
+      - name: Collection quantities, spending and alert modes
+        run: node --no-warnings scripts/collections-test.mjs
+      - name: Watchlist overview, collection destinations, archiving and undo
+        run: node --no-warnings scripts/watch-workflow-test.mjs
       - name: Verify update helpers refuse unsafe updates
         run: npm run test:update-helpers
       - name: Validate shell launchers and installers
@@ -102,6 +110,15 @@ jobs:
           curl --fail --silent http://127.0.0.1:8787/healthz
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8787/api/status)" = '428'
           docker compose ps
+      - name: Verify Compose runtime isolation
+        run: |
+          container_id="$(docker compose ps -q gearbeacon)"
+          test -n "$container_id"
+          test "$(docker inspect --format='{{.Config.User}}' "$container_id")" = 'node'
+          test "$(docker inspect --format='{{.HostConfig.ReadonlyRootfs}}' "$container_id")" = 'true'
+          docker inspect --format='{{json .HostConfig.CapDrop}}' "$container_id" | grep --quiet 'ALL'
+          docker inspect --format='{{json .HostConfig.SecurityOpt}}' "$container_id" | grep --quiet 'no-new-privileges:true'
+          docker exec "$container_id" sh -c 'test ! -w /app && test -w /data && test -w /tmp'
       - name: Container logs on failure
         if: failure()
         run: docker compose logs
@@ -169,4 +186,4 @@ jobs:
         shell: bash
         env:
           EXPECTED_BUILD_COMMIT: ${{ github.sha }}
-        run: node scripts/standalone-smoke.mjs dist/standalone/GearBeacon-v1.0.0-*/
+        run: node scripts/standalone-smoke.mjs dist/standalone/GearBeacon-v1.2.0-*/

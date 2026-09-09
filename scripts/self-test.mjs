@@ -73,6 +73,12 @@ function decodedMimePart(raw, type) {
   return match ? Buffer.from(match[1].replace(/\s/g, ''), 'base64').toString('utf8') : '';
 }
 
+function legacyPasswordHash(password) {
+  const salt = crypto.randomBytes(16);
+  const hash = crypto.scryptSync(password, salt, 64, { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
+  return `scrypt-v1$${salt.toString('base64')}$${hash.toString('base64')}`;
+}
+
 function startServer(port, dataDir, extraEnv = {}) {
   base = `http://127.0.0.1:${port}`;
   child = spawn(process.execPath, ['--no-warnings', 'backend/dist/index.js'], {
@@ -114,6 +120,29 @@ async function fetchJson(path, options = {}, expected = 200) {
   const body = await response.json().catch(() => ({}));
   if (response.status !== expected) throw new Error(`${path}: expected HTTP ${expected}, got ${response.status}: ${body.error || 'unknown error'}`);
   return { response, body };
+}
+
+async function rawJson(path, options = {}, expected = 200) {
+  const endpoint = new URL(base + path);
+  const result = await new Promise((resolve, reject) => {
+    const req = http.request({
+      hostname: endpoint.hostname,
+      port: endpoint.port,
+      path: `${endpoint.pathname}${endpoint.search}`,
+      method: options.method || 'GET',
+      headers: options.headers || {},
+    }, (res) => {
+      let text = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => { text += chunk; });
+      res.on('end', () => resolve({ status:res.statusCode, headers:res.headers, body:JSON.parse(text || '{}') }));
+    });
+    req.once('error', reject);
+    if (options.body) req.write(options.body);
+    req.end();
+  });
+  if (result.status !== expected) throw new Error(`${path}: expected HTTP ${expected}, got ${result.status}: ${result.body.error || 'unknown error'}`);
+  return result;
 }
 
 async function request(path, options = {}) {
@@ -180,8 +209,8 @@ async function proveUnsafeProxyBindRefusal(dataDir) {
 
 function downgradeDatabaseForUpgradeTest(databaseFile, appVersion, schema) {
   const target = new DatabaseSync(databaseFile);
-  target.exec(`
-    DELETE FROM schema_migrations WHERE version>${schema};
+  target.exec(`DELETE FROM schema_migrations WHERE version>${schema};`);
+  if (schema < 7) target.exec(`
     DROP TABLE IF EXISTS pending_transitions; DROP TABLE IF EXISTS monitor_checks;
     ALTER TABLE events RENAME TO events_v7;
     CREATE TABLE events (id TEXT PRIMARY KEY,region TEXT NOT NULL,detected_at TEXT NOT NULL,data_json TEXT NOT NULL);
@@ -189,6 +218,10 @@ function downgradeDatabaseForUpgradeTest(databaseFile, appVersion, schema) {
     DROP TABLE events_v7;
     CREATE INDEX idx_events_region_detected ON events(region,detected_at);
   `);
+  if (schema < 11) target.exec('ALTER TABLE watch_collections DROP COLUMN archived;');
+  if (schema < 10) target.exec('ALTER TABLE watch_collections DROP COLUMN budget; ALTER TABLE watch_collections DROP COLUMN alerts_only; ALTER TABLE watch_collection_members DROP COLUMN paid_total; ALTER TABLE watch_collection_members DROP COLUMN purchased_quantity; ALTER TABLE watch_collection_members DROP COLUMN quantity;');
+  if (schema < 9) target.exec('DROP TABLE IF EXISTS inventory_history; DROP TABLE IF EXISTS monitor_coverage; ALTER TABLE watch_collections DROP COLUMN notify_ready; ALTER TABLE watch_collections DROP COLUMN ready_state;');
+  if (schema < 8) target.exec('DROP TABLE IF EXISTS watch_collection_members; DROP TABLE IF EXISTS watch_collections; DROP TABLE IF EXISTS watch_condition_state;');
   if (schema < 6) target.exec('DROP TABLE IF EXISTS product_observations; DROP TABLE IF EXISTS watch_rules; DROP TABLE IF EXISTS notification_cooldowns;');
   if (schema < 5) target.exec('DROP TABLE IF EXISTS notification_queue; DROP TABLE IF EXISTS app_log; DROP TABLE IF EXISTS backup_log;');
   target.prepare("INSERT INTO meta(key,value) VALUES('last_app_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(appVersion);
@@ -221,22 +254,27 @@ try {
     GEARBEACON_WEBHOOK_HMAC_SECRET: webhookHmacSecret,
   });
   const status = await waitFor('/api/status?region=us');
-  if (status.version !== '1.0.0') throw new Error(`Unexpected app version: ${status.version}`);
-  if (status.storage?.engine !== 'SQLite' || status.storage?.schemaVersion !== 7) throw new Error('SQLite schema v7 was not initialized.');
+  if (status.version !== '1.2.0') throw new Error(`Unexpected app version: ${status.version}`);
+  if (status.storage?.engine !== 'SQLite' || status.storage?.schemaVersion !== 11) throw new Error('SQLite schema v11 was not initialized.');
   if (status.deployment?.mode !== 'local' || status.deployment?.bindHost !== '127.0.0.1' || status.deployment?.authenticationRequired) throw new Error('Safe local access defaults are wrong.');
   if (status.privacy?.telemetry !== false || status.privacy?.publicCloudRequired !== false) throw new Error('Privacy status is wrong.');
   if (status.regions?.length !== 2) throw new Error('Multi-region configuration was not loaded.');
   const dashboard = await fetch(base + '/');
   const dashboardHtml = await dashboard.text();
   if (dashboard.status !== 200 || !dashboard.headers.get('content-security-policy') || dashboard.headers.get('x-frame-options') !== 'DENY') throw new Error('Dashboard security headers are missing.');
+  if (dashboard.headers.get('cache-control') !== 'no-cache') throw new Error('Dashboard cache policy is incorrect.');
   if (!dashboardHtml.includes('GearBeacon owner access') || /<script>(?!\s*<\/script>)/i.test(dashboardHtml)) throw new Error('Dashboard authentication gate or CSP-safe markup is missing.');
+  const apiCache = await fetchJson('/api/status?region=us');
+  if (apiCache.response.headers.get('cache-control') !== 'no-store') throw new Error('Authenticated API responses are cacheable.');
+  const rebinding = await rawJson('/api/status', { headers: { Host:'attacker.invalid:8899', Origin:'http://attacker.invalid:8899' } }, 421);
+  if (rebinding.headers['access-control-allow-origin']) throw new Error('Rejected DNS-rebinding request reflected its hostile Origin.');
   const unexpectedFailure = await fetchJson('/api/products/%', {}, 500);
   if (!/check Operations logs/i.test(unexpectedFailure.body.error || '') || /URIError|decodeURIComponent|backend[\\/]src|\bat\b/i.test(unexpectedFailure.body.error || '')) throw new Error('Unexpected HTTP errors expose internal exception details.');
 
   const schemaDb = new DatabaseSync(join(localData, 'gearbeacon.mock.sqlite3'));
   const pushTable = schemaDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='push_tokens'").get();
   schemaDb.close();
-  if (pushTable) throw new Error('The obsolete push-token table still exists in schema v7.');
+  if (pushTable) throw new Error('The obsolete push-token table still exists in schema v11.');
 
   const initialConfig = await request('/api/config');
   if ((await request('/api/auth/status')).onboardingComplete) throw new Error('Fresh installation incorrectly skipped guided onboarding.');
@@ -360,7 +398,7 @@ try {
   const activityJsonBody = await activityJson.json();
   if (!activityJson.ok || !Array.isArray(activityJsonBody.events) || activityJsonBody.events.length < 5) throw new Error('JSON activity export failed.');
   const normalizedPaging = await request('/api/activity?scope=all&page=not-a-number&limit=not-a-number');
-  if (normalizedPaging.page !== 1 || normalizedPaging.limit !== 50) throw new Error('Activity pagination did not safely normalize invalid numeric input.');
+  if (normalizedPaging.page !== 1 || normalizedPaging.limit !== 20) throw new Error('Activity pagination did not safely normalize invalid numeric input.');
   await fetchJson('/api/activity?scope=invalid', {}, 400);
 
   const preferences = await request('/api/notifications/preferences?region=us', {
@@ -424,7 +462,7 @@ try {
     emailDetailLevel:'detailed', emailTheme:'dark', emailSubjectPrefix:'[GB Test]', emailDigestMaxItems:3,
     emailEmbedImages:true, emailExplainReason:true, emailPriceCalculations:true,
   }, secrets:{ secondaryBackupPassphrase:'v19 secondary recovery passphrase' } }) });
-  if (schedulingSave.config.notificationTimeZone !== 'UTC' || schedulingSave.config.notificationCooldownMinutes !== 7 || schedulingSave.config.historyRetentionDays !== 400 || schedulingSave.config.eventRetentionDays !== 730 || schedulingSave.config.secondaryBackupDir !== secondaryData || !schedulingSave.config.secondaryEncryptedExports || !schedulingSave.secretsConfigured.secondaryBackupPassphrase || !schedulingSave.config.operationalAlerts.lowDiskSpace || schedulingSave.config.emailDetailLevel !== 'detailed' || schedulingSave.config.emailDigestMaxItems !== 3 || schedulingSave.config.emailSubjectPrefix !== '[GB Test]') throw new Error('V1.0.0 delivery, email, recovery, or retention settings did not save.');
+  if (schedulingSave.config.notificationTimeZone !== 'UTC' || schedulingSave.config.notificationCooldownMinutes !== 7 || schedulingSave.config.historyRetentionDays !== 400 || schedulingSave.config.eventRetentionDays !== 730 || schedulingSave.config.secondaryBackupDir !== secondaryData || !schedulingSave.config.secondaryEncryptedExports || !schedulingSave.secretsConfigured.secondaryBackupPassphrase || !schedulingSave.config.operationalAlerts.lowDiskSpace || schedulingSave.config.emailDetailLevel !== 'detailed' || schedulingSave.config.emailDigestMaxItems !== 3 || schedulingSave.config.emailSubjectPrefix !== '[GB Test]') throw new Error('V1.2.0 delivery, email, recovery, or retention settings did not save.');
   await fetchJson('/api/config/validate', { method:'POST', body:JSON.stringify({ ...schedulingSave.config, emailSubjectPrefix:'[GearBeacon]\r\nBcc: attacker@example.test' }) }, 400);
   const deliveryPreview = await request('/api/notifications/preview?region=us&slug=u7-pro-xgs&eventType=restock');
   if (deliveryPreview.decision?.allowed !== true || deliveryPreview.delivery?.mode !== 'immediate-restock' || deliveryPreview.delivery?.timeZone !== 'UTC' || !deliveryPreview.copy?.title || !/^\[GB Test\]/.test(deliveryPreview.email?.subject || '') || !/Why you received this/i.test(deliveryPreview.email?.text || '')) throw new Error('Notification delivery or email preview did not honor saved settings.');
@@ -506,16 +544,16 @@ try {
   startServer(8899, localData);
   await waitFor('/api/status?region=us');
   const afterUpgrade = await request('/api/data/info?region=us');
-  if (afterUpgrade.backup.count <= beforeUpgrade || afterUpgrade.schemaVersion !== 7) throw new Error('Automatic V0.1.5 pre-update backup or schema migration failed.');
+  if (afterUpgrade.backup.count <= beforeUpgrade || afterUpgrade.schemaVersion !== 11) throw new Error('Automatic V0.1.5 pre-update backup or schema migration failed.');
   const migratedDb = new DatabaseSync(join(localData, 'gearbeacon.mock.sqlite3'));
   const migratedPushTable = migratedDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='push_tokens'").get();
   migratedDb.close();
-  if (migratedPushTable) throw new Error('Obsolete push storage returned during the V0.1.5 to V1.0.0 migration.');
+  if (migratedPushTable) throw new Error('Obsolete push storage returned during the V0.1.5 to V1.2.0 migration.');
   const updates = await request('/api/update/check?region=us');
-  if (updates.currentVersion !== '1.0.0' || updates.latestVersion !== '1.0.0' || updates.updateAvailable) throw new Error('Bundled update check failed.');
+  if (updates.currentVersion !== '1.2.0' || updates.latestVersion !== '1.2.0' || updates.updateAvailable) throw new Error('Bundled update check failed.');
   await stopServer();
 
-  for (const historical of [{ version:'0.1.6', schema:5 }, { version:'0.1.7', schema:6 }]) {
+  for (const historical of [{ version:'0.1.6', schema:5 }, { version:'0.1.7', schema:6 }, { version:'1.0.0', schema:7 }, { version:'1.0.1', schema:7 }, { version:'1.1.0', schema:8 }, { version:'1.2.0', schema:9 }, { version:'1.2.0', schema:10 }]) {
     const backupCount = (await (async () => {
       const testDb = new DatabaseSync(join(localData, 'gearbeacon.mock.sqlite3'), { readOnly:true });
       const count = Number(testDb.prepare('SELECT COUNT(*) AS count FROM backup_log').get()?.count || 0);
@@ -525,7 +563,11 @@ try {
     startServer(8899, localData);
     await waitFor('/api/status?region=us');
     const migrated = await request('/api/data/info?region=us');
-    if (migrated.schemaVersion !== 7 || migrated.backup.count < 1) throw new Error(`Automatic V${historical.version} to V1.0.0 migration failed.`);
+    if (migrated.schemaVersion !== 11 || migrated.backup.count < 1) throw new Error(`Automatic V${historical.version} to V1.2.0 migration failed.`);
+    const migratedCheck = await request('/api/check?region=us', { method:'POST', body:'{}' });
+    if (!migratedCheck.ok) throw new Error(`V${historical.version} monitoring did not work after migration.`);
+    const migratedWatch = await request('/api/watchlist?region=us');
+    if (!migratedWatch.products.some((product) => product.slug === 'u7-pro-xgs' && !product.variantId)) throw new Error(`V${historical.version} did not preserve the existing Any variant watch.`);
     const migratedLog = new DatabaseSync(join(localData, 'gearbeacon.mock.sqlite3'), { readOnly:true });
     const loggedBackups = Number(migratedLog.prepare('SELECT COUNT(*) AS count FROM backup_log').get()?.count || 0);
     migratedLog.close();
@@ -547,7 +589,8 @@ try {
   let csrf = setup.body.csrfToken;
   if (!cookie || !csrf) throw new Error('Private setup did not create a session.');
   await fetchJson('/api/watch', { method: 'POST', headers: { Cookie: cookie }, body: JSON.stringify({ slug: 'u7-pro-xgs' }) }, 403);
-  await fetchJson('/api/status', { headers: { Cookie: cookie, Origin: 'https://attacker.invalid' } }, 403);
+  const hostileOrigin = await fetchJson('/api/status', { headers: { Cookie: cookie, Origin: 'https://attacker.invalid' } }, 403);
+  if (hostileOrigin.response.headers.get('access-control-allow-origin')) throw new Error('Rejected cross-origin request reflected its hostile Origin.');
   const protectedStatus = await fetchJson('/api/status', { headers: { Cookie: cookie } }, 200);
   if (!protectedStatus.body.deployment.authenticationRequired) throw new Error('Private API did not report required authentication.');
   await fetchJson('/api/watch', {
@@ -575,12 +618,16 @@ try {
   const credential = authDb.prepare('SELECT password_hash FROM owner_credentials WHERE id=1').get();
   const storedSession = authDb.prepare('SELECT token_hash,csrf_token FROM sessions').get();
   authDb.close();
-  if (!credential?.password_hash.startsWith('scrypt-v1$') || credential.password_hash.includes('v19 rotated private owner password')) throw new Error('Owner password was not safely hashed.');
+  if (!credential?.password_hash.startsWith('scrypt-v2$') || credential.password_hash.includes('v19 rotated private owner password')) throw new Error('Owner password was not safely hashed with the current profile.');
   if (!/^[a-f0-9]{64}$/.test(storedSession?.token_hash || '') || storedSession.token_hash.includes(cookie)) throw new Error('Session token was not hashed in SQLite.');
 
   await fetchJson('/api/auth/logout', { method: 'POST', headers: { Cookie: cookie, 'X-CSRF-Token': csrf } }, 200);
   await fetchJson('/api/status', { headers: { Cookie: cookie } }, 401);
   await stopServer();
+
+  const legacyAuthDb = new DatabaseSync(join(privateData, 'gearbeacon.mock.sqlite3'));
+  legacyAuthDb.prepare('UPDATE owner_credentials SET password_hash=? WHERE id=1').run(legacyPasswordHash('v19 rotated private owner password'));
+  legacyAuthDb.close();
 
   startServer(8898, privateData, { REGIONS: 'us', GEARBEACON_ACCESS_MODE: 'private' });
   await waitFor('/healthz');
@@ -589,6 +636,10 @@ try {
   await fetchJson('/api/auth/login', { method: 'POST', body: JSON.stringify({ password: 'v19 private owner password' }) }, 401);
   const login = await fetchJson('/api/auth/login', { method: 'POST', body: JSON.stringify({ password: 'v19 rotated private owner password' }) }, 200);
   if (!login.response.headers.get('set-cookie') || !login.body.csrfToken) throw new Error('Owner login failed after restart.');
+  const upgradedAuthDb = new DatabaseSync(join(privateData, 'gearbeacon.mock.sqlite3'), { readOnly:true });
+  const upgradedHash = upgradedAuthDb.prepare('SELECT password_hash FROM owner_credentials WHERE id=1').get()?.password_hash || '';
+  upgradedAuthDb.close();
+  if (!upgradedHash.startsWith('scrypt-v2$')) throw new Error('Legacy scrypt-v1 owner password hash was not upgraded after sign-in.');
   await stopServer();
 
   // Reverse-proxy mode trusts forwarded HTTPS/host/address only in explicit proxy mode.
@@ -602,8 +653,10 @@ try {
   if (!proxySessions.body.sessions.some((session) => session.current && session.remoteAddress === '203.0.113.7')) throw new Error('Loopback reverse proxy address handling failed.');
   const proxyStatus = await fetchJson('/api/status', { headers:{ Cookie:proxyCookie, Origin:'https://gearbeacon.test', 'X-Forwarded-Proto':'https', 'X-Forwarded-Host':'gearbeacon.test' } }, 200);
   if (proxyStatus.response.headers.get('strict-transport-security') == null || proxyStatus.response.headers.get('access-control-allow-origin') !== 'https://gearbeacon.test') throw new Error('Proxy-mode HTTPS security headers or origin policy failed.');
+  await fetchJson('/api/status', { headers:{ Cookie:proxyCookie, 'X-Forwarded-Host':'attacker.invalid' } }, 421);
+  await fetchJson('/api/status', { headers:{ Cookie:proxyCookie, 'X-Forwarded-Host':'gearbeacon.test, attacker.invalid' } }, 421);
 
-  console.log('\nSELF-TEST PASSED: V1.0.0 confirmed transitions + searchable/exportable activity + secondary recovery/restore tests + diagnostics/support bundle + watch intelligence + notifications + private self-hosting security all work.');
+  console.log('\nSELF-TEST PASSED: V1.2.0 confirmed transitions + searchable/exportable activity + secondary recovery/restore tests + diagnostics/support bundle + watch intelligence + notifications + private self-hosting security all work.');
 } finally {
   await stopServer();
   await new Promise((resolve) => smtpServer.close(resolve));
