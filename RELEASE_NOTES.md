@@ -77,6 +77,7 @@ GearBeacon remains a private, single-owner, self-hosted UniFi Store monitor. Mon
 - Expanded deterministic coverage for variants, conditions, collection readiness, purchase plans, budgets, archive/restore, Undo, migrations, and recovery, plus browser accessibility and focus checks.
 - Added collection purchase-plan and Watchlist-workflow suites to the Windows, macOS, and Linux CI matrix.
 - Made browser reload checks wait for a new document before checking restored state, preventing stale-page passes and timing-related failures during navigation.
+- Moved browser-returned collection and Activity identifiers into test-side comparisons so those values are not interpolated into executable browser expressions.
 - Updated the release manifest to schema v11 and added consistency checks so source, generated server output, manifest, and curated release notes remain aligned.
 - GitHub release publication now uses these sectioned notes for new or refreshed draft releases.
 

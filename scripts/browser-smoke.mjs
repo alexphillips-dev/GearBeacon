@@ -665,9 +665,9 @@ try {
   await evaluate("document.getElementById('closeCollectionManager').click()");
   const selectedCollection = await evaluate("document.getElementById('watchCollection').value");
   await reloadBrowserPage();
-  await waitForBrowser(`app.products.some((item) => item.slug === 'uvc-g5-ptz::mock-black') && document.getElementById('watchCollection').value === ${JSON.stringify(selectedCollection)}`, 'Collection filter did not survive reload');
+  await waitFor(async () => await evaluate("app.products.some((item) => item.slug === 'uvc-g5-ptz::mock-black') ? document.getElementById('watchCollection').value : null") === selectedCollection, 'Collection filter did not survive reload');
   await cdp.send('Page.navigate', { url:`${baseUrl}/?region=us&collection=${encodeURIComponent(selectedCollection)}#watchlist` });
-  await waitForBrowser(`app.activeTab === 'watchlist' && document.getElementById('watchCollection').value === ${JSON.stringify(selectedCollection)} && app.pendingCollectionId === null`, 'Collection notification deep link did not open its Watchlist collection');
+  await waitFor(async () => await evaluate("app.activeTab === 'watchlist' && app.pendingCollectionId === null ? document.getElementById('watchCollection').value : null") === selectedCollection, 'Collection notification deep link did not open its Watchlist collection');
   await evaluate("document.getElementById('openCollectionManager').focus(); document.getElementById('openCollectionManager').click(); document.querySelector('[data-edit-collection]').click(); document.getElementById('askDeleteCollection').click(); document.getElementById('confirmDeleteCollection').click()");
   await waitForBrowser("app.collections.length === 0 && !app.collectionBusy", 'Collection deletion failed');
   assert(await evaluate("app.products.some((item) => item.slug === 'uvc-g5-ptz::mock-black' && item.watched)"), 'Collection deletion removed its watch');
@@ -993,7 +993,8 @@ try {
   const firstActivityIds = await evaluate("app.activity.events.map((event) => event.id)");
   await evaluate("document.getElementById('activityNext').click()");
   await waitForBrowser("app.activity.page === 2 && document.getElementById('activityResultCount').textContent === 'Showing 21–40 of 115 events'", 'Next did not show the second Activity page');
-  assert(await evaluate(`app.activity.events.every((event) => !${JSON.stringify(firstActivityIds)}.includes(event.id))`), 'Activity repeated first-page entries on the next page');
+  const secondActivityIds = await evaluate('app.activity.events.map((event) => event.id)');
+  assert(secondActivityIds.every((id) => !firstActivityIds.includes(id)), 'Activity repeated first-page entries on the next page');
   for (const size of [50,100]) {
     await evaluate(`(() => { const picker=document.getElementById('activityPageSize'); picker.focus(); picker.value='${size}'; picker.dispatchEvent(new Event('change',{bubbles:true})); })()`);
     await waitForBrowser(`app.activity.limit === ${size} && app.activity.page === 1 && document.querySelectorAll('#activityList .event').length === ${size}`, `Activity did not apply the ${size}-entry limit and reset to page 1`);
