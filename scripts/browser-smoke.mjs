@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -10,6 +10,7 @@ const projectRoot = fileURLToPath(new URL('..', import.meta.url));
 const axeSource = await readFile(fileURLToPath(import.meta.resolve('axe-core/axe.min.js')), 'utf8');
 const testRoot = await mkdtemp(join(tmpdir(), 'gearbeacon-browser-smoke-'));
 const chromeProfile = await mkdtemp(join(tmpdir(), 'gearbeacon-chrome-'));
+const screenshotRoot = process.env.GEARBEACON_BROWSER_SCREENSHOTS === '1' ? await mkdtemp(join(tmpdir(), 'gearbeacon-browse-review-')) : null;
 const port = 9200 + (process.pid % 500);
 const baseUrl = `http://127.0.0.1:${port}`;
 const setupToken = 'v19-browser-setup-token';
@@ -271,6 +272,81 @@ try {
   await evaluate("document.getElementById('browseLoadMore').click()");
   await waitForBrowser("document.querySelectorAll('#browseGrid .store-card').length > 2", 'Load-more control did not expand the catalog');
 
+  // Store-style navigation must keep focus while the monitor refreshes the catalog.
+  await evaluate("document.querySelector('#categoryTabs [aria-selected=true]').focus(); document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}))");
+  assert(await evaluate("document.activeElement.dataset.category === app.browseCategory && app.browseCategory !== 'All' && document.querySelectorAll('#categoryTabs [tabindex=\"0\"]').length === 1"), 'Browse categories do not support roving keyboard focus');
+  assert(await evaluate("(() => { const focused=document.activeElement; renderProducts(); return document.activeElement === focused; })()"), 'Catalog refresh removed the focused category');
+  await evaluate("document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'End',bubbles:true}))");
+  assert(await evaluate("document.activeElement === document.querySelector('#categoryTabs button:last-child')"), 'End did not select the last Browse category');
+  await evaluate("document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Home',bubbles:true}))");
+  assert(await evaluate("app.browseCategory === 'All'"), 'Home did not select all Browse products');
+  for (const availability of ['in','out']) {
+    await evaluate(`document.querySelector('#browseFilters input[name=availability][value=${availability}]').click()`);
+    assert(await evaluate(`(() => { const cards=[...document.querySelectorAll('#browseGrid .store-card')]; return cards.length > 0 && cards.every(card => { const product=app.products.find(item=>item.slug===card.dataset.productCard); return !product.unlisted && ${availability === 'in' ? 'product.inStock' : '!product.inStock && !product.comingSoon'}; }); })()`), `Browse ${availability} availability filter returned the wrong products`);
+  }
+  await evaluate("document.getElementById('resetBrowseFilters').focus(); document.activeElement.click()");
+  assert(await evaluate("document.activeElement.id === 'search' && document.getElementById('browseFilters').elements.availability.value === 'all'"), 'Resetting Browse filters lost focus or did not clear availability');
+  await evaluate("document.querySelector('#browseFilters input[name=watching][value=watched]').click()");
+  assert(await evaluate("document.querySelectorAll('#browseGrid .store-card').length === 1 && Boolean(document.querySelector('#browseGrid .store-watching-badge'))"), 'Watching filter or watched card indicator failed');
+  await evaluate("document.querySelector('#browseFilters input[name=watching][value=unwatched]').click()");
+  assert(await evaluate("document.querySelectorAll('#browseGrid .store-card').length > 0 && !document.querySelector('#browseGrid .store-watching-badge')"), 'Not watched filter included watched products');
+  await evaluate("resetBrowseFilters()");
+
+  // Deterministic presentation fixtures exercise exact SKU search and price ordering.
+  const browseFixtureResult = await evaluate(`(() => {
+    const products=app.products, variants=app.catalogVariants;
+    try {
+      const parent={slug:'browse-fixture', name:'Browse fixture', category:'WiFi', inStock:true, status:'Available', price:'$999.00', watched:false, variantKeys:['browse-fixture::one','browse-fixture::two']};
+      const exact=[{...parent,slug:'browse-fixture::one',parentSlug:parent.slug,variantId:'one',sku:'SKU-FIXTURE-ONE',price:'$120.00',watched:true},{...parent,slug:'browse-fixture::two',parentSlug:parent.slug,variantId:'two',sku:'SKU-FIXTURE-TWO',price:'$45.00',watched:false}];
+      app.products=[parent,{...parent,slug:'unknown-fixture',name:'Unknown fixture',price:null,variantKeys:[]}, {...parent,slug:'free-fixture',name:'Free fixture',price:'$0.00',variantKeys:[]}];
+      app.catalogVariants=exact;
+      document.getElementById('browseSort').value='price-low'; renderProducts(true);
+      const low=[...document.querySelectorAll('#browseGrid .store-card')].map(card=>card.dataset.productCard);
+      const price=document.querySelector('[data-product-card="browse-fixture"] .store-price-row strong').textContent;
+      document.getElementById('browseSort').value='price-high'; renderProducts(true);
+      const high=[...document.querySelectorAll('#browseGrid .store-card')].map(card=>card.dataset.productCard);
+      document.getElementById('search').value='SKU-FIXTURE-TWO'; renderProducts(true);
+      const search=[...document.querySelectorAll('#browseGrid .store-card')].map(card=>card.dataset.productCard);
+      document.getElementById('browseFilters').elements.watching.value='watched'; renderProducts(true);
+      const exactWatching=document.querySelectorAll('#browseGrid .store-card').length === 1 && Boolean(document.querySelector('.store-watching-badge'));
+      exact[1].price=null; renderProducts(true);
+      const unknown=document.querySelector('.store-price-row strong').textContent;
+      exact[1].price='$0.00'; renderProducts(true);
+      const zero=document.querySelector('.store-price-row strong').textContent;
+      exact[1].unlisted=true; renderProducts(true);
+      const retired=document.querySelector('.store-product-meta').textContent;
+      const single=document.querySelector('.store-price-row strong').textContent;
+      return {low,high,price,search,exactWatching,unknown,zero,retired,single};
+    } finally { app.products=products; app.catalogVariants=variants; resetBrowseFilters(); }
+  })()`);
+  assert(JSON.stringify(browseFixtureResult.low) === JSON.stringify(['free-fixture','browse-fixture','unknown-fixture']) && JSON.stringify(browseFixtureResult.high) === JSON.stringify(['browse-fixture','free-fixture','unknown-fixture']), `Browse price ordering mishandled variants, zero, or unknown prices: ${JSON.stringify(browseFixtureResult)}`);
+  assert(browseFixtureResult.price === 'From $45.00' && browseFixtureResult.unknown === 'Prices vary' && browseFixtureResult.zero === 'From $0.00' && !browseFixtureResult.retired.includes('2 variants') && browseFixtureResult.single === '$120.00', 'Browse variant prices or retired options are misleading');
+  assert(browseFixtureResult.exactWatching && JSON.stringify(browseFixtureResult.search) === JSON.stringify(['browse-fixture']), 'Exact SKU search or exact-only watched status did not find the parent card');
+
+  for (const theme of ['dark','light']) {
+    await evaluate(`applyTheme(${JSON.stringify(theme)})`); await delay(250);
+    for (const width of [1280,390,640]) {
+      await cdp.send('Emulation.setDeviceMetricsOverride', { width,height:900,screenWidth:width === 640 ? 1280 : width,screenHeight:900,deviceScaleFactor:width === 640 ? 2 : 1,mobile:false });
+      if (width !== 640) await waitForBrowser(`document.getElementById('browseFilterPanel').open === ${width > 820}`, 'Browse filters did not adapt after crossing the mobile breakpoint');
+      const browseLayout=await evaluate("(() => { const filters=document.getElementById('browseFilterPanel'), grid=document.getElementById('browseGrid'); return { overflow:document.documentElement.scrollWidth > window.innerWidth + 1, sidebar:filters.getBoundingClientRect().right < grid.getBoundingClientRect().left, open:filters.open, cards:[...grid.children].every(card=>card.scrollWidth <= card.clientWidth + 1) }; })()");
+      assert(!browseLayout.overflow && browseLayout.cards && (width === 1280 ? browseLayout.sidebar && browseLayout.open : !browseLayout.sidebar), `Browse does not reflow in ${theme} at ${width}px: ${JSON.stringify(browseLayout)}`);
+      if (width === 390) {
+        assert(!browseLayout.open, 'Mobile Browse filters did not start collapsed');
+        await evaluate("document.querySelector('#browseFilterPanel summary').click()");
+        assert(await evaluate("document.getElementById('browseFilterPanel').open && document.querySelector('#browseFilters input').getBoundingClientRect().height > 0"), 'Mobile Browse filters did not open');
+      }
+      await assertAccessible(`Browse ${theme} at ${width}px`);
+      if (screenshotRoot) {
+        if (width === 390) await evaluate("document.querySelector('#browseFilterPanel summary').click()");
+        await evaluate("document.getElementById('browse').scrollIntoView()");
+        const capture=await cdp.send('Page.captureScreenshot', { format:'png' });
+        await writeFile(join(screenshotRoot, `browse-${theme}-${width}.png`), Buffer.from(capture.data,'base64'));
+      }
+    }
+  }
+  await cdp.send('Emulation.clearDeviceMetricsOverride');
+  if (screenshotRoot) console.log(`Browse screenshots: ${screenshotRoot}`);
+
   await evaluate("openProductDialog('u7-pro-xgs')");
   await waitForBrowser("!document.getElementById('productDialog').classList.contains('hidden') && document.getElementById('productRuleForm')", 'Product details or rule editor did not open');
   const copiedProductDetails = await evaluate(`(async () => {
@@ -475,12 +551,15 @@ try {
     document.querySelector('[data-tab="browse"]').click();
     document.querySelector('[data-category="WiFi"]').click();
     const input=document.getElementById('search'); input.value='U7'; input.dispatchEvent(new Event('input',{bubbles:true}));
+    document.querySelector('#browseFilters input[name=watching][value=watched]').click();
+    const sort=document.getElementById('browseSort'); sort.value='price-high'; sort.dispatchEvent(new Event('change',{bubbles:true}));
   })()`);
   await waitForBrowser("app.browseCategory === 'WiFi' && document.getElementById('search').value === 'U7' && JSON.parse(localStorage.getItem('gearbeacon.uiState.v1')).browse.search === 'U7' && document.querySelectorAll('#browseGrid .store-card').length === 1", 'Browse state was not ready to persist');
   await evaluate("location.reload()");
   await waitForBrowser("!document.getElementById('appShell').classList.contains('hidden') && app.products.length >= 5", 'Dashboard did not reload for filter persistence');
   const restoredBrowse = await evaluate("({ active:document.getElementById('browse').classList.contains('active'), category:app.browseCategory, search:document.getElementById('search').value, cards:document.querySelectorAll('#browseGrid .store-card').length, stored:JSON.parse(localStorage.getItem('gearbeacon.uiState.v1')) })");
   assert(restoredBrowse.active && restoredBrowse.category === 'WiFi' && restoredBrowse.search === 'U7' && restoredBrowse.cards === 1, `Browse filters and active tab did not survive refresh: ${JSON.stringify(restoredBrowse)}`);
+  assert(await evaluate("document.getElementById('browseFilters').elements.watching.value === 'watched' && document.getElementById('browseSort').value === 'price-high'"), 'Browse watching and sort controls did not survive refresh');
   const savedFilters = await evaluate("JSON.parse(localStorage.getItem('gearbeacon.uiState.v1'))");
   assert(savedFilters.browse.category === 'WiFi' && savedFilters.browse.search === 'U7' && savedFilters.watch.search === '' && savedFilters.activity.search === '', `Saved filter state is incomplete: ${JSON.stringify(savedFilters)}`);
   await evaluate("document.getElementById('resetBrowseFilters').click(); window.dispatchEvent(new Event('offline'))");

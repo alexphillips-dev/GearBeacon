@@ -154,7 +154,7 @@
         <div>
           <span class="store-eyebrow">UniFi catalog</span>
           <h2>Browse products</h2>
-          <p>Pick a category, then watch anything you want GearBeacon to alert on.</p>
+          <p>Find your next upgrade. Track availability and make it part of your setup.</p>
         </div>
         <label class="store-search-wrap">
           <span aria-hidden="true">⌕</span>
@@ -162,13 +162,35 @@
         </label>
       </div>
       <div id="categoryTabs" class="store-category-tabs" role="tablist" aria-label="Product categories"></div>
-      <div class="store-results-bar">
-        <div class="store-results-title"><strong id="browseTitle">All products</strong><button id="resetBrowseFilters" class="filter-reset hidden" type="button">Reset filters</button></div>
-        <span id="browseCount">0 products</span>
+      <div class="store-layout">
+        <details id="browseFilterPanel" class="store-filters" open>
+          <summary>Filters <span id="browseFilterSummary">All products</span></summary>
+          <form id="browseFilters" class="store-filter-options">
+            <fieldset><legend>Availability</legend>
+              <label><input type="radio" name="availability" value="all" checked /> Any availability</label>
+              <label><input type="radio" name="availability" value="in" /> In stock</label>
+              <label><input type="radio" name="availability" value="out" /> Sold out</label>
+              <label><input type="radio" name="availability" value="soon" /> Coming soon</label>
+              <label><input type="radio" name="availability" value="unlisted" /> Unlisted</label>
+            </fieldset>
+            <fieldset><legend>Your watchlist</legend>
+              <label><input type="radio" name="watching" value="all" checked /> All products</label>
+              <label><input type="radio" name="watching" value="watched" /> Watching</label>
+              <label><input type="radio" name="watching" value="unwatched" /> Not watched</label>
+            </fieldset>
+          </form>
+        </details>
+        <div id="browseResults" class="store-results" role="tabpanel" aria-label="All products">
+          <div class="store-results-bar">
+            <div class="store-results-title"><h3 id="browseTitle">All products</h3><span id="browseCount" role="status" aria-live="polite" aria-atomic="true">0 products</span></div>
+            <label class="store-sort"><span>Sort by</span><select id="browseSort"><option value="name">Name: A–Z</option><option value="price-low">Price: low to high</option><option value="price-high">Price: high to low</option><option value="availability">Availability</option></select></label>
+          </div>
+          <div id="browseActiveFilters" class="store-active-filters hidden"><span id="browseFilterDescription"></span><button id="resetBrowseFilters" class="filter-reset hidden" type="button">Reset filters</button></div>
+          <div id="browseGrid" class="store-grid"></div>
+          <div class="browse-more"><button id="browseLoadMore" class="hidden">Load more products</button></div>
+          <div id="browseEmpty" class="store-empty hidden"><h3>No matching products</h3><p>Try another category, availability, or search.</p><button id="resetBrowseEmpty" type="button">Reset Browse filters</button></div>
+        </div>
       </div>
-      <div id="browseGrid" class="store-grid"></div>
-      <div class="browse-more"><button id="browseLoadMore" class="hidden">Load more products</button></div>
-      <div id="browseEmpty" class="store-empty hidden"><h3>No matching products</h3><p>Try another category or search.</p><button id="resetBrowseEmpty" type="button">Reset Browse filters</button></div>
     </section>
 
     <section id="activity" class="page" role="tabpanel" aria-labelledby="tabActivity" hidden>

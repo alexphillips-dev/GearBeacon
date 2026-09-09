@@ -36,6 +36,7 @@ applyTheme(localStorage.getItem(THEME_KEY) || 'dark');
 const CATEGORY_ORDER = ['Cloud Gateways', 'Switching', 'WiFi', 'Cameras & Physical Security', 'Door Access', 'Integrations', 'Accessories & Cables', 'Network Storage'];
 const app = {
   auth: null,
+  catalogVariants: [],
   currentRegion: initialDeepLink.get('region') || localStorage.getItem('gearbeacon.region') || null,
   pendingProductSlug: initialDeepLink.get('product') || null,
   pendingCollectionId: initialDeepLink.get('collection') || null,
@@ -84,6 +85,12 @@ function setControlValue(id, value) {
 }
 function restoreUiControls() {
   setControlValue('search', savedUiState.browse?.search);
+  setControlValue('browseSort', savedUiState.browse?.sort);
+  for (const name of ['availability', 'watching']) {
+    const value = savedUiState.browse?.[name];
+    const option = [...$('browseFilters').elements[name]].find((input) => input.value === value);
+    if (option) option.checked = true;
+  }
   setControlValue('watchSearch', savedUiState.watch?.search);
   setControlValue('watchStatus', savedUiState.watch?.status);
   setControlValue('watchSort', savedUiState.watch?.sort);
@@ -98,7 +105,7 @@ function restoreUiControls() {
 function persistUiState() {
   const state = {
     activeTab:app.activeTab,
-    browse:{ search:$('search')?.value || '', category:app.browseCategory },
+    browse:{ search:$('search')?.value || '', category:app.browseCategory, sort:$('browseSort').value, ...browseFilterValues() },
     watch:{ overview:app.watchQuickFilter, search:$('watchSearch')?.value || '', status:$('watchStatus')?.value || 'all', category:app.pendingWatchCategory || $('watchCategory')?.value || 'all', sort:$('watchSort')?.value || 'changed', collection:app.pendingWatchCollection || $('watchCollection').value || 'all', groupCollections:$('groupCollectedWatches').checked },
     activity:{ search:$('activitySearch')?.value || '', scope:app.pendingActivityRegion || $('activityRegion')?.value || 'all', type:$('activityType')?.value || 'all', delivery:$('activityDelivery')?.value || 'all', from:$('activityFrom')?.value || '', to:$('activityTo')?.value || '', limit:Number($('activityPageSize')?.value || 20) },
   };
@@ -429,19 +436,30 @@ function watchCard(p) {
     </div>
   </article>`;
 }
-function storeCard(p) {
+function browseProductInfo(p, variants) {
+  const watching = p.watched || variants.some((variant) => variant.watched);
+  variants = variants.filter((variant) => !variant.unlisted && (!Array.isArray(p.variantKeys) || p.variantKeys.includes(variant.slug)));
+  const prices = variants.map((variant) => ({ text:variant.price, value:activityPriceNumber(variant.price) }));
+  const completePrices = prices.length > 1 && prices.every((price) => price.value !== null && price.value >= 0);
+  const lowest = completePrices ? prices.reduce((a,b) => a.value <= b.value ? a : b) : null;
+  const singlePrice = variants.length === 1 ? variants[0].price : p.price;
+  const price = variants.length > 1 ? lowest ? `From ${lowest.text}` : 'Prices vary' : singlePrice || 'Price unavailable';
+  return { watching, price, priceValue:variants.length > 1 ? lowest?.value ?? null : activityPriceNumber(singlePrice), sku:variants.length === 1 ? variants[0].sku || p.slug : p.sku || p.slug, variantCount:variants.length };
+}
+function storeCard(p, info) {
   const statusClass = p.unlisted ? 'out unlisted' : p.inStock ? 'in' : p.comingSoon ? 'soon' : 'out sold-out';
   const status = p.unlisted ? 'Unlisted' : p.inStock ? 'In stock' : p.comingSoon ? 'Coming soon' : 'Sold out';
   return `<article class="store-card" data-product-card="${escapeHtml(p.slug)}">
-    <button class="store-image media-shell product-detail-trigger" type="button" data-product-detail="${escapeHtml(p.slug)}" aria-label="View ${escapeHtml(p.name)}">${imageMarkup(p)}</button>
+    <div class="store-media">
+      <button class="store-image media-shell product-detail-trigger" type="button" data-product-detail="${escapeHtml(p.slug)}" aria-label="View ${escapeHtml(p.name)}">${imageMarkup(p)}</button>
+      ${info.watching ? '<span class="store-watching-badge">✓ Watching</span>' : ''}
+    </div>
     <div class="store-card-body">
-      <div class="store-card-heading">
-        <button type="button" data-product-detail="${escapeHtml(p.slug)}" class="store-product-link"><h3>${escapeHtml(p.name)}</h3></button>
-        <button class="watch-icon ${p.watched ? 'watching' : ''}" data-add-watch="${escapeHtml(p.slug)}" title="${p.watched ? 'Add watched product to a collection' : 'Add product to Watchlist or a collection'}" aria-label="${p.watched ? 'Add watched product to a collection' : 'Add product to Watchlist or a collection'}">${p.watched ? '✓' : '+'}</button>
-      </div>
-      <div class="store-sku">${escapeHtml(p.slug)}</div>
-      <div class="store-price-row"><strong>${escapeHtml(p.price || 'Price unavailable')}</strong><span class="stock-label ${statusClass}">${status}</span></div>
-      <button class="store-watch ${p.watched ? 'watching' : ''}" data-add-watch="${escapeHtml(p.slug)}">${p.watched ? 'Watching · add to collection' : 'Add to Watchlist or collection'}</button>
+      <button type="button" data-product-detail="${escapeHtml(p.slug)}" class="store-product-link"><h3>${escapeHtml(p.name)}</h3></button>
+      <div class="store-sku">${escapeHtml(info.sku)}</div>
+      <div class="store-product-meta"><span>${escapeHtml(p.category)}</span>${info.variantCount > 1 ? `<button type="button" data-product-detail="${escapeHtml(p.slug)}">${info.variantCount} variants</button>` : ''}</div>
+      <div class="store-price-row"><strong>${escapeHtml(info.price)}</strong><span class="stock-label ${statusClass}">${status}</span></div>
+      <button class="store-watch ${info.watching ? 'watching' : ''}" data-add-watch="${escapeHtml(p.slug)}" aria-label="Add ${escapeHtml(p.name)} to Watchlist or a collection">${info.watching ? 'Add to collection' : '+ Add to Watchlist or collection'}</button>
     </div>
   </article>`;
 }
@@ -457,13 +475,46 @@ function categories() {
   });
   return ['All', ...found];
 }
+function categoryIcon(category) {
+  const shapes = {
+    'Cloud Gateways':'<rect x="4" y="5" width="24" height="22" rx="4"/><path d="M9 20h8m5 0h1M9 11h14"/>',
+    Switching:'<rect x="2" y="9" width="28" height="14" rx="3"/><path d="M7 14v4m5-4v4m5-4v4m6-4v4"/>',
+    WiFi:'<circle cx="16" cy="16" r="13"/><circle cx="16" cy="16" r="4"/>',
+    'Cameras & Physical Security':'<path d="M7 11h12l7 5-7 5H7zM10 21v6m-5 0h10"/><circle cx="24" cy="16" r="3"/>',
+    'Door Access':'<rect x="7" y="2" width="18" height="28" rx="3"/><circle cx="16" cy="12" r="4"/><path d="M13 23h6"/>',
+    Integrations:'<rect x="4" y="4" width="9" height="9" rx="2"/><rect x="19" y="19" width="9" height="9" rx="2"/><path d="M13 8h11v11M8 13v11h11"/>',
+    'Accessories & Cables':'<path d="M8 4v5m-4 0h8v6H4zm4 6v6a6 6 0 0 0 12 0v-6m-4-6h8v6h-8zm4-5v5"/>',
+    'Network Storage':'<rect x="4" y="3" width="24" height="26" rx="3"/><path d="M9 9h14M9 15h14M9 21h9m5 0h1"/>',
+  };
+  return `<svg viewBox="0 0 32 32" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${shapes[category] || '<rect x="4" y="4" width="9" height="9" rx="2"/><rect x="19" y="4" width="9" height="9" rx="2"/><rect x="4" y="19" width="9" height="9" rx="2"/><rect x="19" y="19" width="9" height="9" rx="2"/>'}</svg>`;
+}
 function renderCategoryTabs() {
   const tabs = categories();
   if (!tabs.includes(app.browseCategory)) app.browseCategory = 'All';
-  $('categoryTabs').innerHTML = tabs.map((category) => {
+  const labels = { All:'All products', 'Cameras & Physical Security':'Physical Security', 'Accessories & Cables':'Accessories' };
+  const markup = tabs.map((category, index) => {
     const count = app.products.filter((p) => !p.variantId && (category === 'All' || p.category === category)).length;
-    return `<button class="store-category-tab ${app.browseCategory === category ? 'active' : ''}" data-category="${escapeHtml(category)}" role="tab" aria-selected="${app.browseCategory === category}">${escapeHtml(category)} <span>${count}</span></button>`;
+    const active = app.browseCategory === category;
+    return `<button id="storeCategory${index}" type="button" class="store-category-tab ${active ? 'active' : ''}" data-category="${escapeHtml(category)}" role="tab" aria-controls="browseResults" aria-selected="${active}" tabindex="${active ? 0 : -1}">${categoryIcon(category)}<span class="store-category-name">${escapeHtml(labels[category] || category)}</span><span class="store-category-count">${count} product${count === 1 ? '' : 's'}</span></button>`;
   }).join('');
+  // Catalog refreshes must not remove the focused category control.
+  if ($('categoryTabs').dataset.rendered !== markup) {
+    const focused = document.activeElement?.closest('#categoryTabs [data-category]')?.dataset.category;
+    $('categoryTabs').innerHTML = markup;
+    $('categoryTabs').dataset.rendered = markup;
+    if (focused) [...$('categoryTabs').children].find((tab) => tab.dataset.category === focused)?.focus({ preventScroll:true });
+  }
+  $('browseResults').setAttribute('aria-labelledby', `storeCategory${tabs.indexOf(app.browseCategory)}`);
+}
+
+function browseFilterValues() {
+  return { availability:$('browseFilters').elements.availability.value, watching:$('browseFilters').elements.watching.value };
+}
+function selectBrowseCategory(category) {
+  app.browseCategory = category; app.browseVisibleCount = 48; persistUiState(); renderProducts(true);
+  const tab = $('categoryTabs').querySelector('[aria-selected="true"]');
+  tab?.focus({ preventScroll:true });
+  if (tab) $('categoryTabs').scrollLeft = tab.offsetLeft - ($('categoryTabs').clientWidth - tab.offsetWidth) / 2;
 }
 function renderWatchOverview() {
   const summary=app.watchOverview;
@@ -524,7 +575,7 @@ function renderWatchFilters(watched) {
   if (choices.includes(selected) || watched.length) app.pendingWatchCategory = null;
 }
 function watchFiltersActive() { return Boolean(app.watchQuickFilter !== 'all' || $('watchSearch').value.trim() || $('watchStatus').value !== 'all' || $('watchCategory').value !== 'all' || $('watchSort').value !== 'changed' || $('watchCollection').value !== 'all'); }
-function browseFiltersActive() { return Boolean($('search').value.trim() || app.browseCategory !== 'All'); }
+function browseFiltersActive() { const filters = browseFilterValues(); return Boolean($('search').value.trim() || app.browseCategory !== 'All' || filters.availability !== 'all' || filters.watching !== 'all' || $('browseSort').value !== 'name'); }
 function activityFiltersActive() { return Boolean($('activitySearch').value.trim() || $('activityRegion').value !== 'all' || $('activityType').value !== 'all' || $('activityDelivery').value !== 'all' || $('activityFrom').value || $('activityTo').value); }
 function resetWatchFilters() {
   app.watchQuickFilter='all';
@@ -533,7 +584,9 @@ function resetWatchFilters() {
   persistUiState(); renderProducts(true);
 }
 function resetBrowseFilters() {
-  $('search').value = ''; app.browseCategory = 'All'; app.browseVisibleCount = 48; persistUiState(); renderProducts(true);
+  const restoreFocus = ['resetBrowseFilters','resetBrowseEmpty'].includes(document.activeElement?.id);
+  $('search').value = ''; $('browseFilters').reset(); $('browseSort').value = 'name'; app.browseCategory = 'All'; app.browseVisibleCount = 48; persistUiState(); renderProducts(true);
+  if (restoreFocus) $('search').focus({ preventScroll:true });
 }
 function resetActivityFilters() {
   $('activityFilters').reset(); $('activityRegion').value = 'all'; app.pendingActivityRegion = null; persistUiState(); refreshActivity(1);
@@ -573,21 +626,51 @@ function renderProducts(force = false) {
 
   renderCategoryTabs();
   const q = $('search').value.trim().toLowerCase();
+  const filters = browseFilterValues();
+  const variantsByParent = new Map();
+  for (const product of app.catalogVariants) if (product.variantId && product.parentSlug) {
+    if (!variantsByParent.has(product.parentSlug)) variantsByParent.set(product.parentSlug, []);
+    variantsByParent.get(product.parentSlug).push(product);
+  }
+  const productInfo = new Map(app.products.filter((p) => !p.variantId).map((p) => [p.slug, browseProductInfo(p, variantsByParent.get(p.slug) || [])]));
   const filtered = app.products.filter((p) => {
     if (p.variantId) return false;
     const categoryMatch = app.browseCategory === 'All' || p.category === app.browseCategory;
-    const searchMatch = !q || `${p.name} ${p.slug} ${p.category}`.toLowerCase().includes(q);
-    return categoryMatch && searchMatch;
+    const searchMatch = !q || `${p.name} ${p.slug} ${p.category} ${(variantsByParent.get(p.slug) || []).map((v) => `${v.sku || ''} ${v.variantTitle || ''}`).join(' ')}`.toLowerCase().includes(q);
+    const availability = p.unlisted ? 'unlisted' : p.inStock ? 'in' : p.comingSoon ? 'soon' : 'out';
+    const availabilityMatch = filters.availability === 'all' || filters.availability === availability;
+    const watchingMatch = filters.watching === 'all' || productInfo.get(p.slug).watching === (filters.watching === 'watched');
+    return categoryMatch && searchMatch && availabilityMatch && watchingMatch;
+  });
+  const sort = $('browseSort').value;
+  filtered.sort((a,b) => {
+    const byName = a.name.localeCompare(b.name) || a.slug.localeCompare(b.slug);
+    if (sort === 'availability') return Number(b.inStock && !b.unlisted) - Number(a.inStock && !a.unlisted) || byName;
+    if (sort.startsWith('price-')) {
+      const av = productInfo.get(a.slug).priceValue, bv = productInfo.get(b.slug).priceValue;
+      if (av === null || bv === null) return (av === null ? 1 : 0) - (bv === null ? 1 : 0) || byName;
+      return (sort === 'price-low' ? av - bv : bv - av) || byName;
+    }
+    return byName;
   });
   const visible = filtered.slice(0, app.browseVisibleCount);
-  const browseKey = JSON.stringify([visible.map((p) => [p.slug,p.status,p.price,p.watched,p.imageUrl]), app.browseCategory,q,app.browseVisibleCount]);
+  const browseKey = JSON.stringify(visible.map((p) => [p.slug,p.name,p.category,p.status,p.inStock,p.comingSoon,p.unlisted,p.imageUrl,productInfo.get(p.slug)]));
   if (force || browseKey !== app.browseRenderKey) {
-    $('browseGrid').innerHTML = visible.map(storeCard).join('');
+    $('browseGrid').innerHTML = visible.map((p) => storeCard(p, productInfo.get(p.slug))).join('');
     app.browseRenderKey = browseKey;
     wireProductImages($('browseGrid'));
   }
   $('browseEmpty').classList.toggle('hidden', filtered.length > 0);
-  $('resetBrowseFilters').classList.toggle('hidden', !browseFiltersActive());
+  const active = browseFiltersActive();
+  $('resetBrowseFilters').classList.toggle('hidden', !active);
+  $('browseActiveFilters').classList.toggle('hidden', !active);
+  const filterLabels = [];
+  if (q) filterLabels.push(`Search: ${$('search').value.trim()}`);
+  if (app.browseCategory !== 'All') filterLabels.push(app.browseCategory);
+  for (const name of ['availability','watching']) if (filters[name] !== 'all') filterLabels.push($('browseFilters').querySelector(`input[name="${name}"]:checked`).closest('label').textContent.trim());
+  if (sort !== 'name') filterLabels.push($('browseSort').selectedOptions[0].textContent);
+  $('browseFilterDescription').textContent = filterLabels.join(' · ');
+  $('browseFilterSummary').textContent = [filters.availability,filters.watching].filter((value) => value !== 'all').length ? `${[filters.availability,filters.watching].filter((value) => value !== 'all').length} active` : 'All products';
   $('browseTitle').textContent = app.browseCategory === 'All' ? 'All products' : app.browseCategory;
   $('browseCount').textContent = filtered.length > visible.length ? `Showing ${visible.length} of ${filtered.length} products` : `${filtered.length} product${filtered.length === 1 ? '' : 's'}`;
   $('browseLoadMore').classList.toggle('hidden', visible.length >= filtered.length);
@@ -1732,12 +1815,13 @@ function maybeBrowserNotify(events) {
 async function refresh() {
   try {
     const wasDisconnected = app.serverFailures > 0 || app.browserOffline || app.reconnectPending;
-    const [status, products, events] = await Promise.all([api('/api/status'), api('/api/products'), api('/api/events?limit=100')]);
+    const [status, products, events] = await Promise.all([api('/api/status'), api('/api/products?includeVariants=1'), api('/api/events?limit=100')]);
     app.serverFailures = 0;
     app.browserOffline = false;
     app.reconnectPending = false;
     app.status = status;
-    app.products = products.products || [];
+    app.catalogVariants = (products.products || []).filter((product) => product.variantId);
+    app.products = (products.products || []).filter((product) => !product.variantId || product.watched);
     app.collections = products.collections || []; app.watchOverview=products.overview || null;
     renderCollections();
     maybeBrowserNotify(events.events || []);
@@ -2450,7 +2534,7 @@ document.addEventListener('click', (event) => {
   const activityCollection = event.target.closest('[data-activity-collection]');
   if (activityCollection) { event.preventDefault(); openCollection(activityCollection.dataset.activityCollection, activityCollection.dataset.activityRegion); return; }
   const category = event.target.closest('[data-category]');
-  if (category) { app.browseCategory = category.dataset.category; app.browseVisibleCount = 48; persistUiState(); renderProducts(true); return; }
+  if (category) { selectBrowseCategory(category.dataset.category); return; }
   const details = event.target.closest('[data-product-detail]');
   if (details) { event.preventDefault(); openProductDialog(details.dataset.productDetail); return; }
   const go = event.target.closest('[data-goto]');
@@ -2558,6 +2642,24 @@ window.addEventListener('scroll', updateToTopVisibility, { passive:true });
 window.addEventListener('resize', updateToTopVisibility);
 let browseSearchTimer = null;
 $('search').addEventListener('input', () => { clearTimeout(browseSearchTimer); browseSearchTimer = setTimeout(() => { app.browseVisibleCount = 48; persistUiState(); renderProducts(true); }, 180); });
+$('browseFilters').addEventListener('submit', (event) => event.preventDefault());
+for (const id of ['browseFilters','browseSort']) $(id).addEventListener('change', () => { app.browseVisibleCount = 48; persistUiState(); renderProducts(true); });
+$('categoryTabs').addEventListener('keydown', (event) => {
+  if (!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
+  const tabs = [...$('categoryTabs').querySelectorAll('[data-category]')];
+  const index = tabs.indexOf(event.target.closest('[data-category]'));
+  if (index < 0) return;
+  event.preventDefault();
+  const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+  selectBrowseCategory(tabs[next].dataset.category);
+});
+const browseMobileLayout = window.matchMedia('(max-width: 820px)');
+function adaptBrowseFilters() {
+  if (browseMobileLayout.matches && $('browseFilterPanel').contains(document.activeElement)) $('browseFilterPanel').querySelector('summary').focus({ preventScroll:true });
+  $('browseFilterPanel').open = !browseMobileLayout.matches;
+}
+browseMobileLayout.addEventListener('change', adaptBrowseFilters);
+adaptBrowseFilters();
 for (const id of ['watchSearch','watchStatus','watchCategory','watchSort','watchCollection']) $(id).addEventListener(id === 'watchSearch' ? 'input' : 'change', () => { persistUiState(); renderProducts(true); });
 $('groupCollectedWatches').addEventListener('change', () => { persistUiState(); renderProducts(true); });
 $('openCollectionManager').addEventListener('click', () => openCollectionManager());
