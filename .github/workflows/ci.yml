@@ -38,6 +38,10 @@ jobs:
         run: node --no-warnings scripts/precision-test.mjs
       - name: Stock insights, coverage and collection readiness
         run: node --no-warnings scripts/insights-test.mjs
+      - name: Collection quantities, spending and alert modes
+        run: node --no-warnings scripts/collections-test.mjs
+      - name: Watchlist overview, collection destinations, archiving and undo
+        run: node --no-warnings scripts/watch-workflow-test.mjs
       - name: Verify update helpers refuse unsafe updates
         run: npm run test:update-helpers
       - name: Validate shell launchers and installers

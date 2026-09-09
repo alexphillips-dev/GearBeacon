@@ -8,7 +8,7 @@ GearBeacon is a private, self-hosted Ubiquiti and UniFi Store inventory monitor.
 
 There is no GearBeacon cloud account, hosted database, public registration, subscription, analytics, or telemetry. GearBeacon is independent and is not affiliated with or endorsed by Ubiquiti Inc.
 
-GearBeacon `1.0.0` is the first stable self-hosted release. The `dev` branch is currently `1.2.0`, the stock insights and collection readiness update under development before promotion to `main`.
+The current source version is **1.2.0**. Read the [release notes](RELEASE_NOTES.md) for everything added since the first stable release, **1.0.0**. Packaged versions are available on [GitHub Releases](https://github.com/alexphillips-dev/GearBeacon/releases).
 
 ## What it does
 

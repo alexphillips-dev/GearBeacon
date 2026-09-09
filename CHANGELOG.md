@@ -4,6 +4,9 @@ The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. 
 
 ## V1.2.0 — Stock insights and collection readiness
 
+See the [complete 1.2.0 release notes](RELEASE_NOTES.md) for Features, UI/UX, Fixes, Security, and upgrade guidance covering every change since the published 1.0.0 release, including the intervening 1.0.1 and 1.1.0 development updates.
+
+- Corrected the release manifest and standalone validation to use schema v11, added schema/curated-note consistency checks, and included purchase-plan and Watchlist-workflow tests in the Windows/macOS/Linux CI matrix. GitHub release publication now uses the curated release notes.
 - Redesigned Browse with illustrated category navigation, a desktop filter sidebar, larger product previews, clearly separated cards, blue action accents, and a compact mobile filter panel. Availability, Watching/Not watched, and name/price/availability sorting combine with search and are remembered in this browser; Reset clears them together.
 - Browse now searches exact variant SKUs, marks parent cards watched when an exact variant is watched, and displays variant counts with the lowest recorded variant price when every current variant has a known price. Unknown variant prices display "Prices vary" and sort after known prices; retired variants are excluded from the price range. Added category keyboard navigation, focus preservation, responsive reflow, and light/dark accessibility coverage.
 - Added an actionable Watchlist overview for Ready to buy, At target price, and Collections ready. Counts use confirmed regional availability, same-variant target matching, and remaining quantities across active projects; each count opens its matching results and the browser remembers that filter.
