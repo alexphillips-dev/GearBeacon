@@ -127,6 +127,7 @@ jobs:
       - run: npm run check
       - run: npm run test
       - run: npm run test:browser
+      - run: npm run test:launchers
       - id: syft
         uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.21.0
         with:

@@ -19,6 +19,7 @@ npm run build
 npm run check
 npm test
 npm run test:browser
+npm run test:launchers
 ```
 
 The browser test requires Chrome or Chromium. The weekly live catalog canary is intentionally separate because it contacts the real UniFi Store; do not add watchlist or notification credentials to it.
@@ -30,6 +31,8 @@ The browser test requires Chrome or Chromium. The weekly live catalog canary is 
 - Preserve keyboard access, visible focus, responsive reflow, reduced-motion behavior, and light/dark contrast.
 - Update the README for current behavior and the changelog for release-visible changes.
 - Do not commit generated release archives, local data, secrets, or `node_modules`.
+- Keep `AGENTS.md`, local agent configuration, and editor settings local. Git ignores these files along with databases, backups, recovery/activity exports, logs, credentials, and local environment or Compose overrides.
+- Keep `.env.example`, shared deployment files, and the generated `backend/dist/index.js` and `backend/dist/email.js` tracked; they are part of the distributable application.
 - Confirm CI and security scanning are green before requesting review.
 
 By contributing, you agree that your contribution is licensed under the Apache License 2.0 used by this repository.

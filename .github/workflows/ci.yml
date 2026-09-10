@@ -44,9 +44,11 @@ jobs:
         run: node --no-warnings scripts/watch-workflow-test.mjs
       - name: Verify update helpers refuse unsafe updates
         run: npm run test:update-helpers
+      - name: Verify source launchers from outside the checkout
+        run: npm run test:launchers
       - name: Validate shell launchers and installers
         if: runner.os != 'Windows'
-        run: sh -n run-mac-linux.sh run-private-mac-linux.sh run-mock-mac-linux.sh deploy/*.sh
+        run: for file in launchers/*.sh deploy/*.sh; do sh -n "$file"; done
       - name: Validate Windows installers
         if: runner.os == 'Windows'
         shell: pwsh

@@ -14,23 +14,25 @@ the included service installer. Uninstall preserves data by default.
 Source requirements
 -------------------
 Node.js 22.13 or newer, or Docker.
+Run source commands below from the checkout root. On Windows, you can also open
+the batch files directly from the launchers folder.
 
 One-computer launch
 -------------------
-Windows: double-click run-windows.bat
-macOS/Linux: ./run-mac-linux.sh
+Windows: double-click launchers/run-windows.bat
+macOS/Linux: ./launchers/run-mac-linux.sh
 
 Open http://localhost:8787. This safe default listens only on your computer.
 
 Offline demo
 ------------
-Windows: double-click run-mock-windows.bat
-macOS/Linux: ./run-mock-mac-linux.sh
+Windows: double-click launchers/run-mock-windows.bat
+macOS/Linux: ./launchers/run-mock-mac-linux.sh
 
 Private LAN/VPN server
 ----------------------
-Windows: double-click run-private-windows.bat
-macOS/Linux: ./run-private-mac-linux.sh
+Windows: double-click launchers/run-private-windows.bat
+macOS/Linux: ./launchers/run-private-mac-linux.sh
 
 The first start prints a one-time setup token. Enter it in the dashboard and
 create the private owner password. Use a trusted LAN/VPN, or put GearBeacon
@@ -64,5 +66,7 @@ Automated verification
 node --no-warnings scripts/self-test.mjs
 node --no-warnings scripts/browser-smoke.mjs
 
-See README.md and deploy/README.md for every environment variable and deployment
-pattern.
+See the project README and deployment guide for every environment variable and
+deployment pattern:
+https://github.com/alexphillips-dev/GearBeacon/blob/main/README.md
+https://github.com/alexphillips-dev/GearBeacon/blob/main/deploy/README.md

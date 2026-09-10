@@ -8,7 +8,7 @@ GearBeacon is a private, self-hosted Ubiquiti and UniFi Store inventory monitor.
 
 There is no GearBeacon cloud account, hosted database, public registration, subscription, analytics, or telemetry. GearBeacon is independent and is not affiliated with or endorsed by Ubiquiti Inc.
 
-The current source version is **1.2.0**. Read the [release notes](RELEASE_NOTES.md) for everything added since the first stable release, **1.0.0**. Packaged versions are available on [GitHub Releases](https://github.com/alexphillips-dev/GearBeacon/releases).
+The current source version is **1.2.0**. Read the [release notes](docs/RELEASE_NOTES.md) for everything added since the first stable release, **1.0.0**. Packaged versions are available on [GitHub Releases](https://github.com/alexphillips-dev/GearBeacon/releases).
 
 ## What it does
 
@@ -62,22 +62,24 @@ The service installers keep the application files administrator/root-owned and r
 
 Requires Node.js 22.13 or newer. No `npm install` is required because the application uses Node's built-in SQLite implementation.
 
+Source launchers are grouped in `launchers/`. Run the commands below from the checkout root, or open the Windows batch file directly. See the [getting-started guide](docs/START_HERE.txt) for local, private-server, and offline demo launches.
+
 Windows local-only launch:
 
 ```text
-run-windows.bat
+launchers/run-windows.bat
 ```
 
 macOS or Linux local-only launch:
 
 ```bash
-chmod +x run-mac-linux.sh
-./run-mac-linux.sh
+chmod +x launchers/run-mac-linux.sh
+./launchers/run-mac-linux.sh
 ```
 
 Open `http://localhost:8787`.
 
-Use `run-private-windows.bat` or `./run-private-mac-linux.sh` for a trusted LAN or private VPN server. GearBeacon prints a one-time setup token for authenticated first start.
+Use `launchers/run-private-windows.bat` or `./launchers/run-private-mac-linux.sh` for a trusted LAN or private VPN server. GearBeacon prints a one-time setup token for authenticated first start.
 
 ### Docker Compose
 
@@ -322,6 +324,7 @@ npm run build
 npm run check
 npm test
 npm run test:browser
+npm run test:launchers
 npm run test:update-helpers
 docker compose build
 ```
@@ -330,7 +333,7 @@ CI exercises fresh installs and backup-protected upgrades from V0.1.5–V0.1.7 o
 
 Before a stable release, run **Candidate packages** manually with a matching prerelease version such as `1.2.0-rc.1` to create retained Actions artifacts without publishing a release. It uses the exact reusable packaging jobs used by a tag, extracts every archive, starts every native executable, validates the source archive, generates SBOMs, and records attestations.
 
-Prerelease tags such as `v1.2.0-rc.1` must point to a commit on `dev` and never move the stable container `latest` tag. Stable tags such as `v1.2.0` must point to the reviewed commit on protected `main`. Publication also requires successful CI and security workflows at the exact SHA, consistent version/changelog/manifest data, checksummed and rehearsed packages, amd64/arm64 images, SBOMs, and provenance. The GitHub release stays a draft until those steps succeed. Use the [stable release checklist](.github/RELEASE_CHECKLIST.md) for real installation, upgrade, rollback, accessibility, and 24–48 hour soak evidence.
+Prerelease tags such as `v1.2.0-rc.1` must point to a commit on `dev` and never move the stable container `latest` tag. Stable tags such as `v1.2.0` must point to the reviewed commit on protected `main`. Publication also requires successful CI and security workflows at the exact SHA, consistent version/changelog/manifest data, checksummed and rehearsed packages, amd64/arm64 images, SBOMs, and provenance. The GitHub release stays a draft until those steps succeed. The [stable release checklist](.github/RELEASE_CHECKLIST.md) defines the required automated validation and publication checks. Real-host installation, upgrade, rollback, manual accessibility, and 24–48 hour soak testing are recommended additional validation; they do not block a release or require an exception when unavailable.
 
 ## Project layout
 
@@ -338,13 +341,16 @@ Prerelease tags such as `v1.2.0-rc.1` must point to a commit on `dev` and never 
 |---|---|
 | `backend/src` / `backend/dist` | Server source and compiled CommonJS application |
 | `web` | Browser dashboard and assets |
+| `launchers` | Local, private-server, and offline demo startup scripts for source installations |
+| `docs` | Getting-started guide, changelog, and release notes |
 | `deploy` | Service installers, uninstallers, updaters, and hosting guidance |
 | `scripts` | Version, integration, STARTTLS, packaging, and smoke tests |
 | `.github/workflows` | Cross-platform CI, security scans, and releases |
+| `.github` | Contribution/security policies, issue templates, and release checklist |
 
-Release-specific history belongs in [CHANGELOG.md](CHANGELOG.md), keeping this README current and readable.
+Release-specific history belongs in [CHANGELOG.md](docs/CHANGELOG.md), keeping this README current and readable.
 
-Please read [CONTRIBUTING.md](CONTRIBUTING.md) before proposing a change. Report suspected vulnerabilities privately using the process in [SECURITY.md](SECURITY.md), never in a public issue.
+Please read [CONTRIBUTING.md](.github/CONTRIBUTING.md) before proposing a change. Report suspected vulnerabilities privately using the process in [SECURITY.md](.github/SECURITY.md), never in a public issue.
 
 ## License and trademarks
 

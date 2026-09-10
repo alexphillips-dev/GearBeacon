@@ -34,7 +34,7 @@ jobs:
           test "$BASE_VERSION" = "$APP_VERSION" || { echo "Tag $GITHUB_REF_NAME does not match application V$APP_VERSION." >&2; exit 1; }
           npm run build
           npm run check
-          grep -Fq "## V${APP_VERSION} " CHANGELOG.md || { echo "CHANGELOG.md has no V${APP_VERSION} entry." >&2; exit 1; }
+          grep -Fq "## V${APP_VERSION} " docs/CHANGELOG.md || { echo "docs/CHANGELOG.md has no V${APP_VERSION} entry." >&2; exit 1; }
           node -e "const m=require('./release-manifest.json'); if (!m.releaseNotes?.trim()) throw new Error('Release notes are empty')"
           if [[ "$GITHUB_REF_NAME" == *-* ]]; then TARGET=dev; else TARGET=main; fi
           git fetch --no-tags origin "$TARGET"
@@ -88,9 +88,9 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft >/tmp/gearbeacon-release-state 2>/dev/null; then
             test "$(cat /tmp/gearbeacon-release-state)" = true || { echo 'A published release already exists for this tag.' >&2; exit 1; }
             gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
-            gh release edit "$GITHUB_REF_NAME" --notes-file RELEASE_NOTES.md
+            gh release edit "$GITHUB_REF_NAME" --notes-file docs/RELEASE_NOTES.md
           else
-            gh release create "$GITHUB_REF_NAME" release-assets/* --draft --title "GearBeacon V${GITHUB_REF_NAME#v}" --notes-file RELEASE_NOTES.md "${PRERELEASE[@]}"
+            gh release create "$GITHUB_REF_NAME" release-assets/* --draft --title "GearBeacon V${GITHUB_REF_NAME#v}" --notes-file docs/RELEASE_NOTES.md "${PRERELEASE[@]}"
           fi
       - uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0

@@ -94,7 +94,8 @@ if (process.platform === 'darwin') {
 }
 
 cpSync(join(root, 'web'), join(outputDir, 'web'), { recursive: true });
-for (const file of ['release-manifest.json', 'LICENSE', 'NOTICE', 'START_HERE.txt']) cpSync(join(root, file), join(outputDir, file));
+for (const file of ['release-manifest.json', 'LICENSE', 'NOTICE']) cpSync(join(root, file), join(outputDir, file));
+cpSync(join(root, 'docs', 'START_HERE.txt'), join(outputDir, 'START_HERE.txt'));
 const platformFiles = process.platform === 'win32'
   ? ['install-windows-service.ps1', 'uninstall-windows-service.ps1', 'update-windows.ps1']
   : process.platform === 'darwin'

@@ -1,5 +1,5 @@
 @echo off
-cd /d %~dp0
+cd /d "%~dp0.." || exit /b 1
 set GEARBEACON_ACCESS_MODE=private
 set GEARBEACON_BIND_HOST=0.0.0.0
 echo Starting GearBeacon V1.2.0 as a private authenticated server...

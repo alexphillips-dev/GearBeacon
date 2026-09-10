@@ -6,6 +6,9 @@ The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. 
 
 See the [complete 1.2.0 release notes](RELEASE_NOTES.md) for Features, UI/UX, Fixes, Security, and upgrade guidance covering every change since the published 1.0.0 release, including the intervening 1.0.1 and 1.1.0 development updates.
 
+- Organized the repository root into `docs/` for release history and getting-started guidance, `launchers/` for source startup scripts, and `.github/` for contribution and security policies. Updated launch paths, documentation, CI, and release packaging; standalone downloads retain their top-level getting-started file.
+- Removed local agent instructions from Git tracking and expanded ignore rules for editor files, local environment/Compose overrides, credentials, SQLite state, backups, exports, logs, and generated release artifacts.
+- Made real-host installation, upgrade, rollback, manual accessibility, and soak testing optional release recommendations. Automated CI, security, packaging, checksum, SBOM, attestation, and protected-branch requirements remain mandatory.
 - Corrected the release manifest and standalone validation to use schema v11, added schema/curated-note consistency checks, and included purchase-plan and Watchlist-workflow tests in the Windows/macOS/Linux CI matrix. GitHub release publication now uses the curated release notes.
 - Fixed browser persistence checks racing page reloads by waiting for a new document before inspecting restored navigation and filters.
 - Removed dynamic browser-test code construction from collection persistence and Activity pagination assertions flagged by CodeQL; browser-returned identifiers are compared outside the browser expression.
