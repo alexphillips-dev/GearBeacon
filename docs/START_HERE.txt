@@ -40,7 +40,7 @@ behind an HTTPS reverse proxy before crossing an untrusted network.
 
 Docker
 ------
-docker compose up -d --build
+docker compose up -d
 docker compose logs gearbeacon
 
 Compose publishes only to host loopback by default. The logs show the one-time
@@ -66,7 +66,15 @@ Automated verification
 node --no-warnings scripts/self-test.mjs
 node --no-warnings scripts/browser-smoke.mjs
 
-See the project README and deployment guide for every environment variable and
-deployment pattern:
-https://github.com/alexphillips-dev/GearBeacon/blob/main/README.md
-https://github.com/alexphillips-dev/GearBeacon/blob/main/deploy/README.md
+Complete documentation
+----------------------
+The README gives a concise overview and installation choices. The Wiki contains
+platform installation, Watchlist/Browse, collections and purchase planning,
+alerts, email/webhooks, configuration, API, backups, recovery, HTTPS, updates,
+troubleshooting, and developer/release guides:
+https://github.com/alexphillips-dev/GearBeacon/wiki
+https://github.com/alexphillips-dev/GearBeacon/wiki/Getting-Started
+https://github.com/alexphillips-dev/GearBeacon/wiki/Backups-and-Recovery
+
+The published v1.2.0 source ZIP keeps launchers at its root. For that archive,
+omit launchers/ from the source commands above; current checkouts use launchers/.
