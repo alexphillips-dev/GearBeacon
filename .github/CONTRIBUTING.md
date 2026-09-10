@@ -29,7 +29,7 @@ The browser test requires Chrome or Chromium. The weekly live catalog canary is 
 - Keep the change focused and explain its user-visible behavior and risk.
 - Add deterministic coverage for fixes and new behavior.
 - Preserve keyboard access, visible focus, responsive reflow, reduced-motion behavior, and light/dark contrast.
-- Update the README for current behavior and the changelog for release-visible changes.
+- Keep the README focused on overview and setup; update the [Wiki](https://github.com/alexphillips-dev/GearBeacon/wiki) for detailed procedures and technical references, and the changelog for release-visible changes. Check documentation links and examples against the implementation. Wiki edits are published through its separate repository.
 - Do not commit generated release archives, local data, secrets, or `node_modules`.
 - Keep `AGENTS.md`, local agent configuration, and editor settings local. Git ignores these files along with databases, backups, recovery/activity exports, logs, credentials, and local environment or Compose overrides.
 - Keep `.env.example`, shared deployment files, and the generated `backend/dist/index.js` and `backend/dist/email.js` tracked; they are part of the distributable application.

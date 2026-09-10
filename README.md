@@ -4,356 +4,103 @@
 
 **Know the second it's back.**
 
-GearBeacon is a private, self-hosted Ubiquiti and UniFi Store inventory monitor. One installation provides a browser dashboard, regional watchlists, reliable notifications, and an upgrade-safe SQLite database on a Windows PC, Mac, Linux server, NAS, or Docker host.
+GearBeacon is a private, self-hosted Ubiquiti and UniFi Store inventory monitor for Windows, macOS, Linux, NAS, and Docker. Watch exact products, plan purchases, and receive stock or price alerts through a responsive browser dashboard.
 
-There is no GearBeacon cloud account, hosted database, public registration, subscription, analytics, or telemetry. GearBeacon is independent and is not affiliated with or endorsed by Ubiquiti Inc.
+One installation serves one owner. Monitoring and external notification delivery run on your server, even when the browser is closed. There is no GearBeacon cloud account, subscription, hosted database, analytics, or telemetry, and no Ubiquiti login is required.
 
-The current source version is **1.2.0**. Read the [release notes](docs/RELEASE_NOTES.md) for everything added since the first stable release, **1.0.0**. Packaged versions are available on [GitHub Releases](https://github.com/alexphillips-dev/GearBeacon/releases).
+**Current version: 1.2.0** · [Downloads](https://github.com/alexphillips-dev/GearBeacon/releases) · [Release notes](docs/RELEASE_NOTES.md) · [Wiki](https://github.com/alexphillips-dev/GearBeacon/wiki)
 
 ## What it does
 
-- Monitors the United States, Canada, Europe, and United Kingdom UniFi Stores from one private installation.
-- Keeps separate watchlists, product state, activity, and health for every enabled region.
-- Imports watchlists from pasted UniFi Store links, product SKUs/slugs, or TXT, CSV, and JSON files with a regional match-and-confirm review before anything is added.
-- Detects restocks, sellouts, price changes, status changes, and newly listed products.
-- Confirms potentially destructive changes across two complete observations while keeping fast one-check restock detection and the last-known-good state visible.
-- Shows a focused product view with current availability, store details, first/last-seen times, price history, and recent changes.
-- Keeps durable, searchable activity with evidence, delivery outcomes, date/type/region filters, and CSV or JSON export. Activity shows 20 entries per page by default; **Entries per page** also offers 50 and 100 and remembers your choice in this browser. Use **Previous** and **Next** for additional entries; changing the size or filters returns to page 1.
-- Supports per-product alert overrides, price-drop and target-price rules, immediate restocks, and temporary or indefinite pauses.
-- Watches exact product variants by SKU, color, length, or pack size, with independent availability, prices, history, and direct variant links.
-- Combines availability and target-price conditions, previews alert decisions, organizes watches into collections, and retains purchased watches with alerts stopped. Open **Manage collections** beside **Import watchlist** to create a project, choose watches with a searchable thumbnail list, or edit its name and contents together. **View watches** filters the Watchlist to that collection. Select watches and use **Add to collection** to add them to an existing or new project. Cancelling discards unsaved changes; deleting a collection keeps its watches, alert rules, and history.
-- After updating GearBeacon, restart its process, service, or container and refresh the browser so the editor and server use the same code. Collection selections are saved with **Create collection**, **Save changes**, or **Add watches**. If the running server cannot save those selections, the editor keeps them and displays restart guidance instead of reporting success.
-- Shows observed availability timelines with monitoring gaps, recorded restocks, and 7/30/90-day price insights for each exact variant.
-- Shows collections as product-sized Watchlist cards with up to four product images, an additional-item count, and the estimated project total in the normal price position. Totals combine recorded spending with catalog prices for the remaining quantities, in the selected store's currency; unknown purchase costs or prices are identified beside a partial subtotal. Set an optional budget when creating or editing a collection, and use its item rows to edit quantities and shared target prices, record partial or complete purchases, remove membership, or open the Store. **View items** filters the collection, **Edit** changes its contents, and **Alerts** opens separate collection notification settings. Open the collection image or name for totals and an always-visible item list with thumbnails, variant/SKU details, prices, and readiness status. Alerts are also available at the bottom of collection details and the editor, and beside each collection in **Manage collections**. Returning from alerts preserves unsaved editor selections and restores keyboard focus.
-- Enable **Group items in collections** to use collections like folders. The **All collections** view shows collection cards and ungrouped watches, with no duplicate individual cards for assigned items. Use **View items** or select a collection to see its members. Search finds matching collection names or products inside them; removing an item's last collection restores its individual card. This browser remembers the option, and resetting filters keeps it. Grouping changes presentation only: watches, alerts, history, and the monitored-item count stay intact.
-- Shows an actionable Watchlist overview: **Ready to buy**, **At target price**, and **Collections ready**. Select a count to filter to the matching items or projects, including collected items normally hidden by grouping. Counts use confirmed availability, per-unit targets, and remaining purchase quantities in the current store; completed and archived projects are excluded.
-- Browse uses illustrated category tiles, larger product previews, and a filter sidebar that folds into a **Filters** panel on mobile. Combine availability and **Watching / Not watched** with search, then sort by name, price, or availability. Search also finds exact variant SKUs; watching an exact variant marks its parent card **Watching**. Cards show variant counts and a **From** price when all current variants have known prices; incomplete variant pricing shows **Prices vary** and sorts after known prices. Prices describe the selected regional catalog, including sold-out options, and are not checkout totals. Your browser remembers Browse filters and sorting; **Reset filters** clears them together. Category tiles support Left/Right arrows, Home, and End.
-- Adds products directly from Browse to **Watchlist**, an existing collection, or a new collection. Choose an exact variant and desired quantity for a project. Existing watches and alert rules are reused, and an existing membership keeps its quantity and actual spending.
-- Archives projects from their editor or **Manage collections**. Archived collections keep their purchase records and saved alert settings, while their collection alerts and item-alert overrides are inactive. Use the manager's **Archived** filter to view or restore them. Item-row removals offer **Undo** to restore the removed quantity and purchase record during the current page session.
-- Searches, filters, sorts, selects, pauses, resumes, and removes watched products in bulk.
-- Delivers browser, ntfy, Discord, Gotify, SMTP email, or generic webhook alerts.
-- Queues delivery durably, retries failures with exponential backoff, and supports grouping, cooldowns, quiet hours, and daily digests.
-- Can alert the owner when monitoring, delivery, backups, or available disk space need attention.
-- Signs generic webhooks with HMAC-SHA256 and supports optional bearer authentication.
-- Configures stores, access, backups, and notification integrations in the browser.
-- Encrypts saved notification credentials using a generated installation key stored outside SQLite with restricted permissions.
-- Protects private and reverse-proxy installations with a single owner password, versioned scrypt hashing and automatic legacy rehashing, secure sessions, CSRF checks, strict Host/origin validation, bounded HTTP connections, and security headers.
-- Validates catalogs, honors upstream retry guidance, and never treats a partial response as a product delisting.
-- Creates validated scheduled, manual, pre-import, and pre-update SQLite backups.
-- Can copy each backup to a separate disk or mounted share as validated SQLite or a passphrase-encrypted recovery export.
-- Exports passphrase-encrypted transfer files, previews imports, and tests primary or secondary restores without changing active data.
-- Shows region health, pending confirmations, delivery failures, recovery readiness, storage, security warnings, logs, diagnostics, and exact build information in Operations.
-- Downloads a privacy-redacted support bundle without owner credentials, saved notification secrets, local paths, or private addresses.
-- Detects updates but never silently downloads or installs one.
+- **Regional monitoring:** United States, Canada, Europe, and United Kingdom Stores, with separate watches, prices, activity, and health.
+- **Precise watches:** Any variant or an exact SKU, color, length, or pack size; import Store links and TXT/CSV/JSON lists with a review before saving.
+- **Purchase planning:** Collections with product previews, quantities, recorded spending, budgets, archive/undo, and optional grouping without duplicate item cards.
+- **Flexible alerts:** Restocks, price drops, available-at-target conditions, and collection readiness; per-item rules, pauses, quiet hours, digests, and collection-only overrides.
+- **Multiple channels:** ntfy, Discord, Gotify, SMTP email, and signed webhooks, with durable delivery and bounded retries. Browser popups are also available while the page is running.
+- **Useful evidence:** Observed stock timelines, 7/30/90-day price insights, and searchable, paginated Activity with delivery outcomes and exports.
+- **Recovery and oversight:** Validated SQLite backups, encrypted exports, secondary recovery copies, restore tests, diagnostics, and owner-controlled updates.
+
+Complete valid restocks are recorded immediately; sellouts, ordinary price/status changes, and catalog disappearance require two matching complete observations. Failed or partial checks preserve the last-known-good state. GearBeacon observes catalog data; it does not predict stock, reserve items, or automate checkout.
 
 ## Choose an installation
 
-### Standalone package — easiest
+| Option | Requirements | Start here |
+|---|---|---|
+| **Windows standalone** | Windows x64; runtime included | [Windows guide](https://github.com/alexphillips-dev/GearBeacon/wiki/Windows-Installation) |
+| **macOS standalone** | Intel or Apple Silicon; runtime included | [macOS guide](https://github.com/alexphillips-dev/GearBeacon/wiki/macOS-Installation) |
+| **Linux standalone** | x64 or ARM64; runtime included | [Linux guide](https://github.com/alexphillips-dev/GearBeacon/wiki/Linux-Installation) |
+| **Docker / NAS** | Docker with Compose; amd64/arm64 images | [Docker guide](https://github.com/alexphillips-dev/GearBeacon/wiki/Docker-and-NAS) |
+| **Source checkout** | Node.js **22.13 or newer** | [Source guide](https://github.com/alexphillips-dev/GearBeacon/wiki/Source-Installation) |
 
-Download the package for your operating system from [GitHub Releases](https://github.com/alexphillips-dev/GearBeacon/releases). It contains its own Node runtime; Node.js does not need to be installed.
-
-- **Windows x64:** run `GearBeacon.exe` directly, or run `install-windows-service.ps1` from an elevated PowerShell window for automatic startup.
-- **macOS Intel or Apple Silicon:** run `./gearbeacon`, or use `sudo ./install-macos-service.sh` for a LaunchDaemon.
-- **Linux x64 or ARM64:** run `./gearbeacon`, or use `sudo ./install-linux-service.sh` for a hardened systemd service.
-
-The service installers keep the application files administrator/root-owned and run GearBeacon with low-privilege service identities. The uninstallers preserve GearBeacon data by default; their explicit `-RemoveData` or `--remove-data` option is required to delete it. Every release archive includes an adjacent SHA-256 checksum and SPDX JSON SBOM and is covered by GitHub artifact provenance. Release packages are currently unsigned; signing and macOS notarization remain a separate future milestone.
-
-### Source checkout
-
-Requires Node.js 22.13 or newer. No `npm install` is required because the application uses Node's built-in SQLite implementation.
-
-Source launchers are grouped in `launchers/`. Run the commands below from the checkout root, or open the Windows batch file directly. See the [getting-started guide](docs/START_HERE.txt) for local, private-server, and offline demo launches.
-
-Windows local-only launch:
-
-```text
-launchers/run-windows.bat
-```
-
-macOS or Linux local-only launch:
-
-```bash
-chmod +x launchers/run-mac-linux.sh
-./launchers/run-mac-linux.sh
-```
-
-Open `http://localhost:8787`.
-
-Use `launchers/run-private-windows.bat` or `./launchers/run-private-mac-linux.sh` for a trusted LAN or private VPN server. GearBeacon prints a one-time setup token for authenticated first start.
+**Easiest start:** download and extract your standalone package from [Releases](https://github.com/alexphillips-dev/GearBeacon/releases), run `GearBeacon.exe` on Windows or `./gearbeacon` on macOS/Linux, and open `http://localhost:8787`. Included installers provide automatic startup with a low-privilege identity. Packages include checksum/SBOM/provenance metadata; native signing and macOS notarization are not yet provided.
 
 ### Docker Compose
+
+From a checkout or a directory containing the supplied [Compose file](docker-compose.yml):
 
 ```bash
 docker compose up -d
 docker compose logs gearbeacon
 ```
 
-Compose first uses the published multi-platform image and can build the included Dockerfile when an image is unavailable. It publishes only `127.0.0.1:8787` on the host by default and persists `/data` in the `gearbeacon-data` volume. Images support `linux/amd64` and `linux/arm64`; the process runs as an unprivileged user with a read-only root filesystem, no Linux capabilities, no-new-privileges, a PID limit, and only `/data` plus a constrained temporary filesystem writable.
+Compose uses the published image, publishes only `127.0.0.1:8787` on the host, and persists `/data` in a named volume. Use the token in the logs to complete owner setup. The [Docker guide](https://github.com/alexphillips-dev/GearBeacon/wiki/Docker-and-NAS) covers NAS storage, private access, local builds, and version pinning.
 
-To build the checkout explicitly:
+### Source checkout
 
-```bash
-docker compose build
-docker compose up -d --no-build --pull never
-```
-
-## Guided first run
-
-On a new installation, the browser wizard walks through:
-
-1. Creating the private owner password.
-2. Selecting UniFi Store regions and the access mode.
-3. Adding optional notification channels.
-4. Choosing backup interval and retention, then testing the store and notifications.
-5. Reviewing the final URL, security state, and any restart requirement.
-
-In authenticated modes, enter the one-time token printed by the process or container before the wizard. A region, bind-address, or access-mode change is saved safely but requires one restart because it changes process-level listeners. Operational settings take effect immediately.
-
-## Access modes
-
-| Mode | Default bind | Owner password | Use |
-|---|---|---|---|
-| `local` | `127.0.0.1` | Optional | One computer |
-| `private` | `0.0.0.0` | Required | Trusted LAN, private VPN, server, or container |
-| `proxy` | `127.0.0.1` | Required | HTTPS reverse proxy on the same host |
-
-GearBeacon refuses an unauthenticated `local` server on a non-loopback address. Do not publish it directly to the unrestricted internet. Prefer WireGuard, Tailscale, or another private VPN. If routed access is necessary, terminate HTTPS at a maintained reverse proxy and restrict firewall sources.
-
-Proxy mode requires a loopback bind and accepts `X-Forwarded-Host`, `X-Forwarded-Proto`, and `X-Forwarded-For` only from that same-host proxy connection. Set an HTTPS public URL so session cookies are `Secure`; forwarded HTTPS responses also receive HSTS.
-
-See [deployment guidance](deploy/README.md) for service installation, Caddy/Nginx examples, recovery, updates, and rollback.
-
-## Data and backup safety
-
-Default data locations:
-
-- Windows source/portable: `%LOCALAPPDATA%\GearBeacon`
-- Windows service: `%ProgramData%\GearBeacon`
-- macOS portable: `~/Library/Application Support/GearBeacon`
-- macOS service: `/Library/Application Support/GearBeacon`
-- Linux portable: `${XDG_DATA_HOME:-~/.local/share}/GearBeacon`
-- Linux service: `/var/lib/gearbeacon`
-- Docker: `/data` in the named volume
-
-The data directory contains the SQLite database, validated backup files, and `secrets.key`. Keep the key with the installation when restoring the database if it contains saved notification credentials. Losing the key does not lose watchlists or history, but encrypted integration secrets must be entered again.
-
-Backups use `PRAGMA integrity_check`, a consistent SQLite `VACUUM INTO` snapshot, and a second integrity check. GearBeacon automatically makes a validated backup before a schema upgrade or import. Encrypted exports use AES-256-GCM with a scrypt-derived key; owner credentials, sessions, and local integration secrets are excluded.
-
-Settings → Data can send scheduled, manual, pre-import, and pre-update backups to an optional secondary directory. Use an absolute path on another disk, NAS share, or mounted Docker volume. GearBeacon validates the destination, refuses symbolic-link destinations, reports when it appears to share the primary data filesystem, and can encrypt every secondary copy with a separately saved passphrase. A secondary-copy failure is reported without discarding a valid primary backup.
-
-Use **Test latest primary** and **Test latest secondary** after setup and periodically afterward. Restore tests open a temporary copy, verify its SQLite integrity or decrypt and validate its export structure, confirm schema compatibility, and leave the running database unchanged. Activity retention is independent of per-product history retention; `0` keeps activity until the owner changes the policy.
-
-## Reliable change detection
-
-Every store check records its outcome and catalog evidence. A restock seen in a complete valid catalog is recorded immediately. Sellouts, ordinary status changes, price changes, and products disappearing from the catalog must match on two complete observations before GearBeacon commits the transition or queues an alert. While confirmation is pending, the dashboard keeps displaying the last-known-good value and Operations shows the candidate and observation count.
-
-A product omitted from two consecutive complete catalogs becomes **Unlisted** rather than being silently removed. A later reappearance is detected immediately. Partial catalogs never advance missing-product evidence. HTTP rate limits honor `Retry-After`, and scheduled retries include jitter so multiple self-hosted installations do not retry in lockstep.
-
-## Notifications
-
-### Exact watches, conditions, and collections
-
-Open a product from Browse and use **Watch a specific variant** to choose a SKU, color, length, or pack size. **Any variant** keeps the original product-level watch behavior. Each exact variant has its own history and confirmation evidence; a selected variant can restock even while another remains available. Variant choices depend on the public regional catalog. Explicit `?variant=` Store links and known variant SKUs retain their selection during import; an unknown explicit variant is reported for review.
-
-After watching an item, set a target price and enable **Alert when available at or below the target price** to combine both conditions. This replaces the separate restock and price-change choices for that watch. A qualifying restock alerts immediately; a price reaching the target while available needs the normal two complete observations. The rule alerts once per qualifying period and rearms after confirmed observations no longer meet the condition. For an Any variant watch, stock and price must match on the same variant. Its notification identifies that matching variant. Prices use the selected Store's currency and the catalog display price; shipping, taxes not already included in that price, and checkout surcharges are not calculated.
-
-**Preview rule & notification** evaluates the unsaved rule without recording activity or delivering an alert. Existing quiet hours, digests, cooldowns, and immediate-restock settings still apply. **All activity updates**, when enabled, continues to override event filters and combined conditions; the preview calls this out. Purchased watches remain stopped, and an enabled **Collection alerts only** override still suppresses individual notifications.
-
-Use **Watchlist > Manage collections** to create, rename, or delete regional collections. Assign a watch to one or more collections from its alert rules. Filter by collection, then **Select visible watches** to pause or resume those watches in bulk. Collections reference the same watch: overlapping collections do not duplicate individual product notifications, and deleting a collection preserves its watches and history. Independently watching both Any variant and an exact variant creates two separate watches with their own rules.
-
-Browse cards and product details offer **Add to Watchlist or collection**. Choose **Any variant** or an exact variant, then **Watchlist**, an active collection, or **+ New collection**. Desired quantities belong to collection memberships. Adding a watched product reuses its existing watch and saved rules, including a purchase or pause setting; a new project membership starts with zero purchased units. If it already belongs to the destination, the picker says so and keeps its existing quantity and payments. Adding the watch and membership is one transaction. Archived collections must be restored before using them as Browse destinations.
-
-The Watchlist overview counts unique watches with remaining demand across active projects, plus uncollected watches that are not marked purchased. **Ready to buy** requires confirmed availability and any saved target; **At target price** is the subset with a saved target met by that same available variant. Collection membership quantities determine remaining demand, even if the shared watch is marked purchased for an earlier project. **Collections ready** counts active collections with every remaining item qualifying. Pausing alerts does not hide a purchase opportunity. Pending stock evidence, pending prices relevant to a target, and stale monitoring coverage are excluded. Counts describe this store, independent of the current search and filters. Clicking a summary clears other filters; clicking it again or **Reset filters** restores the normal view. The selected overview filter is remembered in this browser.
-
-**Purchased** retains the watch, its rules, and its history while stopping subsequent alerts and cancelling its pending or failed delivery jobs. A delivery already in progress may finish. **Still wanted** restores the saved rules, including any existing pause. Use the Purchased or Still wanted status filters to review these items. These watch-level actions also mark all desired units purchased in each active containing collection, or reset those active purchase quantities and costs when returning to Still wanted. Archived purchase records are preserved. Use **Record purchase** inside a collection to track a purchase only for that project; its shared watch and other projects keep their own state.
-
-### Stock insights and collection readiness
-
-Open product details to see **Stock insights**. Choose a 7-, 30-, or 90-day window to view observed availability, recorded restocks, and observed available time. The timeline uses actual timestamps; **Observation details** provides dates and values as text. Unknown periods include time before monitoring began, restarts, failed or incomplete checks, overdue polling, and pending stock or price confirmation. Intervals cover consecutive observations with unchanged confirmed values; they do not establish what happened between polls. The most recent check is not extended forward to the present as known availability.
-
-**Price insights** lists the lowest catalog price and the lowest catalog price observed while available for each window, plus the difference between the current confirmed price and your saved target. Comparisons use one SKU, Store region, and currency. Select an exact variant when a product has multiple variants. A missing price is not zero; an explicitly observed zero price remains zero. Catalog prices are not checkout totals and exclude shipping, additional taxes, and surcharges GearBeacon does not calculate.
-
-New insight history starts with complete checks after upgrading to 1.2.0. Earlier change records remain in **Recent changes**, but cannot reconstruct historical monitoring coverage or exact-variant prices. Windows with less retained history are marked **Partial history**; unknown periods are excluded from observed durations and minima. The application records no predictions of future restocks. History retention follows `GEARBEACON_HISTORY_RETENTION_DAYS` (365 days by default). Compact inventory intervals and regional monitoring intervals each have a 100,000-record limit per region; oldest intervals expire first. The chart shows at most 600 recent intervals and observation details at most 100, with a notice when limited; summary calculations use all retained observations in the requested window.
-
-Collections also serve as purchase plans. Set an optional **Project budget** in the collection editor. Open the collection image or name to see **Spent**, **Remaining cost**, **Budget**, budget status, and purchased-unit progress. Each always-visible item row includes:
-
-- **Edit item**: desired quantity (1–1,000), purchased quantity, combined amount actually paid, and the per-unit target price. Quantities and payment records belong to this collection; target prices are shared with the item's watch and all its collections. Clearing a target also turns off that watch's available-at-target condition.
-- **Record purchase**: starts with all desired units purchased and suggests the remaining catalog cost plus any previously recorded payment. Adjust the quantity and combined total to match the actual purchase, then **Save item**. Previously purchased units with an unknown cost leave this suggestion empty. Editing or cancelling does not save until submitted.
-- **Store**: opens the product or exact variant on the UniFi Store.
-- **Remove**: removes the item and its purchase record from this collection while retaining its watch, rules, history, and membership in other collections.
-
-Project estimates use recorded spending plus the current confirmed catalog price multiplied by each remaining quantity. Recorded payments stay fixed as catalog prices change. Unknown payments and missing prices are disclosed; the app does not claim an under/over-budget amount until all costs are known. Entering zero paid is valid. Budget and payment amounts use the selected store's currency with two decimal places; GearBeacon does not convert currencies or calculate shipping and additional checkout costs. Quantities help plan purchases; catalog availability does not confirm how many units can be ordered. Renaming a collection or saving its selected items preserves quantities and payments for retained members.
-
-Use **Archive collection** in the editor or **Archive** in Manage collections to set a project aside. Archiving preserves its members, desired/purchased quantities, actual spending, budget, and saved alert settings. It removes the collection from the default cards, active destinations, and readiness overview, cancels its pending/failed collection deliveries, and releases its collection-only override. Shared watches remain monitored under their saved rules; another active collection may still suppress their individual notifications. With grouping enabled, archived memberships remain grouped away from the default individual cards. **Manage collections > Archived > View watches** opens them explicitly. **Restore** returns the project to active views and reapplies its saved alert mode with a fresh readiness baseline; it does not send an immediate readiness alert or replay cancelled jobs. A delivery already in progress may finish.
-
-After **Remove** on a collection item row, **Undo** restores its exact desired quantity, purchased quantity, and combined payment. Undo stays in the collection manager until dismissed or the page is refreshed; closing and reopening the manager keeps it. It does not expire on a short timer. Undo cannot overwrite an item added again after removal, and it cannot recreate a deleted watch or collection. Shared target prices and alert rules are not rolled back. Removing a watch from the Watchlist still removes its memberships from all collections, including archived ones.
-
-Watchlist collections show how many **remaining** items qualify, which items are waiting for stock or a target price, which need fresh confirmation, and how many are purchased. Each remaining watch must be available and at or below its target price, if one is set. An Any variant watch needs one specific variant to meet both conditions. Collection readiness does not establish stock quantities or reserve inventory.
-
-Open **Alerts** on a collection card, at the bottom of its details or editor, or beside it in **Manage collections**, then enable **Notify when all remaining items qualify** to receive a server-side alert when it enters readiness. The toggle saves automatically in its own view. New collections must be created before configuring alerts. When opening alerts from the editor, they apply to the saved collection; use **Back to editing** and **Save changes** to apply pending name or membership edits. The default **Collection and item alerts** mode keeps both kinds of notification enabled; pausing an item does not pause the collection alert. Enabling the option establishes the current baseline, so an already ready collection does not alert immediately. The alert fires once per qualifying period, survives restarts and recovery, and rearms only after confirmed observations show the collection is no longer ready. Monitoring gaps never rearm it. Empty and fully purchased collections never alert. Each opted-in collection has its own transition alert, including overlapping collections.
-
-Choose **Collection alerts only** under **Individual item alerts** to suppress individual notifications for this collection's members while its readiness alert is enabled and the collection is active. This selection saves automatically. Item rules remain saved, including event choices, targets, and pauses. If any active containing collection has this mode and alerts enabled, it suppresses that item's notifications, including All activity and immediate restocks; item cards, collection rows, and the rule editor name the responsible collections. Other collections still send their own opted-in readiness alerts. Disabling the last override, turning off its readiness alert, or removing the last suppressing membership restores future notifications under the saved item rules. Pending and failed individual deliveries are cancelled when the override takes effect and are not replayed when it is removed; a delivery already in progress may finish.
-
-Collection alerts use configured notification channels, quiet hours, grouping, digests, cooldowns, and bounded retries. They appear in Activity under **Collection ready**, with an action to open that collection. They are separate from individual watch pause settings; **All activity** does not enable them. Disabling or deleting a collection, changing its membership, or changing a member's target, desired quantity, or purchased quantity cancels pending/failed collection jobs and establishes a new baseline. A delivery already in progress may finish. Notification contents describe the conditions observed when the alert was queued; check the Store for current availability.
-
-Upgrading to this 1.2.0 development build creates a validated safety backup before schema v11, including when updating from an earlier 1.2.0 build. Restart the GearBeacon process after updating so the migration and new API are active. Existing watches, rules, collections, and history are retained. Existing members start with one desired unit, preserve their watch's purchased state, and have unknown actual purchase costs; budgets are unset and collection-only mode is off. Existing collections start active; upgrades from schema v10 preserve all purchase plans. Format-v7 recovery exports retain archive state, purchase plans, budgets, alert modes, inventory intervals, monitoring coverage, and readiness state. Preview and import accept requests up to 256 MiB; earlier formats remain supported with defaults for fields they did not record. Restoring an export cancels obsolete queued collection alerts and individual jobs suppressed by restored collection-only modes, and requires a fresh complete check before readiness is known. For rollback, stop the service and restore the compatible pre-upgrade database with its matching encryption key: older builds cannot open a schema-v11 database or format-v7 export.
-
-### Delivery settings
-
-Channel configuration, delivery timing, previews, and individual test buttons are in Settings. A channel can be configured but independently disabled. Restock alerts for watched products are enabled by default; sellout, price, status, and new-product alerts are opt-in. The separate **All activity updates** option alerts for every new Activity feed entry, including changes to unwatched products, and overrides the individual event filters while enabled. It is disabled by default to avoid unexpected notification volume.
-
-Each watched product can inherit those global event choices or override them. Product rules can limit price notifications to drops, wait for a target price, pause alerts, or force restocks to deliver immediately. Immediate restocks bypass quiet hours and digest scheduling. Other queued events can be held until quiet hours end, collected for the next daily digest, and suppressed during a configurable per-product event cooldown.
-
-Normal events are written to a persistent SQLite queue before delivery. Failed attempts use exponential backoff up to the configured limit. Operations shows pending/delivered/failed counts, failure reasons, and an owner-controlled retry action. The optional grouping window combines nearby events for the same region and channel.
-
-SMTP email uses responsive, event-specific HTML with a matching plain-text alternative. Restocks, price targets and drops, sellouts, status changes, new products, operational issues, tests, and grouped digests each have a focused layout. Product details are captured when the event is queued, so delayed alerts describe what GearBeacon actually detected. When a public URL is configured, email can link directly back to the matching product in the private dashboard.
-
-Email appearance controls in Settings offer compact, standard, or detailed layouts; device, light, or dark themes; subject prefixes; price calculations; alert explanations; digest limits; and a desktop/mobile preview rendered by the same code used for SMTP. Product images are embedded inline by default from an exact Ubiquiti host allowlist with strict timeout, content-type, and size limits. Image failures fall back cleanly and never prevent the alert from being sent. Messages contain no tracking pixels, scripts, remote fonts, or analytics.
-
-SMTP port 465 uses implicit TLS. Other SMTP ports require STARTTLS by default, and credentials are never sent on an unencrypted connection. Certificate validation is enabled by default. Messages use `multipart/alternative` for HTML and text, `multipart/related` for inline images, and a unique `Message-ID`.
-
-Generic webhooks receive JSON and, when a signing secret is configured, these headers:
+No `npm install` is needed just to run the committed application. From the current checkout root:
 
 ```text
-X-GearBeacon-Timestamp: <unix timestamp>
-X-GearBeacon-Signature: sha256=<HMAC of timestamp + "." + exact body>
+Windows:      launchers/run-windows.bat
+macOS/Linux:  ./launchers/run-mac-linux.sh
 ```
 
-Verify the HMAC against the raw request body and reject stale timestamps at the receiver.
+Open `http://localhost:8787`. Private-server and offline-demo launchers are also in `launchers/`; see [START_HERE](docs/START_HERE.txt). The published v1.2.0 source archive has its launchers at the root, so omit `launchers/` for that download.
 
-## Operations and updates
+## First run and safe access
 
-The Operations page starts with an overall **Healthy**, **Degraded**, or **Action Required** state and links actionable warnings to the relevant Settings tab. The same highest-priority issue appears in a compact owner-attention banner throughout the dashboard. Operations also includes every region's last/next check, product and watch counts, catalog errors and pending confirmations, notification queue outcomes and next delivery, primary and secondary recovery status, database/free-space sizes, security warnings, filtered downloadable logs, runtime architecture, commit, and container image information.
+The browser wizard walks through owner setup, Store regions, access mode, notification channels, and backup settings. Authenticated installations first require the one-time setup token from the process/service/container log. Region, bind-address, and access-mode changes require a restart; other operational settings apply immediately.
 
-**Run diagnostics** checks database integrity, data/backup directory access, local encryption-key decryption, non-destructive restore readiness, free space, notification failures, store connectivity, and access-mode security. **Support bundle** downloads a redacted JSON snapshot of runtime health, recent checks, configuration state, queue summaries, and application logs. It excludes passwords, tokens, webhook URLs, local filesystem paths, host addresses, and product/watchlist data.
+| Mode | Initial bind | Owner authentication | Intended use |
+|---|---|---|---|
+| `local` | `127.0.0.1` | Optional | One computer |
+| `private` | `0.0.0.0` | Required | Trusted LAN/VPN, service, or container |
+| `proxy` | `127.0.0.1` | Required | Same-host HTTPS reverse proxy |
 
-**Check for updates** reads GitHub Releases (or a configured manifest) and shows notes and download links. **Prepare safe update** flushes current state, creates and validates a pre-update backup, and displays the platform command. GearBeacon never performs an unattended update.
+Local mode cannot expose an unauthenticated server beyond loopback. Keep remote access private or behind a restricted HTTPS proxy. Read [Security and access](https://github.com/alexphillips-dev/GearBeacon/wiki/Security-and-Access) and [Reverse proxy](https://github.com/alexphillips-dev/GearBeacon/wiki/Reverse-Proxy) before changing exposure.
 
-Standalone helpers require an explicit backup confirmation flag and validate the release SHA-256 file. Docker updates keep the named data volume. To roll back, stop GearBeacon, restore the validated pre-update SQLite backup, and reinstall or select the previous application/image version.
+## Keep your data recoverable
 
-## Environment configuration
+Live data stays in the operating system's application-data directory or Docker `/data`, outside application files. SQLite backups and the separate `secrets.key` preserve saved state and encrypted integration credentials. Portable encrypted exports exclude owner credentials, sessions, and local integration secrets.
 
-Browser-saved settings are intended for most owners. Environment values seed new installations and remain useful for automation.
+Use **Settings > Data** to configure backups and test primary/secondary recovery. Before updating, choose **Prepare safe update** and verify its backup. GearBeacon never installs updates automatically. Data paths, migration, encryption, and rollback procedures are in [Backups and recovery](https://github.com/alexphillips-dev/GearBeacon/wiki/Backups-and-Recovery) and [Updates and rollback](https://github.com/alexphillips-dev/GearBeacon/wiki/Updates-and-Rollback).
 
-| Variable | Default | Purpose |
-|---|---:|---|
-| `PORT` | `8787` | Dashboard/API port |
-| `REGIONS` | `us` | Comma-separated `us`, `ca`, `eu`, `uk` |
-| `POLL_SECONDS` | `60` | Poll interval; minimum 30 seconds |
-| `GEARBEACON_ACCESS_MODE` | `local` | `local`, `private`, or `proxy` |
-| `GEARBEACON_BIND_HOST` | mode default | Listening address |
-| `GEARBEACON_SETUP_TOKEN` | random | Optional fixed one-time token |
-| `GEARBEACON_OWNER_PASSWORD_FILE` | blank | Initial/recovery password file |
-| `GEARBEACON_OWNER_PASSWORD` | blank | Initial/recovery password value |
-| `GEARBEACON_RESET_OWNER_PASSWORD` | `0` | Apply configured recovery password and revoke sessions |
-| `GEARBEACON_PUBLIC_BASE_URL` | blank | Canonical URL and notification link |
-| `GEARBEACON_ALLOWED_ORIGINS` | same origin | Extra browser origins |
-| `GEARBEACON_COOKIE_SECURE` | URL detection | Force `Secure` cookies |
-| `GEARBEACON_DATA_DIR` | OS data folder | Persistent data override |
-| `GEARBEACON_BACKUP_INTERVAL_HOURS` | `24` | `0` disables scheduled backups |
-| `GEARBEACON_BACKUP_RETENTION` | `10` | Database backups to retain |
-| `GEARBEACON_HISTORY_RETENTION_DAYS` | `365` | Product changes, inventory insight intervals, and monitoring coverage retention |
-| `GEARBEACON_EVENT_RETENTION_DAYS` | `365` | Activity retention; `0` keeps activity indefinitely |
-| `GEARBEACON_SECONDARY_BACKUP_DIR` | blank | Absolute recovery directory or mounted share |
-| `GEARBEACON_SECONDARY_ENCRYPTED_EXPORTS` | `0` | Encrypt secondary copies; save its passphrase in Settings first |
-| `GEARBEACON_NOTIFICATION_MAX_ATTEMPTS` | `5` | Delivery attempt limit |
-| `GEARBEACON_NOTIFICATION_GROUP_SECONDS` | `0` | Optional event grouping window |
-| `GEARBEACON_NOTIFICATION_COOLDOWN_MINUTES` | `30` | Suppress duplicate product/event alerts during this window |
-| `GEARBEACON_TIME_ZONE` | system timezone | IANA timezone for schedules |
-| `GEARBEACON_QUIET_HOURS_ENABLED` | `0` | Hold normal alerts during quiet hours |
-| `GEARBEACON_QUIET_HOURS_START` / `GEARBEACON_QUIET_HOURS_END` | `22:00` / `07:00` | Local quiet-hours window |
-| `GEARBEACON_DIGEST_ENABLED` / `GEARBEACON_DIGEST_TIME` | `0` / `09:00` | Enable and schedule a daily digest |
-| `GEARBEACON_ALERT_MONITOR_FAILURES` | `1` | Alert after repeated store-check failures |
-| `GEARBEACON_ALERT_NOTIFICATION_FAILURES` | `1` | Alert when a channel exhausts delivery attempts |
-| `GEARBEACON_ALERT_BACKUP_FAILURES` | `1` | Alert when a scheduled backup fails |
-| `GEARBEACON_ALERT_LOW_DISK` | `1` | Alert when less than 1 GB remains |
-| `NTFY_BASE_URL` / `NTFY_TOPIC` / `NTFY_TOKEN` | blank | ntfy integration |
-| `DISCORD_WEBHOOK_URL` | blank | Discord webhook |
-| `GOTIFY_BASE_URL` / `GOTIFY_TOKEN` | blank | Gotify integration |
-| `GEARBEACON_WEBHOOK_URL` | blank | Generic webhook |
-| `GEARBEACON_WEBHOOK_TOKEN` | blank | Optional bearer token |
-| `GEARBEACON_WEBHOOK_HMAC_SECRET` | blank | Optional signing secret |
-| `SMTP_HOST` / `SMTP_PORT` | blank / `587` | SMTP server |
-| `SMTP_SECURE` | port-based | Implicit TLS |
-| `SMTP_STARTTLS` | `1` | Require STARTTLS when not using implicit TLS |
-| `SMTP_REJECT_UNAUTHORIZED` | `1` | Validate SMTP certificate |
-| `SMTP_USER` / `SMTP_PASSWORD` | blank | SMTP credentials |
-| `SMTP_FROM` / `SMTP_TO` | blank | Sender and recipients |
-| `GEARBEACON_EMAIL_DETAIL_LEVEL` | `standard` | `compact`, `standard`, or `detailed` email layout |
-| `GEARBEACON_EMAIL_EMBED_IMAGES` | `1` | Embed allowlisted product images as inline attachments |
-| `GEARBEACON_EMAIL_EXPLAIN_REASON` | `1` | Include why each alert was sent |
-| `GEARBEACON_EMAIL_PRICE_CALCULATIONS` | `1` | Show savings or price-increase math |
-| `GEARBEACON_EMAIL_DIGEST_MAX_ITEMS` | `12` | Maximum unique products shown per digest, 1–50 |
-| `GEARBEACON_EMAIL_SUBJECT_PREFIX` | `[GearBeacon]` | Optional subject prefix, up to 60 characters |
-| `GEARBEACON_EMAIL_THEME` | `auto` | `auto`, `light`, or `dark` email colors |
-| `GEARBEACON_BUILD_COMMIT` / `GEARBEACON_IMAGE` | blank | Build provenance shown in Operations |
-| `GEARBEACON_GITHUB_RELEASE_API` | project releases | Manual update source; blank disables |
-| `GEARBEACON_UPDATE_MANIFEST_URL` | blank | Custom update channel |
-| `GEARBEACON_MIN_CATALOG_RATIO` | `0.55` | Partial-catalog rejection threshold |
-| `GEARBEACON_STALE_AFTER_SECONDS` | at least `180` | Stale monitor threshold |
-| `MOCK_MODE` | `0` | Offline demonstration catalog/database |
+## Documentation
 
-See [.env.example](.env.example) for a copyable template.
+The [wiki](https://github.com/alexphillips-dev/GearBeacon/wiki) contains the complete guides and technical reference:
 
-## API and health
+| Task | Guide |
+|---|---|
+| Find products, import watches, and choose variants | [Watchlist and Browse](https://github.com/alexphillips-dev/GearBeacon/wiki/Watchlist-and-Browse) |
+| Group items, plan quantities, and track spending | [Collections and purchase planning](https://github.com/alexphillips-dev/GearBeacon/wiki/Collections-and-Purchase-Planning) |
+| Configure item/project rules and delivery | [Alerts](https://github.com/alexphillips-dev/GearBeacon/wiki/Alerts-and-Notifications) · [Email and webhooks](https://github.com/alexphillips-dev/GearBeacon/wiki/Email-and-Webhooks) |
+| Understand prices, stock evidence, and monitoring gaps | [Stock insights](https://github.com/alexphillips-dev/GearBeacon/wiki/Stock-Insights-and-Monitoring) |
+| Investigate activity, failures, and health | [Activity and Operations](https://github.com/alexphillips-dev/GearBeacon/wiki/Activity-and-Operations) · [Troubleshooting](https://github.com/alexphillips-dev/GearBeacon/wiki/Troubleshooting) |
+| Automate or customize an installation | [Configuration reference](https://github.com/alexphillips-dev/GearBeacon/wiki/Configuration-Reference) · [API reference](https://github.com/alexphillips-dev/GearBeacon/wiki/API-Reference) |
 
-Only liveness, readiness, and authentication bootstrap routes work without an owner session in authenticated modes. State-changing authenticated requests also require the session's `X-CSRF-Token`.
-
-- `/healthz`, `/readyz`, `/api/health` — process and monitor health
-- `/api/auth/*`, `/api/onboarding/complete` — owner access and setup
-- `/api/config`, `/api/config/validate` — sanitized configuration and validation
-- `/api/products`, `/api/products/:slug`, `/api/watchlist`, `/api/watch/*`, `/api/watch/import`, `/api/watch/import/preview`, `/api/events`, `/api/check` — regional monitor data, watchlist importing, details, history, and per-product rules
-- `/api/collections`, `/api/collections/:id`, `/api/watch/:slug/collections`, `/api/watch/:slug/preview` — regional collections, membership, and previews of unsaved watch conditions
-- `/api/products/:slug?days=7|30|90` — availability timeline, recorded restocks, price-window summaries, target comparison, and explicit coverage/retention limitations; defaults to 30 days
-- `POST /api/collections` and `PUT /api/collections/:id` accept `budget` (a nonnegative amount or `null`). `PUT` also accepts `notifyReady`, `alertsOnly`, and `archived` booleans. Collection responses include item plans, pricing, spending/budget summaries, readiness counts, and per-item reasons.
-- `PUT /api/collections/:id/items/:slug` accepts `quantity`, `purchasedQuantity`, `paidTotal` (combined actual spending or `null`), and optional shared `targetPrice`; `DELETE` removes only that collection membership. `POST` on the item URL restores an absent membership from a validated plan and rejects existing memberships. `GET /api/collections` advertises `capabilities.purchasePlanning` and `capabilities.watchWorkflow` for compatible clients.
-- `/api/activity`, `/api/activity/:id`, `/api/activity/export` — searchable confirmed activity, evidence, pagination, and CSV/JSON export
-- `POST /api/watch/add` accepts a `slug`, optional `collectionId` or `collectionName`, and an optional collection `quantity`; it adds watch and membership atomically while preserving existing records. Product/collection responses include `overview` with ready watch IDs, target-matching watch IDs, and ready collection IDs.
-- `/api/notifications/*` — preferences, scheduling preview, individual tests, queue retry, and delivery history
-- `/api/operations`, `/api/operations/diagnostics`, `/api/operations/support-bundle`, `/api/logs` — operational status, installation diagnostics, redacted support data, and filtered logs
-- `/api/data/*` — integrity, primary/secondary backup, non-destructive restore testing, export, preview, and import
-- `/api/update/check`, `/api/update/prepare` — manual release information and validated preparation
-
-## Development and verification
-
-API clients should treat a returned `slug` as an opaque watch identity and URL-encode it in route parameters. Exact variants additionally expose `parentSlug`, `variantId`, `variantSlug`, and `sku`; use the returned `url` for the Store link. The default product list includes parent products and watched variants. Add `includeVariants=1` to retrieve every retained variant. Product details return the parent and variant choices. Existing parent identities remain valid.
+## Development and support
 
 ```bash
 npm ci
 npm run build
 npm run check
-npm test
-npm run test:browser
-npm run test:launchers
-npm run test:update-helpers
-docker compose build
 ```
 
-CI exercises fresh installs and backup-protected upgrades from V0.1.5–V0.1.7 on Windows, macOS, and Linux; confirmation and unlisting behavior; searchable/exportable activity; primary and encrypted-secondary restore tests; diagnostics and support-bundle redaction; deterministic rate-limit, partial-catalog, restart, storage, key, 500-product, and 10k-activity fault scenarios; real Chrome workflows with axe WCAG scans, keyboard/focus behavior, reduced motion, persistent filters, reset states, offline recovery, copy actions, responsive widths, both themes, product images, rules, scheduling and bulk actions; integration-secret encryption; every notification mock; webhook signing; SMTP STARTTLS; authentication, CSRF, Host/origin, secure-cookie, and forwarded-header behavior; update-helper safety; launcher syntax; real Docker Compose isolation and startup; amd64/arm64 containers; and native standalone packages. CodeQL scans source, while Trivy fails closed on repository secrets and high/critical container vulnerabilities.
+Contributions target `dev`; `main` is reserved for reviewed stable work. See [CONTRIBUTING](.github/CONTRIBUTING.md) and the [development guide](https://github.com/alexphillips-dev/GearBeacon/wiki/Development-and-Releases) for architecture, tests, packaging, and release validation. Release history lives in the [changelog](docs/CHANGELOG.md).
 
-Before a stable release, run **Candidate packages** manually with a matching prerelease version such as `1.2.0-rc.1` to create retained Actions artifacts without publishing a release. It uses the exact reusable packaging jobs used by a tag, extracts every archive, starts every native executable, validates the source archive, generates SBOMs, and records attestations.
-
-Prerelease tags such as `v1.2.0-rc.1` must point to a commit on `dev` and never move the stable container `latest` tag. Stable tags such as `v1.2.0` must point to the reviewed commit on protected `main`. Publication also requires successful CI and security workflows at the exact SHA, consistent version/changelog/manifest data, checksummed and rehearsed packages, amd64/arm64 images, SBOMs, and provenance. The GitHub release stays a draft until those steps succeed. The [stable release checklist](.github/RELEASE_CHECKLIST.md) defines the required automated validation and publication checks. Real-host installation, upgrade, rollback, manual accessibility, and 24–48 hour soak testing are recommended additional validation; they do not block a release or require an exception when unavailable.
-
-## Project layout
-
-| Path | Purpose |
-|---|---|
-| `backend/src` / `backend/dist` | Server source and compiled CommonJS application |
-| `web` | Browser dashboard and assets |
-| `launchers` | Local, private-server, and offline demo startup scripts for source installations |
-| `docs` | Getting-started guide, changelog, and release notes |
-| `deploy` | Service installers, uninstallers, updaters, and hosting guidance |
-| `scripts` | Version, integration, STARTTLS, packaging, and smoke tests |
-| `.github/workflows` | Cross-platform CI, security scans, and releases |
-| `.github` | Contribution/security policies, issue templates, and release checklist |
-
-Release-specific history belongs in [CHANGELOG.md](docs/CHANGELOG.md), keeping this README current and readable.
-
-Please read [CONTRIBUTING.md](.github/CONTRIBUTING.md) before proposing a change. Report suspected vulnerabilities privately using the process in [SECURITY.md](.github/SECURITY.md), never in a public issue.
+For help, include the version, installation type, reproduction steps, and a reviewed redacted support bundle from **Settings > Operations**. Report vulnerabilities privately using [SECURITY](.github/SECURITY.md).
 
 ## License and trademarks
 
-Copyright 2026 alexphillips-dev. GearBeacon is licensed under the [Apache License 2.0](LICENSE); see [NOTICE](NOTICE).
+Copyright 2026 alexphillips-dev. Licensed under the [Apache License 2.0](LICENSE); see [NOTICE](NOTICE).
 
-Ubiquiti and UniFi are trademarks of their respective owner. The license does not grant permission to use GearBeacon or third-party trademarks beyond applicable law.
+GearBeacon is independent and is not affiliated with or endorsed by Ubiquiti Inc. Ubiquiti and UniFi are trademarks of their respective owner. The license does not grant permission to use GearBeacon or third-party trademarks beyond applicable law.
