@@ -965,6 +965,34 @@ try {
   await waitForBrowser(`app.collections.find(item=>item.id==='${purchaseCollectionId}').notifyReady && !document.querySelector('[data-notify-collection]').disabled`, 'Purchase collection alerts did not enable');
   await evaluate("document.querySelector('[data-collection-alert-mode]').value='only'; document.querySelector('[data-collection-alert-mode]').dispatchEvent(new Event('change',{bubbles:true}))");
   await waitForBrowser(`app.collections.find(item=>item.id==='${purchaseCollectionId}').alertsOnly && document.activeElement.matches('[data-collection-alert-mode]')`, 'Collection-only alert mode did not save or retain focus');
+  await evaluate("document.querySelector('[data-collection-budget]').click()");
+  await waitForBrowser("!app.collectionNotificationBusy && app.collections.find(item=>item.id===app.collectionAlertId).budgetRequired && document.activeElement.matches('[data-collection-budget]')", 'Budget condition did not save or retain focus');
+  await evaluate("refresh()");
+  assert(await evaluate("document.querySelector('[data-collection-budget]').checked && document.activeElement.matches('[data-collection-budget]') && document.getElementById('collectionBudgetCondition').textContent.includes('recorded spending')"), 'Refresh lost the saved budget condition or focus');
+  await assertAccessible('Collection budget alert settings');
+  if (screenshotRoot) {
+    const capture=await cdp.send('Page.captureScreenshot',{format:'png'});
+    await writeFile(join(screenshotRoot,'collection-budget-alerts.png'),Buffer.from(capture.data,'base64'));
+  }
+  await evaluate(`(() => {
+    window.budgetOrigin=app.collectionAlertId;
+    window.budgetOther=app.collections.find(item=>item.id!==window.budgetOrigin).id;
+    window.budgetOriginalFetch=window.fetch;
+    window.fetch=async (...args)=>{
+      const response=await window.budgetOriginalFetch(...args);
+      if (args[1]?.method==='PUT' && String(args[0]).includes('/api/collections/')) await new Promise(resolve=>window.releaseBudgetSave=resolve);
+      return response;
+    };
+    document.querySelector('[data-collection-budget]').click();
+  })()`);
+  await waitForBrowser("Boolean(window.releaseBudgetSave)", 'Delayed collection save did not start');
+  await evaluate("document.getElementById('closeCollectionManager').click(); openCollectionAlerts(window.budgetOther)");
+  assert(await evaluate("document.getElementById('collectionDialogTitle').textContent===app.collections.find(item=>item.id===window.budgetOther).name && document.querySelector('[data-collection-budget]').dataset.collectionBudget===window.budgetOther && document.querySelector('[data-collection-budget]').disabled"), 'Opening another collection during a save displayed stale settings');
+  await evaluate("window.fetch=window.budgetOriginalFetch; window.releaseBudgetSave()");
+  await waitForBrowser("!app.collectionNotificationBusy && !document.querySelector('[data-collection-budget]').disabled && app.collectionAlertId===window.budgetOther", 'Completed save replaced or left the new collection disabled');
+  await evaluate("openCollectionAlerts(window.budgetOrigin); document.querySelector('[data-collection-budget]').click()");
+  await waitForBrowser("!app.collectionNotificationBusy && app.collections.find(item=>item.id===window.budgetOrigin).budgetRequired", 'Budget condition did not restore after delayed save');
+  await evaluate("openCollectionDetails(window.budgetOrigin); openCollectionAlerts(window.budgetOrigin)");
   await assertAccessible('Collection-only alert mode');
   await evaluate("document.querySelector('[data-close-collection-alerts]').click()");
   assert(await evaluate("document.querySelector('#collectionDetails .collection-member-plan').textContent.includes('Item alerts suppressed by: Purchase test') && document.querySelector('#watchGrid [data-product-card=\"udm-se\"]').textContent.includes('Individual alerts suppressed by Purchase test')"), 'The effective collection alert override was not visible on the item');
@@ -1144,7 +1172,100 @@ try {
   }
   await cdp.send('Emulation.setDeviceMetricsOverride', { width:640,height:450,screenWidth:1280,screenHeight:900,deviceScaleFactor:2,mobile:false });
   assert(await evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), 'Activity page-size controls overflowed at 200% equivalent zoom');
-  console.log(`BROWSER SMOKE PASSED: ${process.platform} · setup/auth · WCAG axe scans · keyboard/focus/reduced-motion · persistent navigation/filters · resettable empty states · offline recovery · copy actions · unclipped navigation · dark/light · images · watch/rules/bulk/import · exact variants/combined preview/collections/purchased · stock insights/windows/collection readiness/alerts/deep-links · compact searchable activity/evidence · email settings/preview/deep-link · backup/import · diagnostics/operations · responsive`);
+  // Background reads preserve the committed Activity page, including keyboard focus.
+  await evaluate("refreshActivity(2)");
+  await evaluate("window.heldActivityIds=app.activity.events.map(event=>event.id); document.querySelector('#activityList .event').focus(); window.heldActivityFocus=document.activeElement");
+  await evaluate(`(async () => {
+    const product=app.products.find(product=>!product.variantId && !product.comingSoon);
+    await api('/api/mock/product/'+encodeURIComponent(product.slug),{method:'POST',body:JSON.stringify({status:product.inStock ? 'SoldOut' : 'Available'})});
+    await api('/api/check',{method:'POST'}); await api('/api/check',{method:'POST'});
+    await refreshActivity(app.activity.page,{background:true});
+  })()`);
+  assert(await evaluate("app.activity.page===2 && JSON.stringify(app.activity.events.map(event=>event.id))===JSON.stringify(window.heldActivityIds) && document.activeElement===window.heldActivityFocus && !document.getElementById('activityNew').classList.contains('hidden')"), 'Incoming activity shifted the current page or lost focus');
+  for (const theme of ['dark','light']) {
+    await evaluate(`applyTheme(${JSON.stringify(theme)})`); await delay(250);
+    await cdp.send('Emulation.setDeviceMetricsOverride',{width:390,height:844,screenWidth:390,screenHeight:844,deviceScaleFactor:1,mobile:false});
+    assert(await evaluate("document.documentElement.scrollWidth<=innerWidth+1 && Math.round(document.querySelector('#activityList .event').getBoundingClientRect().height)===64"), 'New Activity notice changed row height or overflowed');
+    await assertAccessible(`New Activity notice ${theme}`);
+    if (screenshotRoot) {
+      const capture=await cdp.send('Page.captureScreenshot',{format:'png'});
+      await writeFile(join(screenshotRoot,`activity-new-${theme}.png`),Buffer.from(capture.data,'base64'));
+    }
+  }
+  await cdp.send('Emulation.setDeviceMetricsOverride',{width:640,height:450,screenWidth:1280,screenHeight:900,deviceScaleFactor:2,mobile:false});
+  assert(await evaluate("document.documentElement.scrollWidth<=innerWidth+1"), 'New Activity notice overflowed at 200% equivalent zoom');
+  await evaluate("document.getElementById('activityNew').focus(); document.activeElement.click()");
+  await waitForBrowser("app.activity.page===1 && document.getElementById('activityNew').classList.contains('hidden') && document.activeElement.matches('#activityList .event')", 'Loading new activity did not reset the boundary or restore focus');
+  // Slow refreshes coalesce; a saved edit cannot be overwritten by an older response.
+  await evaluate(`(async () => {
+    await refresh();
+    window.refreshOriginalFetch=window.fetch; window.refreshProductReads=0;
+    window.fetch=async (...args)=>{
+      const response=await window.refreshOriginalFetch(...args);
+      if (String(args[0]).includes('/api/products?')) {
+        window.refreshProductReads++;
+        if (window.refreshProductReads===1) await new Promise(resolve=>window.releaseRefresh=resolve);
+      }
+      return response;
+    };
+    window.slowRefresh=refresh({background:true});
+  })()`);
+  await waitForBrowser("Boolean(window.releaseRefresh)", 'Refresh delay fixture did not start');
+  await evaluate("refresh({background:true}); refresh({background:true}); app.dataRevision++; window.expectedProductName=app.products[0].name+' local edit'; app.products[0].name=window.expectedProductName; window.releaseRefresh();");
+  await evaluate("window.slowRefresh");
+  assert(await evaluate("window.refreshProductReads===1 && app.products[0].name===window.expectedProductName"), 'Refresh requests overlapped or stale data replaced an edit');
+  await evaluate("window.fetch=window.refreshOriginalFetch; refresh()");
+  // Hidden tabs defer catalog rendering, and opening the tab refreshes it immediately.
+  await evaluate(`(async () => {
+    window.hiddenOriginalFetch=window.fetch; window.hiddenRequests=[];
+    window.fetch=(...args)=>{window.hiddenRequests.push(String(args[0])); return window.hiddenOriginalFetch(...args);};
+    Object.defineProperty(document,'hidden',{configurable:true,value:true});
+    await refresh({background:true});
+  })()`);
+  assert(await evaluate("window.hiddenRequests.every(path=>path.includes('/api/events?'))"), 'Hidden tab fetched the catalog or rendered settings');
+  await evaluate("delete document.hidden; document.dispatchEvent(new Event('visibilitychange'))");
+  await waitForBrowser("window.hiddenRequests.some(path=>path.includes('/api/products?')) && !refreshTask", 'Returning to the tab did not refresh the catalog');
+  await evaluate("window.fetch=window.hiddenOriginalFetch; activateTab('settings'); activateSettingsTab('notifications')");
+  await waitForBrowser("!refreshTask", 'Settings refresh did not settle');
+  await delay(200);
+  await evaluate("window.preferenceDraft=!document.getElementById('notifyRestock').checked; document.getElementById('notifyRestock').checked=window.preferenceDraft; refresh({background:true})");
+  assert(await evaluate("document.getElementById('notifyRestock').checked===window.preferenceDraft"), 'Background refresh discarded unsaved notification preferences');
+  await cdp.send('Emulation.setDeviceMetricsOverride',{width:1280,height:900,screenWidth:1280,screenHeight:900,deviceScaleFactor:1,mobile:false});
+  const scale=await evaluate(`(() => {
+    activateTab('watchlist'); resetWatchFilters(); document.getElementById('groupCollectedWatches').checked=false;
+    const saved={products:app.products,collections:app.collections,variants:app.catalogVariants,selected:app.selectedWatch};
+    const template=app.products.find(product=>product.watched);
+    try {
+      app.collections=[]; app.catalogVariants=[]; app.selectedWatch=new Set(['scale-0']);
+      app.products=Array.from({length:500},(_,i)=>({...template,slug:'scale-'+i,name:'Scale product '+i,imageUrl:null,collections:[],watched:true}));
+      let start=performance.now(); renderProducts(true); const fullMs=performance.now()-start;
+      const nodes=[...document.querySelectorAll('#watchGrid .watch-card')];
+      const focused=nodes[250].querySelector('[data-product-detail]'); focused.focus();
+      document.getElementById('watchViewToggle').click();
+      const option=document.getElementById('watchCategory').options[0];
+      start=performance.now(); renderProducts(); const unchangedMs=performance.now()-start;
+      const unchanged=nodes.every(node=>node.isConnected);
+      app.products[0]={...app.products[0],price:'$123.45'};
+      start=performance.now(); renderProducts(); const singleMs=performance.now()-start;
+      const retained=nodes.filter(node=>node.isConnected).length;
+      const optionsPreserved=document.getElementById('watchCategory').options[0]===option && !document.getElementById('watchViewOptions').classList.contains('hidden');
+      closeToolbarPanels(); focused.focus(); const scroll=window.scrollY;
+      app.products[1]={...app.products[1],price:'$234.56'}; renderProducts();
+      const focusPreserved=document.activeElement===focused && window.scrollY===scroll;
+      app.products[250]={...app.products[250],price:'$345.67'}; renderProducts();
+      const changedFocus=document.activeElement.getAttribute('data-product-detail')==='scale-250' && window.scrollY===scroll;
+      const project=saved.collections[0];
+      app.collections=Array.from({length:50},(_,i)=>({...project,id:'scale-project-'+i,name:'Scale project '+i,archived:false,slugs:['scale-0']}));
+      renderProducts(true);
+      const projects=[...document.querySelectorAll('#collectionReadiness .collection-card')];
+      app.collections[0]={...app.collections[0],pricing:{...app.collections[0].pricing,total:12345}};
+      renderProducts(); const retainedProjects=projects.filter(node=>node.isConnected).length;
+      return {fullMs,unchangedMs,singleMs,unchanged,retained,retainedProjects,optionsPreserved,focusPreserved,changedFocus,selected:document.querySelector('[data-watch-select="scale-0"]')?.checked};
+    } finally { app.products=saved.products; app.collections=saved.collections; app.catalogVariants=saved.variants; app.selectedWatch=saved.selected; renderProducts(true); }
+  })()`);
+  assert(scale.unchanged && scale.retained===499 && scale.retainedProjects===49 && scale.optionsPreserved && scale.focusPreserved && scale.changedFocus && scale.selected, `Large-list refresh lost state: ${JSON.stringify(scale)}`);
+  console.log(`BROWSER SCALE: 500 watches · full ${scale.fullMs.toFixed(1)}ms · unchanged ${scale.unchangedMs.toFixed(1)}ms · one price ${scale.singleMs.toFixed(1)}ms · ${scale.retained}/500 cards retained`);
+  console.log(`BROWSER SMOKE PASSED: ${process.platform} · setup/auth · WCAG axe scans · keyboard/focus/reduced-motion · persistent navigation/filters · resettable empty states · offline recovery · copy actions · unclipped navigation · dark/light · images · watch/rules/bulk/import · exact variants/combined preview/collections/purchased · stock insights/windows/collection readiness/budget alerts/deep-links · compact searchable activity/evidence/stable pages · serialized refresh/hidden tabs/drafts/large lists · email settings/preview/deep-link · backup/import · diagnostics/operations · responsive`);
 } catch (error) {
   if (serverOutput.length) process.stderr.write(`\nGearBeacon server output:\n${serverOutput.join('').slice(-12000)}\n`);
   throw error;

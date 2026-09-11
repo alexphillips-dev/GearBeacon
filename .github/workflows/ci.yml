@@ -44,6 +44,8 @@ jobs:
         run: node --no-warnings scripts/watch-workflow-test.mjs
       - name: Saved views and effective alert explanations
         run: node --no-warnings scripts/views-alerts-test.mjs
+      - name: Collection budget alerts and stable Activity pages
+        run: node --no-warnings scripts/budget-alerts-test.mjs
       - name: Verify update helper safety, startup and recovery
         run: npm run test:update-helpers
       - name: Verify source launchers from outside the checkout

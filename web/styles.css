@@ -471,6 +471,7 @@ button.ghost { background: transparent; }
 .activity-filters button { min-height:40px; padding:8px 11px; }
 .activity-results-bar { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin:10px 2px; color:var(--muted); font-size:11px; }.activity-results-bar strong { color:var(--text); }
 .activity-results-summary { display:flex; flex-direction:column; gap:4px; }
+.activity-results-summary #activityNew { align-self:flex-start; min-height:36px; margin-top:4px; padding:7px 10px; font-size:12px; }
 .activity-page-size { display:flex; align-items:center; gap:8px; color:var(--text); font-size:12px; }
 .activity-page-size select { min-height:36px; min-width:76px; padding:7px 10px; border:1px solid var(--border); border-radius:9px; background:var(--input-bg); color:var(--text); }
 .activity-pagination { display:flex; justify-content:center; align-items:center; gap:12px; margin-top:14px; }.activity-pagination span { min-width:100px; color:var(--muted); text-align:center; font-size:11px; }

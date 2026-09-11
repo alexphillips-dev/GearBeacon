@@ -15,7 +15,7 @@ const { DatabaseSync } = require('node:sqlite');
 const { renderEmail, buildMimeEmail, numericPrice } = require('./email');
 
 const APP_VERSION = '1.2.0';
-const DATABASE_SCHEMA_VERSION = 11;
+const DATABASE_SCHEMA_VERSION = 12;
 const STORE_BASE = 'https://store.ui.com';
 const REGIONS = {
   us: { label: 'United States', path: 'us/en', currency: 'USD', origin: STORE_BASE },
@@ -785,6 +785,10 @@ MIGRATIONS.push({ version:10, name:'collection-purchase-plans', sql:`
 
 MIGRATIONS.push({ version:11, name:'archived-collections', sql:`
   ALTER TABLE watch_collections ADD COLUMN archived INTEGER NOT NULL DEFAULT 0 CHECK(archived IN (0,1));
+` });
+
+MIGRATIONS.push({ version:12, name:'collection-budget-alerts', sql:`
+  ALTER TABLE watch_collections ADD COLUMN budget_required INTEGER NOT NULL DEFAULT 0 CHECK(budget_required IN (0,1));
 ` });
 
 function runMigrations() {
@@ -1937,6 +1941,7 @@ function alertConfiguration(product = null, collection = null) {
     else if (!collection.readiness?.remaining) { state='waiting'; label='No remaining items to alert for'; }
     else label='Collection readiness alerts enabled';
     reasons.push('Alerts once when every remaining item becomes available at or below its shared target, if set. Enabling alerts or editing conditions establishes a baseline; it does not send an immediate catch-up alert.');
+    if (collection.budgetRequired) reasons.push(`The project must also be within budget. ${collection.readiness?.budget?.reason || 'Waiting for confirmed costs.'}`);
     reasons.push(collection.alertsOnly && collection.notifyReady && !collection.archived ? 'This collection suppresses individual member alerts while active. Saved item rules are retained.' : 'Individual item rules apply unless another active collection suppresses them.');
     reasons.push('Pausing an individual item does not pause collection readiness alerts.');
   } else {
@@ -2684,15 +2689,42 @@ function collectionReadiness(collection, region = currentRegion()) {
     const variants = !product.variantId ? Object.values(products).filter((entry) => entry.parentSlug === slug) : [];
     const candidates = variants.length ? variants : [product];
     const uncertain = (entry) => pending.some((row) => row.slug === entry.slug && (row.kind !== 'price' || rule.targetPrice !== null));
-    const matching = candidates.find((entry) => !uncertain(entry) && !entry.unlisted && entry.inStock && (rule.targetPrice === null || (priceValue(entry.price) !== null && priceValue(entry.price) <= rule.targetPrice)));
-    if (matching) return { ...item, state:'ready', reason:rule.targetPrice === null ? 'Available.' : 'Available at or below target.', matchingSlug:matching.slug };
+    const matching = candidates.filter((entry) => !uncertain(entry) && !entry.unlisted && entry.inStock && (rule.targetPrice === null || (priceValue(entry.price) !== null && priceValue(entry.price) <= rule.targetPrice)))
+      .sort((a,b) => (priceValue(a.price) ?? Infinity) - (priceValue(b.price) ?? Infinity) || a.slug.localeCompare(b.slug))[0];
+    if (matching) return { ...item, state:'ready', reason:rule.targetPrice === null ? 'Available.' : 'Available at or below target.', matchingSlug:matching.slug, unitPrice:priceValue(matching.price) };
     if (candidates.some((entry) => uncertain(entry) || (entry.inStock && rule.targetPrice !== null && priceValue(entry.price) === null))) return { ...item, reason:'Waiting for confirmed availability or price.' };
     return { ...item, state:'waiting', reason:candidates.some((entry) => entry.inStock && !entry.unlisted) ? 'Available above target price.' : product.unlisted ? 'Unlisted by the Store.' : 'Not available.' };
   });
   const count = (value) => items.filter((item) => item.state === value).length;
   const purchased = count('purchased'); const remaining = items.length - purchased; const qualifying = count('ready');
-  return { ready:remaining > 0 && qualifying === remaining, remaining, qualifying, purchased, waiting:count('waiting'), unknown:count('unknown'), items, checkedAt:coverageSessions.get(region)?.at || null,
-    confirmedNotReady:remaining === 0 || count('waiting') > 0 };
+  const budget = collectionBudgetCondition(collection, items, region, fresh, pending);
+  return { ready:remaining > 0 && qualifying === remaining && (!collection.budgetRequired || budget.state === 'within'), remaining, qualifying, purchased, waiting:count('waiting'), unknown:count('unknown'), items, budget, checkedAt:coverageSessions.get(region)?.at || null,
+    confirmedNotReady:remaining === 0 || count('waiting') > 0 || budget.state === 'over' };
+}
+
+function collectionBudgetCondition(collection, items, region, fresh, pending) {
+  const currency = REGIONS[region].currency;
+  const result = { state:'off', total:null, difference:null, currency, reason:'Project budget is not an alert condition.' };
+  if (!collection.budgetRequired) return result;
+  const unknown = (reason) => ({ ...result, state:'unknown', reason });
+  if (collection.budget == null) return unknown('Set a project budget in Edit collection.');
+  let cents = 0;
+  for (const item of items) {
+    const member = collection.items.find(value => value.slug === item.slug);
+    if (member.purchasedQuantity && member.paidTotal === null) return unknown('Record the amount paid for purchased units to confirm the project total.');
+    cents += Math.round((member.paidTotal || 0) * 100);
+    if (!item.remainingQuantity) continue;
+    if (!fresh || item.state !== 'ready') return unknown('Waiting for confirmed availability and prices for all remaining items.');
+    const product = states[region]?.products[item.matchingSlug];
+    if (!product || priceValue(product.price) === null || pending.some(row => row.slug === product.slug)) return unknown('Waiting for a confirmed price for each remaining item.');
+    // An unknown or pending alternative price must not falsely rearm an over-budget period.
+    const alternatives = Object.values(states[region]?.products || {}).filter(value => value.parentSlug === item.slug && value.inStock && !value.unlisted);
+    if (alternatives.some(value => priceValue(value.price) === null || pending.some(row => row.slug === value.slug))) return unknown('Waiting for confirmed variant prices. Select an exact variant to narrow this condition.');
+    cents += Math.round(priceValue(product.price) * 100) * item.remainingQuantity;
+  }
+  const difference = (Math.round(collection.budget * 100) - cents) / 100;
+  return { ...result, state:difference >= 0 ? 'within' : 'over', total:cents / 100, difference,
+    reason:difference >= 0 ? `Estimated project total ${(cents / 100).toFixed(2)} ${currency} is within budget.` : `${Math.abs(difference).toFixed(2)} ${currency} over budget.` };
 }
 
 function cancelCollectionAlerts(id, region = currentRegion()) {
@@ -2722,9 +2754,9 @@ function evaluateCollectionAlerts() {
         const at = isoNow();
         const dashboardUrl = PUBLIC_BASE_URL ? `${PUBLIC_BASE_URL.replace(/\/$/, '')}/?region=${currentRegion()}&collection=${encodeURIComponent(collection.id)}#watchlist` : null;
         const event = { id:crypto.randomUUID(), type:'collection_ready', alertKind:'collection_ready', collectionId:collection.id, name:collection.name, slug:null,
-          detail:`All ${result.remaining} remaining items are available and meet their target prices. ${result.purchased} already purchased.`, readiness:result,
+          detail:`All ${result.remaining} remaining items are available and meet their target prices. ${result.purchased} already purchased.${collection.budgetRequired ? ` ${result.budget.reason}` : ''}`, readiness:result,
           status:'Ready', region:currentRegion(), detectedAt:at, watchedAtDetection:false, url:null, dashboardUrl, notificationTimeZone:NOTIFICATION_TIME_ZONE,
-          triggerReason:'You enabled notifications when all remaining items in this collection qualify.',
+          triggerReason:`You enabled notifications when all remaining items in this collection qualify${collection.budgetRequired ? ' and the project is within budget' : ''}.`,
           confirmation:{ policy:'confirmed-collection-conditions', observations:1, required:1, firstObservedAt:at, confirmedAt:at } };
         recordEvent(event);
         enqueueAlert(event);
@@ -3056,10 +3088,10 @@ function collectionItemRows(id, region = currentRegion()) {
 }
 
 function watchCollections(region = currentRegion()) {
-  return db.prepare('SELECT id,name,created_at AS createdAt,notify_ready AS notifyReady,ready_state AS readyState,budget,alerts_only AS alertsOnly,archived FROM watch_collections WHERE region=? ORDER BY name COLLATE NOCASE').all(region)
+  return db.prepare('SELECT id,name,created_at AS createdAt,notify_ready AS notifyReady,ready_state AS readyState,budget,alerts_only AS alertsOnly,archived,budget_required AS budgetRequired FROM watch_collections WHERE region=? ORDER BY name COLLATE NOCASE').all(region)
     .map((collection) => {
       const items = collectionItemRows(collection.id, region);
-      const value = { ...collection, notifyReady:Boolean(collection.notifyReady), alertsOnly:Boolean(collection.alertsOnly), archived:Boolean(collection.archived), items, slugs:items.map((item) => item.slug) };
+      const value = { ...collection, notifyReady:Boolean(collection.notifyReady), alertsOnly:Boolean(collection.alertsOnly), archived:Boolean(collection.archived), budgetRequired:Boolean(collection.budgetRequired), items, slugs:items.map((item) => item.slug) };
       let spentCents = 0, remainingCents = 0, missingPaid = 0, missingPrices = 0, missing = 0;
       for (const item of items) {
         const unitPrice = priceValue(states[region]?.products[item.slug]?.price);
@@ -3515,16 +3547,31 @@ function enrichActivityEvents(events) {
 
 function activityQuery(url, { exportLimit = null } = {}) {
   const filter = activityFilterSql(url);
-  const count = Number(db.prepare(`SELECT COUNT(*) AS count FROM events e WHERE ${filter.where}`).get(...filter.parameters)?.count || 0);
+  const latest = db.prepare('SELECT rowid AS sequence,id FROM events ORDER BY rowid DESC LIMIT 1').get();
+  let ceiling = Number(latest?.sequence || 0), anchor = latest?.id || '', snapshotReset = false;
+  const requestedSnapshot = exportLimit ? null : url.searchParams.get('snapshot');
+  if (requestedSnapshot !== null) {
+    const match = /^(\d+):(.{0,200})$/.exec(requestedSnapshot);
+    if (!match || !Number.isSafeInteger(Number(match[1]))) throw new Error('Activity snapshot is invalid.');
+    const sequence = Number(match[1]);
+    if (sequence === 0 && !match[2] || db.prepare('SELECT id FROM events WHERE rowid=?').get(sequence)?.id === match[2]) {
+      ceiling = sequence; anchor = match[2];
+    } else snapshotReset = true; // Retention or a restore removed the anchor. Let the reader choose to refresh.
+  }
+  const snapshot = `${ceiling}:${anchor}`;
+  const newCount = Number(db.prepare(`SELECT COUNT(*) AS count FROM events e WHERE ${filter.where} AND e.rowid>?`).get(...filter.parameters,ceiling)?.count || 0);
+  const where = `${filter.where} AND e.rowid<=?`;
+  const parameters = [...filter.parameters,ceiling];
+  const count = Number(db.prepare(`SELECT COUNT(*) AS count FROM events e WHERE ${where}`).get(...parameters)?.count || 0);
   const requestedLimit = Number(url.searchParams.get('limit') || 20);
   const requestedPage = Number(url.searchParams.get('page') || 1);
   const limit = exportLimit || (Number.isInteger(requestedLimit) ? Math.min(100, Math.max(10, requestedLimit)) : 20);
   const pages = Math.max(1, Math.ceil(count / limit));
   const page = exportLimit ? 1 : Number.isInteger(requestedPage) ? Math.min(pages, Math.max(1, requestedPage)) : 1;
   const offset = exportLimit ? 0 : (page - 1) * limit;
-  const rows = db.prepare(`SELECT e.data_json FROM events e WHERE ${filter.where} ORDER BY e.detected_at DESC,e.id DESC LIMIT ? OFFSET ?`).all(...filter.parameters, limit, offset);
+  const rows = db.prepare(`SELECT e.data_json FROM events e WHERE ${where} ORDER BY e.detected_at DESC,e.id DESC LIMIT ? OFFSET ?`).all(...parameters, limit, offset);
   const events = enrichActivityEvents(rows.map((row) => safeJsonParse(row.data_json, null)).filter(Boolean));
-  return { events, count, page, limit, pages, filters:filter.filters, truncated:Boolean(exportLimit && count > exportLimit) };
+  return { events, count, page, limit, pages, snapshot, newCount, snapshotReset, filters:filter.filters, truncated:Boolean(exportLimit && count > exportLimit) };
 }
 
 function csvCell(value) {
@@ -3724,7 +3771,7 @@ function exportSnapshot() {
   }
   return {
     format: 'GearBeaconBackup',
-    formatVersion: 7,
+    formatVersion: 8,
     exportedAt: isoNow(),
     appVersion: APP_VERSION,
     schemaVersion: schemaVersion(),
@@ -3776,7 +3823,7 @@ function normalizeImportedSnapshot(snapshot) {
   const isBackup = snapshot.format === 'GearBeaconBackup';
   const isLegacy = !snapshot.format && (Array.isArray(snapshot.watchlist) || snapshot.products || Array.isArray(snapshot.events));
   if (!isBackup && !isLegacy) throw new Error('This file is not a GearBeacon backup or legacy GearBeacon state file.');
-  if (isBackup && Number(snapshot.formatVersion || 0) > 7) throw new Error(`This backup format (${snapshot.formatVersion}) is newer than GearBeacon ${APP_VERSION} supports.`);
+  if (isBackup && Number(snapshot.formatVersion || 0) > 8) throw new Error(`This backup format (${snapshot.formatVersion}) is newer than GearBeacon ${APP_VERSION} supports.`);
   const normalizeRegion = (value) => ({
     watchlist: Array.isArray(value?.watchlist) ? value.watchlist.map(String).filter(Boolean) : [],
     watchCreatedAt: value?.watchCreatedAt && typeof value.watchCreatedAt === 'object' && !Array.isArray(value.watchCreatedAt) ? value.watchCreatedAt : {},
@@ -3822,6 +3869,7 @@ function validateSnapshotCollections(regions) {
       if (collection.archived !== undefined && typeof collection.archived !== 'boolean') throw new Error('Backup contains an invalid collection archive setting.');
       collection.budget = collectionMoney(collection.budget === undefined ? null : collection.budget, 'Collection budget');
       if (collection.alertsOnly !== undefined && typeof collection.alertsOnly !== 'boolean') throw new Error('Backup contains an invalid collection alert mode.');
+      if (collection.budgetRequired !== undefined && typeof collection.budgetRequired !== 'boolean') throw new Error('Backup contains an invalid collection budget alert setting.');
       if (collection.slugs.length > 1000) throw new Error('A collection can contain at most 1000 items.');
       const memberSlugs = [...new Set(collection.slugs)];
       if (collection.items === undefined) collection.items = memberSlugs.map((slug) => ({ slug, quantity:1, purchasedQuantity:regionState.watchRules[slug]?.purchasedAt ? 1 : 0, paidTotal:null }));
@@ -3876,7 +3924,7 @@ function importSnapshot(snapshot) {
     db.prepare('DELETE FROM watch_collections WHERE region=?').run(region);
     for (const collection of regionState.collections) {
       const createdAt = collection.createdAt && !Number.isNaN(new Date(collection.createdAt).valueOf()) ? new Date(collection.createdAt).toISOString() : isoNow();
-      db.prepare('INSERT INTO watch_collections(region,id,name,created_at,notify_ready,ready_state,budget,alerts_only,archived) VALUES(?,?,?,?,?,?,?,?,?)').run(region, collection.id, collection.name, createdAt, collection.notifyReady ? 1 : 0, collection.readyState ?? null, collection.budget, collection.alertsOnly ? 1 : 0, collection.archived ? 1 : 0);
+      db.prepare('INSERT INTO watch_collections(region,id,name,created_at,notify_ready,ready_state,budget,alerts_only,archived,budget_required) VALUES(?,?,?,?,?,?,?,?,?,?)').run(region, collection.id, collection.name, createdAt, collection.notifyReady ? 1 : 0, collection.readyState ?? null, collection.budget, collection.alertsOnly ? 1 : 0, collection.archived ? 1 : 0, collection.budgetRequired ? 1 : 0);
       for (const item of collection.items) db.prepare('INSERT INTO watch_collection_members(region,collection_id,slug,quantity,purchased_quantity,paid_total) VALUES(?,?,?,?,?,?)').run(region, collection.id, item.slug, item.quantity, item.purchasedQuantity, item.paidTotal);
     }
     db.prepare('DELETE FROM watch_condition_state WHERE region=?').run(region);
@@ -4832,7 +4880,7 @@ async function handleRegionApi(req, res, url) {
     return sendJson(res, 200, { products, count: products.length, ...watchWorkspace() });
   }
 
-  if (url.pathname === '/api/collections' && req.method === 'GET') return sendJson(res, 200, { ...watchWorkspace(), capabilities:{ memberEditing:true, purchasePlanning:true, watchWorkflow:true } });
+  if (url.pathname === '/api/collections' && req.method === 'GET') return sendJson(res, 200, { ...watchWorkspace(), capabilities:{ memberEditing:true, purchasePlanning:true, watchWorkflow:true, budgetAlerts:true } });
   if (url.pathname === '/api/collections' && req.method === 'POST') {
     const body = await readJsonBody(req);
     let name, slugs, budget;
@@ -4898,12 +4946,13 @@ async function handleRegionApi(req, res, url) {
     else {
       const body = await readJsonBody(req);
       let name, slugs, budget;
-      const existing = db.prepare('SELECT name,notify_ready,budget,alerts_only,archived FROM watch_collections WHERE region=? AND id=?').get(currentRegion(), id);
+      const existing = db.prepare('SELECT name,notify_ready,budget,alerts_only,archived,budget_required FROM watch_collections WHERE region=? AND id=?').get(currentRegion(), id);
       try {
         name = collectionName(body?.name ?? existing.name);
         budget = collectionMoney(body?.budget === undefined ? existing.budget : body.budget, 'Budget');
         if (body?.archived !== undefined && typeof body.archived !== 'boolean') throw new Error('Collection archive setting must be true or false.');
         if (body?.alertsOnly !== undefined && typeof body.alertsOnly !== 'boolean') throw new Error('Collection alert mode must be true or false.');
+        if (body?.budgetRequired !== undefined && typeof body.budgetRequired !== 'boolean') throw new Error('Collection budget condition must be true or false.');
         if (body?.slugs !== undefined && body?.addSlugs !== undefined) throw new Error('Choose either replacement watches or watches to add.');
         if (body?.slugs !== undefined || body?.addSlugs !== undefined) slugs = collectionMembers(body.slugs ?? body.addSlugs);
         if (body?.addSlugs !== undefined) collectionMembers([...new Set([...collectionItemRows(id).map(item=>item.slug),...slugs])]);
@@ -4912,7 +4961,8 @@ async function handleRegionApi(req, res, url) {
       if (db.prepare('SELECT id FROM watch_collections WHERE region=? AND name=? COLLATE NOCASE AND id<>?').get(currentRegion(), name, id)) return sendJson(res, 409, { error:'A collection with that name already exists.' });
       db.exec('BEGIN IMMEDIATE');
       try {
-        db.prepare('UPDATE watch_collections SET name=?,budget=?,alerts_only=? WHERE region=? AND id=?').run(name,budget,body?.alertsOnly === undefined ? existing.alerts_only : body.alertsOnly ? 1 : 0,currentRegion(),id);
+        db.prepare('UPDATE watch_collections SET name=?,budget=?,alerts_only=?,budget_required=? WHERE region=? AND id=?').run(name,budget,body?.alertsOnly === undefined ? existing.alerts_only : body.alertsOnly ? 1 : 0,body?.budgetRequired === undefined ? existing.budget_required : body.budgetRequired ? 1 : 0,currentRegion(),id);
+        if (budget !== existing.budget || (body?.budgetRequired !== undefined && body.budgetRequired !== Boolean(existing.budget_required))) baselineCollections(currentRegion(),[id]);
         if (slugs !== undefined) saveCollectionMembers(id, slugs, body.addSlugs !== undefined);
         if (body?.notifyReady !== undefined && body.notifyReady !== Boolean(existing.notify_ready)) {
           db.prepare('UPDATE watch_collections SET notify_ready=? WHERE region=? AND id=?').run(body.notifyReady ? 1 : 0, currentRegion(), id);

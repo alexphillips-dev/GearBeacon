@@ -218,6 +218,7 @@ function downgradeDatabaseForUpgradeTest(databaseFile, appVersion, schema) {
     DROP TABLE events_v7;
     CREATE INDEX idx_events_region_detected ON events(region,detected_at);
   `);
+  if (schema < 12) target.exec('ALTER TABLE watch_collections DROP COLUMN budget_required;');
   if (schema < 11) target.exec('ALTER TABLE watch_collections DROP COLUMN archived;');
   if (schema < 10) target.exec('ALTER TABLE watch_collections DROP COLUMN budget; ALTER TABLE watch_collections DROP COLUMN alerts_only; ALTER TABLE watch_collection_members DROP COLUMN paid_total; ALTER TABLE watch_collection_members DROP COLUMN purchased_quantity; ALTER TABLE watch_collection_members DROP COLUMN quantity;');
   if (schema < 9) target.exec('DROP TABLE IF EXISTS inventory_history; DROP TABLE IF EXISTS monitor_coverage; ALTER TABLE watch_collections DROP COLUMN notify_ready; ALTER TABLE watch_collections DROP COLUMN ready_state;');
@@ -255,7 +256,7 @@ try {
   });
   const status = await waitFor('/api/status?region=us');
   if (status.version !== '1.2.0') throw new Error(`Unexpected app version: ${status.version}`);
-  if (status.storage?.engine !== 'SQLite' || status.storage?.schemaVersion !== 11) throw new Error('SQLite schema v11 was not initialized.');
+  if (status.storage?.engine !== 'SQLite' || status.storage?.schemaVersion !== 12) throw new Error('SQLite schema v12 was not initialized.');
   if (status.deployment?.mode !== 'local' || status.deployment?.bindHost !== '127.0.0.1' || status.deployment?.authenticationRequired) throw new Error('Safe local access defaults are wrong.');
   if (status.privacy?.telemetry !== false || status.privacy?.publicCloudRequired !== false) throw new Error('Privacy status is wrong.');
   if (status.regions?.length !== 2) throw new Error('Multi-region configuration was not loaded.');
@@ -274,7 +275,7 @@ try {
   const schemaDb = new DatabaseSync(join(localData, 'gearbeacon.mock.sqlite3'));
   const pushTable = schemaDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='push_tokens'").get();
   schemaDb.close();
-  if (pushTable) throw new Error('The obsolete push-token table still exists in schema v11.');
+  if (pushTable) throw new Error('The obsolete push-token table still exists in schema v12.');
 
   const initialConfig = await request('/api/config');
   if ((await request('/api/auth/status')).onboardingComplete) throw new Error('Fresh installation incorrectly skipped guided onboarding.');
@@ -544,7 +545,7 @@ try {
   startServer(8899, localData);
   await waitFor('/api/status?region=us');
   const afterUpgrade = await request('/api/data/info?region=us');
-  if (afterUpgrade.backup.count <= beforeUpgrade || afterUpgrade.schemaVersion !== 11) throw new Error('Automatic V0.1.5 pre-update backup or schema migration failed.');
+  if (afterUpgrade.backup.count <= beforeUpgrade || afterUpgrade.schemaVersion !== 12) throw new Error('Automatic V0.1.5 pre-update backup or schema migration failed.');
   const migratedDb = new DatabaseSync(join(localData, 'gearbeacon.mock.sqlite3'));
   const migratedPushTable = migratedDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='push_tokens'").get();
   migratedDb.close();
@@ -553,7 +554,7 @@ try {
   if (updates.currentVersion !== '1.2.0' || updates.latestVersion !== '1.2.0' || updates.updateAvailable) throw new Error('Bundled update check failed.');
   await stopServer();
 
-  for (const historical of [{ version:'0.1.6', schema:5 }, { version:'0.1.7', schema:6 }, { version:'1.0.0', schema:7 }, { version:'1.0.1', schema:7 }, { version:'1.1.0', schema:8 }, { version:'1.2.0', schema:9 }, { version:'1.2.0', schema:10 }]) {
+  for (const historical of [{ version:'0.1.6', schema:5 }, { version:'0.1.7', schema:6 }, { version:'1.0.0', schema:7 }, { version:'1.0.1', schema:7 }, { version:'1.1.0', schema:8 }, { version:'1.2.0', schema:9 }, { version:'1.2.0', schema:10 }, { version:'1.2.0', schema:11 }]) {
     const backupCount = (await (async () => {
       const testDb = new DatabaseSync(join(localData, 'gearbeacon.mock.sqlite3'), { readOnly:true });
       const count = Number(testDb.prepare('SELECT COUNT(*) AS count FROM backup_log').get()?.count || 0);
@@ -563,7 +564,7 @@ try {
     startServer(8899, localData);
     await waitFor('/api/status?region=us');
     const migrated = await request('/api/data/info?region=us');
-    if (migrated.schemaVersion !== 11 || migrated.backup.count < 1) throw new Error(`Automatic V${historical.version} to V1.2.0 migration failed.`);
+    if (migrated.schemaVersion !== 12 || migrated.backup.count < 1) throw new Error(`Automatic V${historical.version} to V1.2.0 migration failed.`);
     const migratedCheck = await request('/api/check?region=us', { method:'POST', body:'{}' });
     if (!migratedCheck.ok) throw new Error(`V${historical.version} monitoring did not work after migration.`);
     const migratedWatch = await request('/api/watchlist?region=us');

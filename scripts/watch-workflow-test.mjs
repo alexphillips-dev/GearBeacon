@@ -140,7 +140,7 @@ try {
   assert.equal(await watched('udm-se'),false);
   const savedRule=(await details()).product.watchRule;
   const encrypted=await request('/api/data/export/encrypted',{passphrase:'workflow recovery fixture password'});
-  const plain=await request('/api/data/export'); assert.equal(plain.formatVersion,7);
+  const plain=await request('/api/data/export'); assert.equal(plain.formatVersion,8);
   await request(`/api/collections/${id}`,{archived:false},'PUT');
   const eventsBefore=(await alerts()).length;
   await check(); assert.equal((await alerts()).length,eventsBefore,'Restoring an already-ready collection sent an immediate alert.');
