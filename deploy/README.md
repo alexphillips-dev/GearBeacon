@@ -20,7 +20,8 @@ This directory contains GearBeacon's service installers, uninstallers, and owner
 - Automatic startup uses a low-privilege identity and a separate service data directory. Windows uses a **Scheduled Task named GearBeacon**, despite the installer filename.
 - Create and verify a pre-update backup before passing `-BackupConfirmed` or `--backup-confirmed`. Native updaters verify SHA-256; Docker updates retain the existing data volume.
 - Native update helpers replace application files, not every installer/service configuration. Review deployment changes before applying a new installer.
-- The Docker helper selects a tag for its invocation only; also persist `GEARBEACON_IMAGE_TAG` in your Compose configuration.
+- Current checkout helpers verify local `/healthz` and the expected version after restart. Native helpers accept custom ports (`-Port` or `--port`); failed verification prints recovery guidance and exits unsuccessfully. They do not automatically restore a database or roll back.
+- The current Docker helper atomically saves `GEARBEACON_IMAGE_TAG` in the Compose project `.env`, checks the resolved image and running image ID, and preserves other settings. Run it from that project with its normal `.env` configuration. Helpers inside older release archives still need manual tag persistence and startup verification.
 - Uninstallers preserve application data unless you explicitly request `-RemoveData` or `--remove-data`.
 
 Release requirements are defined by the [release checklist](../.github/RELEASE_CHECKLIST.md). Real-host installation, upgrade, rollback, manual accessibility, and soak testing are recommended additional validation, not prerequisites. See [Development and releases](https://github.com/alexphillips-dev/GearBeacon/wiki/Development-and-Releases) for the complete workflow.

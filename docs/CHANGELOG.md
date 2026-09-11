@@ -4,6 +4,15 @@ The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. 
 
 ## V1.2.0 — Stock insights and collection readiness
 
+### Unreleased development updates
+
+- Added named Watchlist and Browse views, stored per regional Store on the installation and included in recovery exports/backups. Save, rename, replace filters, or delete views across devices, with revision conflict protection. Added Cards/Compact list layout with product images, prices, status, memberships, and actions.
+- Added effective alert summaries and accessible Why? explanations for items and collections. They explain inherited event settings, target conditions, pauses, purchased state, collection-only overrides, enabled channels, scheduling, and cooldowns. Actual pending/processing/failed jobs are shown separately from hypothetical delivery timing. Collection changes refresh member summaries immediately.
+- Hardened owner-initiated updates: persist the Docker version in project `.env`, verify the running image, check local startup health and the expected application version, retain native build metadata, and report recovery instructions after failed restarts. Native helpers support custom ports; all helpers retain mandatory backup confirmation. Rollback requires a compatible pre-update database and matching key. No schema or export-format change.
+- Added deterministic view/recovery/alert tests, mobile/light/dark/keyboard browser coverage, and isolated Windows, Linux/macOS and Docker updater success/failure fixtures. Updated the Wiki for usage, API details, and recovery limitations.
+
+### Existing 1.2.0 history
+
 See the [complete 1.2.0 release notes](RELEASE_NOTES.md) for Features, UI/UX, Fixes, Security, and upgrade guidance covering every change since the published 1.0.0 release, including the intervening 1.0.1 and 1.1.0 development updates.
 
 - Shortened the README into an overview and setup guide, with complete platform, feature, configuration, API, security, recovery, and release documentation in the navigable GitHub Wiki. Updated deployment and offline quick-start links and clarified source archive layouts, saved-setting precedence, Windows task management, and Docker update pinning.

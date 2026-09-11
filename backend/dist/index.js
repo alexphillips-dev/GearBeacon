@@ -220,6 +220,75 @@ function setSetting(key, value) {
     db.prepare(`INSERT INTO settings(key,value,updated_at) VALUES(?,?,?)
     ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`).run(key, String(value), isoNow());
 }
+// Owner views use the existing settings store, so backups retain them without a schema change.
+function normalizeViewFilters(scope, input) {
+    const invalid = message => Object.assign(new Error(message), { statusCode: 400 });
+    if (!input || typeof input !== 'object' || Array.isArray(input))
+        throw invalid('Choose valid view filters.');
+    const text = (key, fallback, max = 200) => {
+        const value = input[key] === undefined ? fallback : input[key];
+        if (typeof value !== 'string' || value.length > max || /[\x00-\x1f\x7f]/.test(value))
+            throw invalid(`Invalid ${key} filter.`);
+        return value.trim();
+    };
+    const choice = (key, values, fallback) => { const value = text(key, fallback); if (!values.includes(value))
+        throw invalid(`Invalid ${key} filter.`); return value; };
+    const filters = { search: text('search', ''), category: text('category', scope === 'browse' ? 'All' : 'all', 100) };
+    if (scope === 'browse')
+        return { ...filters, availability: choice('availability', ['all', 'in', 'out', 'soon', 'unlisted'], 'all'), watching: choice('watching', ['all', 'watched', 'unwatched'], 'all'), sort: choice('sort', ['name', 'price-low', 'price-high', 'availability'], 'name') };
+    if (scope !== 'watchlist')
+        throw invalid('Choose Watchlist or Browse for a saved view.');
+    if (input.groupCollections !== undefined && typeof input.groupCollections !== 'boolean')
+        throw invalid('Invalid collection grouping setting.');
+    return { ...filters, status: choice('status', ['all', 'in', 'out', 'paused', 'purchased', 'wanted'], 'all'), sort: choice('sort', ['changed', 'added', 'name', 'price-low', 'price-high', 'availability'], 'changed'), collection: text('collection', 'all', 80), overview: choice('overview', ['all', 'ready', 'target', 'collections'], 'all'), groupCollections: input.groupCollections === true, layout: choice('layout', ['cards', 'compact'], 'cards') };
+}
+function ownerViews() {
+    const saved = safeJsonParse(getSetting('owner_views', '[]'), []);
+    if (!Array.isArray(saved))
+        return [];
+    return saved.slice(0, 120).flatMap((view) => {
+        try {
+            if (!view || typeof view.id !== 'string' || !/^[a-zA-Z0-9-]{1,80}$/.test(view.id) || typeof view.region !== 'string' || !Object.hasOwn(REGIONS, view.region) || !Number.isSafeInteger(view.revision) || view.revision < 1)
+                return [];
+            return [{ id: view.id, name: collectionName(view.name), region: view.region, scope: view.scope, revision: view.revision, filters: normalizeViewFilters(view.scope, view.filters) }];
+        }
+        catch {
+            return [];
+        }
+    });
+}
+function savedViewsForRegion() {
+    return ownerViews().filter((view) => view.region === currentRegion());
+}
+function changeOwnerView(input, id = null, remove = false) {
+    const views = ownerViews();
+    const previous = id ? views.find((view) => view.id === id && view.region === currentRegion()) : null;
+    if (id && !previous)
+        throw Object.assign(new Error('Saved view no longer exists. Refresh the view list.'), { statusCode: 404 });
+    if (previous && input?.revision !== previous.revision)
+        throw Object.assign(new Error('This view changed on another device. Reopen it before saving.'), { statusCode: 409 });
+    let next;
+    if (!remove) {
+        const scope = previous?.scope || input?.scope;
+        let name;
+        try {
+            name = collectionName(input?.name);
+        }
+        catch {
+            throw Object.assign(new Error('Choose a view name with 1 to 80 printable characters.'), { statusCode: 400 });
+        }
+        const filters = normalizeViewFilters(scope, input?.filters ?? previous?.filters);
+        if (views.some((view) => view.id !== id && view.region === currentRegion() && view.scope === scope && view.name.toLowerCase() === name.toLowerCase()))
+            throw Object.assign(new Error('A view with that name already exists here.'), { statusCode: 409 });
+        if (!id && savedViewsForRegion().length >= 30)
+            throw Object.assign(new Error('A store can contain at most 30 saved views.'), { statusCode: 400 });
+        if (scope === 'watchlist' && !['all', 'none'].includes(filters.collection) && !db.prepare('SELECT id FROM watch_collections WHERE region=? AND id=?').get(currentRegion(), filters.collection))
+            throw Object.assign(new Error('That collection no longer exists. Choose another collection before saving.'), { statusCode: 400 });
+        next = { id: id || crypto.randomUUID(), name, scope, region: currentRegion(), revision: (previous?.revision || 0) + 1, filters };
+    }
+    setSetting('owner_views', JSON.stringify([...views.filter((view) => view.id !== id || view.region !== currentRegion()), ...(next ? [next] : [])]));
+    return { ok: true, view: next || null, views: savedViewsForRegion() };
+}
 function notificationPreferences() {
     const raw = safeJsonParse(getSetting('notification_preferences', ''), {});
     const normalized = { ...DEFAULT_NOTIFICATION_PREFERENCES };
@@ -2026,6 +2095,105 @@ function notificationDecision(event, prefs = notificationPreferences(), ruleOver
 function shouldNotifyEvent(event, prefs = notificationPreferences()) {
     return notificationDecision(event, prefs).allowed;
 }
+function alertConfiguration(product = null, collection = null) {
+    const channels = CHANNEL_NAMES.filter(channelConfigured);
+    const region = currentRegion();
+    const rule = product ? watchRule(product.slug, region) : { ...DEFAULT_WATCH_RULE };
+    const prefs = notificationPreferences();
+    const reasons = [];
+    let state = 'active', label = '', events = [];
+    if (collection) {
+        events = ['collection_ready'];
+        if (collection.archived) {
+            state = 'off';
+            label = 'Archived · collection alerts off';
+        }
+        else if (!collection.notifyReady) {
+            state = 'off';
+            label = 'Collection readiness alerts off';
+        }
+        else if (!collection.readiness?.remaining) {
+            state = 'waiting';
+            label = 'No remaining items to alert for';
+        }
+        else
+            label = 'Collection readiness alerts enabled';
+        reasons.push('Alerts once when every remaining item becomes available at or below its shared target, if set. Enabling alerts or editing conditions establishes a baseline; it does not send an immediate catch-up alert.');
+        reasons.push(collection.alertsOnly && collection.notifyReady && !collection.archived ? 'This collection suppresses individual member alerts while active. Saved item rules are retained.' : 'Individual item rules apply unless another active collection suppresses them.');
+        reasons.push('Pausing an individual item does not pause collection readiness alerts.');
+    }
+    else {
+        const suppressors = collectionAlertSuppressors(product.slug, region);
+        if (rule.purchasedAt) {
+            state = 'off';
+            label = 'Purchased · alerts stopped';
+        }
+        else if (suppressors.length) {
+            state = 'suppressed';
+            label = `Individual alerts suppressed by ${suppressors.map(value => value.name).join(', ')}`;
+            reasons.push('An active collection uses Collection alerts only. This also overrides All activity and immediate restocks; your saved item rules are retained.');
+        }
+        else if (prefs.allActivity) {
+            label = 'All activity alerts enabled';
+            events = ['restock', 'sold_out', 'price_change', 'status_change'];
+            reasons.push('All activity overrides event choices, targets, and individual pauses. Purchased watches and collection-only suppression still stop item alerts.');
+        }
+        else if (rulePaused(rule)) {
+            state = 'off';
+            label = !rule.enabled ? 'Individual alerts disabled' : rule.pausedUntil === 'indefinite' ? 'Alerts paused until resumed' : `Alerts paused until ${rule.pausedUntil}`;
+        }
+        else {
+            const enabled = key => rule[key] === null ? Boolean(prefs[key]) : Boolean(rule[key]);
+            if (rule.availableUnderTarget) {
+                events.push('restock', 'price_change');
+                label = `Available-at-target alerts enabled · ${rule.targetPrice.toFixed(2)} ${REGIONS[region].currency}`;
+                reasons.push('The same variant must be available and meet the target. One alert per qualifying period; fresh confirmed observations rearm the rule.');
+            }
+            else {
+                if (enabled('restock'))
+                    events.push('restock');
+                if (rule.targetPrice !== null || enabled('priceChange'))
+                    events.push('price_change');
+                if (rule.targetPrice !== null)
+                    reasons.push(`Price alerts require crossing the ${rule.targetPrice.toFixed(2)} ${REGIONS[region].currency} target. Restock alerts do not require that target unless available-at-target is enabled.`);
+                else if (rule.priceDropOnly)
+                    reasons.push('Price-change alerts are limited to decreases.');
+            }
+            if (enabled('soldOut'))
+                events.push('sold_out');
+            if (enabled('statusChange'))
+                events.push('status_change');
+            if (!events.length) {
+                state = 'off';
+                label = 'Individual event alerts off';
+            }
+            else if (!label)
+                label = events.length === 1 && events[0] === 'restock' ? 'Restock alerts enabled' : 'Individual alerts enabled';
+            reasons.push('Unset event choices inherit Settings > Notifications.');
+        }
+    }
+    if (state === 'active' && !channels.length) {
+        state = 'no-channel';
+        reasons.unshift(label + '.');
+        label = 'No server notification channel enabled';
+    }
+    if (!channels.length)
+        reasons.push('Configure and enable a server channel in Settings > Notifications. Browser popups require an open page and browser permission.');
+    reasons.push('This describes saved rules, not a promise of stock or a queued notification. Actual jobs are shown separately.');
+    return { state, label, channels, events, reasons, pausedUntil: rule.pausedUntil, immediateRestock: rule.immediateRestock, timeZone: NOTIFICATION_TIME_ZONE };
+}
+function alertExplanation(product = null, collection = null) {
+    const configuration = alertConfiguration(product, collection);
+    const region = currentRegion();
+    const identity = collection ? collection.id : product.slug;
+    const expression = collection ? "json_extract(payload_json,'$.collectionId')" : "json_extract(payload_json,'$.slug')";
+    const delivery = db.prepare(`SELECT event_id AS eventId,channel,status,attempts,next_attempt_at AS deliverAt,(SELECT data_json FROM events WHERE id=notification_queue.event_id) AS event_json FROM notification_queue WHERE region=? AND ${expression}=? AND status IN ('pending','processing','failed') ORDER BY id DESC LIMIT 20`).all(region, identity)
+        .map(({ event_json, ...row }) => ({ ...row, mode: safeJsonParse(event_json, {})?.serverAlert?.mode || null }));
+    const plans = configuration.state === 'active' ? configuration.events.map(type => ({ type, ...deliveryPlan({ type, region, slug: product?.slug }, product ? watchRule(product.slug) : DEFAULT_WATCH_RULE) })) : [];
+    const cooldowns = db.prepare('SELECT event_type AS type,last_notified_at AS notifiedAt FROM notification_cooldowns WHERE region=? AND slug=?').all(region, collection ? `collection:${identity}` : identity)
+        .map(row => ({ type: row.type, until: new Date(new Date(row.notifiedAt).getTime() + NOTIFICATION_COOLDOWN_MINUTES * 60000).toISOString() })).filter(row => new Date(row.until).getTime() > Date.now());
+    return { configuration, delivery, deliveryLimit: 20, plans, cooldowns, name: collection?.name || product.name };
+}
 function logNotification(eventId, channel, status, detail = null) {
     try {
         db.prepare('INSERT INTO notification_log(event_id,channel,status,detail,created_at) VALUES(?,?,?,?,?)')
@@ -3112,7 +3280,7 @@ function productForApi(product) {
     const watched = state.watchlist.includes(product.slug);
     const watch = watched ? db.prepare('SELECT created_at FROM watchlist WHERE region=? AND slug=?').get(currentRegion(), product.slug) : null;
     const collections = watched ? db.prepare('SELECT collection_id FROM watch_collection_members WHERE region=? AND slug=?').all(currentRegion(), product.slug).map((row) => row.collection_id) : [];
-    return { ...product, watched, watchedAt: watch?.created_at || null, watchRule: watched ? watchRule(product.slug) : null, collections };
+    return { ...product, watched, watchedAt: watch?.created_at || null, watchRule: watched ? watchRule(product.slug) : null, collections, alertSummary: watched ? alertConfiguration(product) : null };
 }
 function collectionAlertActive(id, region = currentRegion()) {
     const value = db.prepare('SELECT notify_ready,archived FROM watch_collections WHERE region=? AND id=?').get(region, id);
@@ -3128,7 +3296,8 @@ function watchOverview(collections, region = currentRegion()) {
 }
 function watchWorkspace() {
     const collections = watchCollections();
-    return { collections, overview: watchOverview(collections) };
+    const watchAlerts = Object.fromEntries(state.watchlist.filter(slug => Object.hasOwn(state.products, slug)).map(slug => [slug, alertConfiguration(state.products[slug])]));
+    return { collections, overview: watchOverview(collections), watchAlerts };
 }
 function collectionAlertSuppressors(slug, region = currentRegion()) {
     return db.prepare(`SELECT c.id,c.name FROM watch_collections c JOIN watch_collection_members m ON c.region=m.region AND c.id=m.collection_id
@@ -3190,7 +3359,8 @@ function watchCollections(region = currentRegion()) {
         const pricing = { total, currency: REGIONS[region].currency, priced: items.length - missing, missing, items: items.length };
         const planning = { quantity: items.reduce((sum, item) => sum + item.quantity, 0), purchasedQuantity: items.reduce((sum, item) => sum + item.purchasedQuantity, 0), completedItems: items.filter((item) => item.purchasedQuantity === item.quantity).length,
             spent: spentCents / 100, remainingCost: remainingCents / 100, estimatedTotal: total, missingPaid, missingPrices, budgetDifference: collection.budget === null || missing ? null : Math.round((collection.budget - total) * 100) / 100 };
-        return { ...value, pricing, planning, readiness: collectionReadiness(value, region) };
+        const result = { ...value, pricing, planning, readiness: collectionReadiness(value, region) };
+        return { ...result, alertSummary: regionContext.run(region, () => alertConfiguration(null, result)) };
     });
 }
 function insertCollectionMember(region, id, slug) {
@@ -3892,9 +4062,9 @@ function updatePreparation() {
         flushState(region);
     const backup = createDatabaseBackup(`pre-update-${APP_VERSION}`);
     const commands = {
-        win32: '.\\update-windows.ps1 -Version <new-version> -BackupConfirmed',
-        darwin: './update-mac-linux.sh <new-version> --backup-confirmed',
-        linux: './update-mac-linux.sh <new-version> --backup-confirmed',
+        win32: `.\\update-windows.ps1 -Version <new-version> -BackupConfirmed${PORT === 8787 ? '' : ` -Port ${PORT}`}`,
+        darwin: `./update-mac-linux.sh <new-version> --backup-confirmed${PORT === 8787 ? '' : ` --port ${PORT}`}`,
+        linux: `./update-mac-linux.sh <new-version> --backup-confirmed${PORT === 8787 ? '' : ` --port ${PORT}`}`,
         docker: './update-docker.sh <new-version> --backup-confirmed',
     };
     writeAppLog('info', 'updates', 'Owner prepared a validated pre-update backup.', { backup: backup?.filename });
@@ -3904,7 +4074,7 @@ function updatePreparation() {
         command: commands[process.platform] || null,
         dockerCommand: commands.docker,
         warning: 'GearBeacon will never install an update silently. Review the release notes, stop the service, and run the matching helper yourself.',
-        rollback: 'Stop GearBeacon, restore the validated pre-update SQLite file to the data directory, then reinstall the previous version.',
+        rollback: 'Stop GearBeacon, restore a validated pre-update SQLite file compatible with the previous version and its matching secrets.key, then reinstall that version and verify startup. Never start an older application against a migrated database.',
     };
 }
 function exportSnapshot() {
@@ -3932,7 +4102,7 @@ function exportSnapshot() {
             events: db.prepare('SELECT data_json FROM events WHERE region=? ORDER BY detected_at').all(region)
                 .map((row) => safeJsonParse(row.data_json, null)).filter(Boolean),
             watchRules,
-            collections: watchCollections(region).map(({ readiness, pricing, planning, ...collection }) => collection),
+            collections: watchCollections(region).map(({ readiness, pricing, planning, alertSummary, ...collection }) => collection),
             monitoringCoverage: db.prepare('SELECT started_at AS startedAt,ended_at AS endedAt,checks FROM monitor_coverage WHERE region=? ORDER BY started_at,id').all(region),
             inventoryHistory: db.prepare('SELECT slug,started_at AS startedAt,ended_at AS endedAt,status,in_stock AS inStock,price_text AS price,price_value AS priceValue,currency FROM inventory_history WHERE region=? ORDER BY slug,started_at,id').all(region).map((row) => ({ ...row, inStock: Boolean(row.inStock) })),
             conditionState: db.prepare('SELECT slug,matched FROM watch_condition_state WHERE region=?').all(region),
@@ -4982,6 +5152,28 @@ async function handleApi(req, res, url) {
     return await regionContext.run(requestedRegion, () => handleRegionApi(req, res, url));
 }
 async function handleRegionApi(req, res, url) {
+    const alertMatch = url.pathname.match(/^\/api\/(watch|collections)\/([^/]+)\/alerts$/);
+    if (alertMatch && req.method === 'GET') {
+        const id = decodeURIComponent(alertMatch[2]);
+        const product = alertMatch[1] === 'watch' && state.watchlist.includes(id) ? state.products[id] : null;
+        const collection = alertMatch[1] === 'collections' ? watchCollections().find(value => value.id === id) : null;
+        if (!product && !collection)
+            return sendJson(res, 404, { error: 'Watch or collection not found in this store.' });
+        return sendJson(res, 200, alertExplanation(product, collection));
+    }
+    if (url.pathname === '/api/views' && req.method === 'GET')
+        return sendJson(res, 200, { views: savedViewsForRegion() });
+    const viewMatch = url.pathname.match(/^\/api\/views\/([a-zA-Z0-9-]{1,80})$/);
+    if ((url.pathname === '/api/views' && req.method === 'POST') || (viewMatch && ['PUT', 'DELETE'].includes(req.method))) {
+        const input = await readJsonBody(req, 32 * 1024);
+        try {
+            return sendJson(res, 200, changeOwnerView(input, viewMatch?.[1], req.method === 'DELETE'));
+        }
+        catch (err) {
+            const expected = [400, 404, 409].includes(err.statusCode);
+            return sendJson(res, expected ? err.statusCode : 500, { error: expected ? err.message : 'Unable to save the view. Try again or check Operations.' });
+        }
+    }
     if (req.method === 'GET' && url.pathname === '/api/status') {
         return sendJson(res, 200, apiStatus());
     }
@@ -5629,7 +5821,7 @@ const server = http.createServer(async (req, res) => {
             return sendJson(res, 400, { error: 'Request target is invalid.' });
         const url = new URL(requestTarget, `http://${requestHost}`);
         if (url.pathname === '/healthz')
-            return sendJson(res, 200, { ok: true, name: 'GearBeacon', version: APP_VERSION });
+            return sendJson(res, 200, { ok: true, name: 'GearBeacon', version: APP_VERSION, packageVersion: BUILD_INFO.packageVersion || APP_VERSION });
         if (url.pathname === '/readyz') {
             const ready = MOCK_MODE || ACTIVE_REGIONS.every((region) => {
                 const item = monitors[region];

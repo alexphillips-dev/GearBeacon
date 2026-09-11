@@ -42,7 +42,9 @@ jobs:
         run: node --no-warnings scripts/collections-test.mjs
       - name: Watchlist overview, collection destinations, archiving and undo
         run: node --no-warnings scripts/watch-workflow-test.mjs
-      - name: Verify update helpers refuse unsafe updates
+      - name: Saved views and effective alert explanations
+        run: node --no-warnings scripts/views-alerts-test.mjs
+      - name: Verify update helper safety, startup and recovery
         run: npm run test:update-helpers
       - name: Verify source launchers from outside the checkout
         run: npm run test:launchers

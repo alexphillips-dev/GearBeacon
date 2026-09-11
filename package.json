@@ -7,7 +7,7 @@
   "scripts": {
     "build": "tsc -p backend/tsconfig.json",
     "check": "node scripts/check-versions.mjs && node --check web/app.js && node --check scripts/browser-smoke.mjs && node --check scripts/build-standalone.mjs && node --check scripts/live-catalog-canary.mjs && node --check scripts/update-helper-smoke.mjs && node --check scripts/check-security-contract.mjs && node scripts/check-security-contract.mjs && node --check scripts/check-web-contract.mjs && node scripts/check-web-contract.mjs",
-    "test": "node --no-warnings scripts/self-test.mjs && node --no-warnings scripts/fault-test.mjs && node --no-warnings scripts/precision-test.mjs && node --no-warnings scripts/insights-test.mjs && node --no-warnings scripts/collections-test.mjs && node --no-warnings scripts/watch-workflow-test.mjs",
+    "test": "node --no-warnings scripts/self-test.mjs && node --no-warnings scripts/fault-test.mjs && node --no-warnings scripts/precision-test.mjs && node --no-warnings scripts/insights-test.mjs && node --no-warnings scripts/collections-test.mjs && node --no-warnings scripts/watch-workflow-test.mjs && node --no-warnings scripts/views-alerts-test.mjs",
     "test:browser": "node --no-warnings scripts/browser-smoke.mjs",
     "test:launchers": "node scripts/launcher-smoke.mjs",
     "test:live-catalog": "node --no-warnings scripts/live-catalog-canary.mjs",

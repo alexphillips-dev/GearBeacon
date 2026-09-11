@@ -10,6 +10,8 @@ One installation serves one owner. Monitoring and external notification delivery
 
 **Current version: 1.2.0** · [Downloads](https://github.com/alexphillips-dev/GearBeacon/releases) · [Release notes](docs/RELEASE_NOTES.md) · [Wiki](https://github.com/alexphillips-dev/GearBeacon/wiki)
 
+The current `dev` checkout also includes named views, a compact Watchlist, alert explanations, and update startup verification. These additions are not included in the published v1.2.0 downloads; see the [changelog](docs/CHANGELOG.md) and [Wiki](https://github.com/alexphillips-dev/GearBeacon/wiki).
+
 ## What it does
 
 - **Regional monitoring:** United States, Canada, Europe, and United Kingdom Stores, with separate watches, prices, activity, and health.

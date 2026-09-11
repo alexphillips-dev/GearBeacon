@@ -65,3 +65,4 @@ GearBeacon-Activity-*
 GearBeacon-Logs-*
 *.log
 *.log.*
+/.gearbeacon-update.*

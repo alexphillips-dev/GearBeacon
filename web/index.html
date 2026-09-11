@@ -135,6 +135,11 @@
         <button id="selectVisibleWatches" type="button">Select visible watches</button>
         <div class="watch-grouping"><label><input id="groupCollectedWatches" type="checkbox" aria-describedby="watchGroupingHint" /> Group items in collections</label><span id="watchGroupingHint">In All collections, open a collection to see its items.</span></div>
       </div>
+      <div class="saved-view-toolbar" aria-label="Watchlist views">
+        <label><span>Saved view</span><select id="watchSavedView" aria-label="Saved Watchlist view"><option value="">Current filters</option></select></label>
+        <button type="button" data-save-view="watchlist">Save view</button><button type="button" data-manage-views="watchlist">Manage views</button>
+        <label class="watch-layout"><span>Layout</span><select id="watchLayout"><option value="cards">Cards</option><option value="compact">Compact list</option></select></label>
+      </div>
       <div id="bulkActions" class="bulk-actions hidden"><strong id="bulkCount">0 selected</strong><button id="bulkAddCollection" type="button">Add to collection</button><select id="bulkPauseDuration" aria-label="Bulk pause duration"><option value="60">Pause 1 hour</option><option value="1440">Pause 1 day</option><option value="10080">Pause 1 week</option><option value="0">Pause until resumed</option></select><button id="bulkPause">Pause</button><button id="bulkResume">Resume</button><button id="bulkRemove" class="danger-button">Remove</button><button id="bulkClear" class="ghost">Clear selection</button></div>
       <div id="watchlistCards" class="grid watch-grid">
         <div id="collectionReadiness" class="collection-readiness"></div>
@@ -186,6 +191,7 @@
             <label class="store-sort"><span>Sort by</span><select id="browseSort"><option value="name">Name: A–Z</option><option value="price-low">Price: low to high</option><option value="price-high">Price: high to low</option><option value="availability">Availability</option></select></label>
           </div>
           <div id="browseActiveFilters" class="store-active-filters hidden"><span id="browseFilterDescription"></span><button id="resetBrowseFilters" class="filter-reset hidden" type="button">Reset filters</button></div>
+          <div class="saved-view-toolbar" aria-label="Browse views"><label><span>Saved view</span><select id="browseSavedView" aria-label="Saved Browse view"><option value="">Current filters</option></select></label><button type="button" data-save-view="browse">Save view</button><button type="button" data-manage-views="browse">Manage views</button></div>
           <div id="browseGrid" class="store-grid"></div>
           <div class="browse-more"><button id="browseLoadMore" class="hidden">Load more products</button></div>
           <div id="browseEmpty" class="store-empty hidden"><h3>No matching products</h3><p>Try another category, availability, or search.</p><button id="resetBrowseEmpty" type="button">Reset Browse filters</button></div>
@@ -521,6 +527,7 @@
     </article>
   </section>
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+  <dialog id="ownerDialog" class="owner-dialog" aria-labelledby="ownerDialogTitle"><div class="product-dialog-head"><h2 id="ownerDialogTitle">Saved views</h2><button id="closeOwnerDialog" type="button" class="icon-button" aria-label="Close dialog">×</button></div><div id="ownerDialogBody" class="product-dialog-body"></div><p id="ownerDialogResult" class="settings-result" role="status" aria-live="polite"></p></dialog>
   <script src="/app.js"></script>
 </body>
 </html>

@@ -918,10 +918,10 @@ try {
   await waitForBrowser(`app.collections.find(item=>item.id==='${purchaseCollectionId}').alertsOnly && document.activeElement.matches('[data-collection-alert-mode]')`, 'Collection-only alert mode did not save or retain focus');
   await assertAccessible('Collection-only alert mode');
   await evaluate("document.querySelector('[data-close-collection-alerts]').click()");
-  assert(await evaluate("document.querySelector('#collectionDetails .collection-member-plan').textContent.includes('Item alerts suppressed by: Purchase test') && document.querySelector('#watchGrid [data-product-card=\"udm-se\"]').textContent.includes('Collection alerts only: Purchase test')"), 'The effective collection alert override was not visible on the item');
+  assert(await evaluate("document.querySelector('#collectionDetails .collection-member-plan').textContent.includes('Item alerts suppressed by: Purchase test') && document.querySelector('#watchGrid [data-product-card=\"udm-se\"]').textContent.includes('Individual alerts suppressed by Purchase test')"), 'The effective collection alert override was not visible on the item');
   await evaluate("document.querySelector('#collectionDetails [data-collection-item-remove=\"udm-se\"]').click()");
   await waitForBrowser(`!app.collectionBusy && app.collections.find(item=>item.id==='${purchaseCollectionId}').slugs.length===0`, 'Remove did not remove the item from its collection');
-  assert(await evaluate("app.products.find(item=>item.slug==='udm-se').watched && !document.getElementById('collectionDetails').classList.contains('hidden') && document.querySelector('#collectionDetails .collection-no-watches') && !document.querySelector('#watchGrid [data-product-card=\"udm-se\"]').textContent.includes('Collection alerts only: Purchase test')"), 'Removing a collection item lost its watch, left an override, or reopened the manager');
+  assert(await evaluate("app.products.find(item=>item.slug==='udm-se').watched && !document.getElementById('collectionDetails').classList.contains('hidden') && document.querySelector('#collectionDetails .collection-no-watches') && !document.querySelector('#watchGrid [data-product-card=\"udm-se\"]').textContent.includes('Individual alerts suppressed by Purchase test')"), 'Removing a collection item lost its watch, left an override, or reopened the manager');
   await evaluate("document.getElementById('closeCollectionManager').click()");
   // Add from Browse, preserve existing plans, filter by readiness, and archive/undo through real controls.
   await evaluate("activateTab('browse'); resetBrowseFilters(); document.querySelector('#browseGrid [data-add-watch=\"uvc-g5-ptz\"]').focus(); document.activeElement.click()");
@@ -977,6 +977,63 @@ try {
   await waitForBrowser(`!app.collectionBusy && !app.collections.find(item=>item.id==='${workflowCollection}').archived`, 'Restore did not reactivate the archived collection');
   assert(await evaluate(`app.collections.find(item=>item.id==='${workflowCollection}').items[0].paidTotal===300 && collectionAlertSources(app.products.find(item=>item.slug==='uvc-g5-ptz::mock-white')).some(item=>item.id==='${workflowCollection}')`), 'Restore lost purchase records or saved alert mode');
   await evaluate("resetWatchFilters(); document.getElementById('groupCollectedWatches').checked=false; document.getElementById('collectionArchiveFilter').value='active'; renderProducts(true)");
+
+  // Named views are persisted by the server; layout and dialogs remain accessible.
+  await evaluate("resetWatchFilters(); document.getElementById('watchLayout').value='compact'; document.getElementById('watchLayout').dispatchEvent(new Event('change')); document.querySelector('[data-save-view=watchlist]').focus(); document.querySelector('[data-save-view=watchlist]').click()");
+  assert(await evaluate("document.getElementById('ownerDialog').open && document.activeElement.id==='savedViewName'"), 'Saved view dialog did not open with name focus');
+  await assertAccessible('Save named Watchlist view');
+  await evaluate("document.getElementById('savedViewName').value='Daily <view>'; document.getElementById('savedViewForm').requestSubmit()");
+  await waitForBrowser("app.savedViews.some(view=>view.name==='Daily <view>') && !document.getElementById('ownerDialog').open", 'View did not save');
+  assert(await evaluate("document.activeElement.matches('[data-save-view=watchlist]')"), 'Saving did not restore focus');
+  const savedView = await evaluate("app.savedViews.find(view=>view.name==='Daily <view>').id");
+  await evaluate(`document.getElementById('watchLayout').value='cards'; document.getElementById('watchLayout').dispatchEvent(new Event('change')); document.getElementById('watchSavedView').value='${savedView}'; document.getElementById('watchSavedView').dispatchEvent(new Event('change'))`);
+  assert(await evaluate("document.getElementById('watchLayout').value==='compact' && document.getElementById('watchlistCards').classList.contains('compact-list')"), 'Applying a saved view did not restore its layout');
+  await evaluate("document.querySelector('[data-manage-views=watchlist]').click(); document.querySelector('[data-view-edit]').click(); document.getElementById('savedViewName').value='Daily compact'; document.getElementById('savedViewForm').requestSubmit()");
+  await waitForBrowser("app.savedViews.some(view=>view.name==='Daily compact') && !document.getElementById('ownerDialog').open", 'Renaming a saved view failed');
+  await evaluate("window.originalViewApi=api; api=async(path,options)=>{ const result=await window.originalViewApi(path,options); if(path==='/api/views' && options?.method==='POST') await new Promise(resolve=>window.finishViewSave=resolve); return result; }; document.querySelector('[data-save-view=watchlist]').click(); document.getElementById('savedViewName').value='Z delayed save'; document.getElementById('savedViewForm').requestSubmit()");
+  await waitForBrowser("Boolean(window.finishViewSave)", 'Delayed save fixture did not reach the server');
+  await evaluate("document.getElementById('closeOwnerDialog').click()");
+  await waitForBrowser("app.viewDraft===null", 'Closing an in-progress view did not clear its draft');
+  await evaluate("document.querySelector('[data-save-view=watchlist]').click(); document.getElementById('savedViewName').value='Unsaved next view'; window.finishViewSave()");
+  await waitForBrowser("app.savedViews.some(view=>view.name==='Z delayed save')", 'Completed save was not reflected in the view list');
+  assert(await evaluate("document.getElementById('ownerDialog').open && document.getElementById('savedViewName').value==='Unsaved next view'"), 'An earlier save closed or overwrote a newer dialog');
+  await evaluate("api=window.originalViewApi; document.getElementById('closeOwnerDialog').click()");
+  for (const theme of ['dark','light']) {
+    await evaluate(`applyTheme('${theme}'); renderProducts(true)`); await delay(250);
+    for (const width of [1280,390,640]) {
+      await cdp.send('Emulation.setDeviceMetricsOverride',{width,height:844,deviceScaleFactor:width===640?2:1,mobile:false});
+      assert(await evaluate("document.documentElement.scrollWidth<=window.innerWidth+1"), `Compact layout overflowed at ${width}px`);
+      assert(await evaluate("[...document.querySelectorAll('.compact-list .watch-card')].every(card=>card.querySelector('.watch-image').getBoundingClientRect().width>=60 && card.querySelector('.price') && card.querySelectorAll('.card-actions button').length===3)"), 'Compact rows lost product previews, prices or actions');
+      if (screenshotRoot) {
+        await evaluate("document.getElementById('watchlistCards').scrollIntoView({block:'start'})");
+        const capture=await cdp.send('Page.captureScreenshot',{format:'png'});
+        await writeFile(join(screenshotRoot,`compact-${theme}-${width}.png`),Buffer.from(capture.data,'base64'));
+      }
+    }
+    await assertAccessible(`Compact Watchlist ${theme}`);
+    await evaluate("document.querySelector('[data-alert-explain=watch]').focus(); document.querySelector('[data-alert-explain=watch]').click()");
+    await waitForBrowser("document.querySelector('.alert-explanation')", 'Alert explanation did not load');
+    assert(await evaluate("document.getElementById('ownerDialogBody').textContent.includes('Actual notification jobs') && document.getElementById('ownerDialogBody').textContent.includes('Saving a rule does not create a notification job')"), 'Explanation confused enabled rules with deliveries');
+    await assertAccessible(`Alert explanation ${theme}`);
+    await cdp.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+    await cdp.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+    await waitForBrowser("!document.getElementById('ownerDialog').open", 'Escape did not dismiss alert explanation');
+    assert(await evaluate("document.activeElement.matches('[data-alert-explain=watch]')"), 'Alert explanation did not restore focus');
+  }
+  await evaluate("document.querySelector('#watchGrid [data-product-detail]').click()");
+  await waitForBrowser("!document.getElementById('productDialog').classList.contains('hidden') && document.querySelector('#productRuleForm [data-alert-explain]')", 'Product alert rules did not open');
+  await evaluate("document.querySelector('#productRuleForm [data-alert-explain]').focus(); document.activeElement.click()");
+  await waitForBrowser("document.querySelector('.alert-explanation')", 'Nested alert explanation did not load');
+  await assertAccessible('Alert explanation over product rules');
+  await evaluate("document.getElementById('closeOwnerDialog').click()");
+  await waitForBrowser("!document.getElementById('ownerDialog').open && document.activeElement.matches('#productRuleForm [data-alert-explain]')", 'Nested explanation lost focus in product rules');
+  await evaluate("document.getElementById('closeProductDialog').click(); document.querySelector('[data-manage-views=watchlist]').click(); document.querySelector('[data-view-delete]').click()");
+  await waitForBrowser("!app.savedViews.some(view=>view.name==='Daily compact')", 'Deleting a saved view failed');
+  await evaluate("document.getElementById('closeOwnerDialog').click(); document.getElementById('watchLayout').value='cards'; document.getElementById('watchLayout').dispatchEvent(new Event('change')); activateTab('browse'); document.getElementById('search').value='G5'; document.getElementById('search').dispatchEvent(new Event('input')); document.querySelector('[data-save-view=browse]').click(); document.getElementById('savedViewName').value='Browse cameras'; document.getElementById('savedViewForm').requestSubmit()");
+  await waitForBrowser("app.savedViews.some(view=>view.scope==='browse') && !document.getElementById('ownerDialog').open", 'Browse view did not save');
+  await evaluate("document.getElementById('search').value=''; document.getElementById('search').dispatchEvent(new Event('input')); document.getElementById('browseSavedView').value=app.savedViews.find(view=>view.scope==='browse').id; document.getElementById('browseSavedView').dispatchEvent(new Event('change'))");
+  assert(await evaluate("document.getElementById('search').value==='G5'"), 'Browse view did not restore search');
+  await evaluate("document.getElementById('search').value=''; document.getElementById('search').dispatchEvent(new Event('input')); activateTab('watchlist')");
   // Paginate more than 100 real API entries in the isolated browser fixture.
   await evaluate(`(async () => {
     const backup = await api('/api/data/export');

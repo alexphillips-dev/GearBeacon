@@ -43,6 +43,7 @@ const app = {
   status: null,
   products: [],
   collections: [],
+  savedViews: [],
   watchOverview: null,
   watchQuickFilter: ["ready","target","collections"].includes(savedUiState.watch?.overview) ? savedUiState.watch.overview : "all",
   collectionUndos: [],
@@ -94,6 +95,7 @@ function restoreUiControls() {
   setControlValue('watchSearch', savedUiState.watch?.search);
   setControlValue('watchStatus', savedUiState.watch?.status);
   setControlValue('watchSort', savedUiState.watch?.sort);
+  setControlValue('watchLayout', savedUiState.watch?.layout);
   $('groupCollectedWatches').checked = savedUiState.watch?.groupCollections === true;
   setControlValue('activitySearch', savedUiState.activity?.search);
   setControlValue('activityType', savedUiState.activity?.type);
@@ -106,10 +108,88 @@ function persistUiState() {
   const state = {
     activeTab:app.activeTab,
     browse:{ search:$('search')?.value || '', category:app.browseCategory, sort:$('browseSort').value, ...browseFilterValues() },
-    watch:{ overview:app.watchQuickFilter, search:$('watchSearch')?.value || '', status:$('watchStatus')?.value || 'all', category:app.pendingWatchCategory || $('watchCategory')?.value || 'all', sort:$('watchSort')?.value || 'changed', collection:app.pendingWatchCollection || $('watchCollection').value || 'all', groupCollections:$('groupCollectedWatches').checked },
+    watch:{ overview:app.watchQuickFilter, search:$('watchSearch')?.value || '', status:$('watchStatus')?.value || 'all', category:app.pendingWatchCategory || $('watchCategory')?.value || 'all', sort:$('watchSort')?.value || 'changed', collection:app.pendingWatchCollection || $('watchCollection').value || 'all', groupCollections:$('groupCollectedWatches').checked, layout:$('watchLayout').value },
     activity:{ search:$('activitySearch')?.value || '', scope:app.pendingActivityRegion || $('activityRegion')?.value || 'all', type:$('activityType')?.value || 'all', delivery:$('activityDelivery')?.value || 'all', from:$('activityFrom')?.value || '', to:$('activityTo')?.value || '', limit:Number($('activityPageSize')?.value || 20) },
   };
   try { localStorage.setItem(UI_STATE_KEY, JSON.stringify(state)); } catch {}
+}
+
+function viewFilters(scope) {
+  if (scope === 'browse') return { search:$('search').value.trim(), category:app.browseCategory, sort:$('browseSort').value, ...browseFilterValues() };
+  return { search:$('watchSearch').value.trim(), category:app.pendingWatchCategory || $('watchCategory').value || 'all', status:$('watchStatus').value, sort:$('watchSort').value, collection:app.pendingWatchCollection || $('watchCollection').value || 'all', overview:app.watchQuickFilter, groupCollections:$('groupCollectedWatches').checked, layout:$('watchLayout').value };
+}
+function renderSavedViews() {
+  for (const scope of ['watchlist','browse']) {
+    const select = $(scope === 'watchlist' ? 'watchSavedView' : 'browseSavedView');
+    const views = app.savedViews.filter(view => view.scope === scope).sort((a,b) => a.name.localeCompare(b.name));
+    const key = JSON.stringify(views.map(({id,name}) => [id,name]));
+    if (select.dataset.options !== key) {
+      select.innerHTML = '<option value="">Current filters</option>' + views.map(view => `<option value="${escapeHtml(view.id)}">${escapeHtml(view.name)}</option>`).join('');
+      select.dataset.options = key;
+    }
+    const filters = viewFilters(scope);
+    const matches = view => Object.keys(view.filters).every(key => view.filters[key] === filters[key]);
+    select.value = views.find(view => view.id === select.value && matches(view))?.id || views.find(matches)?.id || '';
+  }
+}
+function applySavedView(id) {
+  const view = app.savedViews.find(view => view.id === id);
+  if (!view) return;
+  const f = view.filters;
+  if (view.scope === 'watchlist') {
+    if (!['all','none'].includes(f.collection) && !app.collections.some(item => item.id === f.collection)) { toast('This view refers to a deleted collection. Update its filters in Manage views.', 'error'); renderSavedViews(); return; }
+    app.pendingWatchCollection = f.collection; app.pendingWatchCategory = f.category;
+    for (const [control,key] of [['watchSearch','search'],['watchStatus','status'],['watchSort','sort'],['watchLayout','layout']]) setControlValue(control,f[key]);
+    $('groupCollectedWatches').checked = f.groupCollections;
+    app.watchQuickFilter = f.overview; app.selectedWatch.clear();
+  } else {
+    $('search').value = f.search; app.browseCategory = f.category; $('browseSort').value = f.sort;
+    for (const name of ['availability','watching']) for (const input of $('browseFilters').elements[name]) input.checked = input.value === f[name];
+    app.browseVisibleCount = 48;
+  }
+  renderProducts(true); persistUiState(); toast(`View applied: ${view.name}`);
+}
+function openOwnerDialog(title, body) {
+  app.viewDraft = null; app.alertExplanationRequest = null;
+  $('ownerDialogTitle').textContent = title;
+  $('ownerDialogBody').innerHTML = body;
+  $('ownerDialogResult').textContent = '';
+  if (!$('ownerDialog').open) {
+    app.ownerDialogFocus = document.activeElement;
+    $('ownerDialog').showModal();
+  }
+  ($('ownerDialogBody').querySelector('input,button') || $('closeOwnerDialog')).focus();
+}
+function showViewEditor(scope, id = null) {
+  const previous = app.savedViews.find(view => view.id === id);
+  const draft = { scope, region:app.currentRegion, previous:previous ? structuredClone(previous) : null, filters:viewFilters(scope) };
+  openOwnerDialog(previous ? 'Edit saved view' : 'Save current view', `<form id="savedViewForm"><p>Saved on this GearBeacon installation for ${escapeHtml(app.status?.regionLabel || app.currentRegion)}. Available on your other devices.</p><label class="field"><span>View name</span><input id="savedViewName" maxlength="80" required autocomplete="off" value="${escapeHtml(previous?.name || '')}" /></label>${previous ? '<label class="inline-check"><input id="replaceViewFilters" type="checkbox" /> Replace with the filters currently shown behind this dialog</label>' : '<p>Includes the current filters, sorting, and Watchlist layout/grouping where applicable.</p>'}<div class="dialog-actions"><button type="submit" class="primary">Save view</button><button type="button" data-owner-close>Cancel</button></div></form>`);
+  app.viewDraft = draft;
+}
+function showViewManager(scope) {
+  const views = app.savedViews.filter(view => view.scope === scope).sort((a,b) => a.name.localeCompare(b.name));
+  openOwnerDialog(`${scope === 'browse' ? 'Browse' : 'Watchlist'} saved views`, `<p>Rename a view, replace its filters, or remove it. These changes apply across your devices.</p><div class="saved-view-list">${views.map(view => `<div class="saved-view-row"><strong>${escapeHtml(view.name)}</strong><button type="button" data-view-edit="${escapeHtml(view.id)}">Edit</button><button type="button" data-view-delete="${escapeHtml(view.id)}" data-view-revision="${view.revision}">Delete</button></div>`).join('') || '<p>No saved views in this store yet. Set your filters and choose Save view.</p>'}</div>`);
+}
+async function saveOwnerView(form) {
+  const draft = app.viewDraft;
+  if (!draft || draft.region !== app.currentRegion) return;
+  const button = form.querySelector('[type="submit"]'); button.disabled = true;
+  const body = { name:form.querySelector('#savedViewName').value, scope:draft.scope, filters:draft.previous && !form.querySelector('#replaceViewFilters').checked ? draft.previous.filters : draft.filters, ...(draft.previous ? {revision:draft.previous.revision} : {}) };
+  try {
+    const result = await api(`/api/views${draft.previous ? '/' + encodeURIComponent(draft.previous.id) : ''}`, { method:draft.previous ? 'PUT' : 'POST', body:JSON.stringify(body) });
+    if (app.currentRegion === draft.region) { app.savedViews = result.views; renderSavedViews(); }
+    if (app.viewDraft === draft) { $('ownerDialog').close(); toast('View saved'); }
+  } catch (err) { if (app.viewDraft === draft) $('ownerDialogResult').textContent = err.message; }
+  finally { button.disabled = false; }
+}
+async function deleteOwnerView(id, revision) {
+  const previous = app.savedViews.find(view => view.id === id); if (!previous) return;
+  const region = app.currentRegion; const list = $('ownerDialogBody').querySelector('.saved-view-list');
+  try {
+    const result = await api(`/api/views/${encodeURIComponent(id)}`, { method:'DELETE', body:JSON.stringify({revision}) });
+    if (app.currentRegion === region) { app.savedViews = result.views; renderSavedViews(); }
+    if ($('ownerDialog').open && list?.isConnected && app.currentRegion === region) { showViewManager(previous.scope); $('ownerDialogResult').textContent = 'View deleted. Watches and rules are unchanged.'; }
+  } catch (err) { if ($('ownerDialog').open && list?.isConnected) $('ownerDialogResult').textContent = err.message; }
 }
 
 function escapeHtml(value) {
@@ -374,6 +454,32 @@ function ruleSummary(p) {
   if (rule.immediateRestock) chips.push('Immediate restock');
   return (chips.length ? chips : ['Global alert rules']).map((text) => `<span class="rule-chip">${escapeHtml(text)}</span>`).join('');
 }
+function updateWatchAlertSummaries(workspace) {
+  for (const product of app.products) if (workspace.watchAlerts?.[product.slug]) product.alertSummary = workspace.watchAlerts[product.slug];
+}
+function channelLabel(channel) { return ({email:'Email',discord:'Discord',gotify:'Gotify',ntfy:'ntfy',webhook:'Webhook'})[channel] || channel; }
+function alertDate(value) { return value ? new Date(value).toLocaleString() : 'Now'; }
+function alertSummaryMarkup(item, scope = 'watch') {
+  const summary = item.alertSummary;
+  if (!summary) return `<div class="rule-chips">${scope === 'watch' ? ruleSummary(item) : ''}</div>`;
+  return `<div class="alert-summary"><span>${escapeHtml(summary.label)}</span><button type="button" class="alert-why" data-alert-explain="${scope}" data-alert-id="${escapeHtml(scope === 'collections' ? item.id : item.slug)}" aria-label="Why these alerts for ${escapeHtml(item.name)}?">Why?</button></div>`;
+}
+async function showAlertExplanation(scope, id) {
+  const request = {};
+  openOwnerDialog('Alert explanation', '<p>Loading saved rules and delivery status…</p>');
+  app.alertExplanationRequest = request;
+  try {
+    const result = await api(`/api/${scope === 'collections' ? 'collections' : 'watch'}/${encodeURIComponent(id)}/alerts`);
+    if (app.alertExplanationRequest !== request || !$('ownerDialog').open) return;
+    const configuration = result.configuration;
+    const modes = {'immediate-restock':'Immediately, bypassing grouping, digest and quiet hours',immediate:'Immediately',grouped:'After the grouping window',digest:'In the next digest','after-quiet-hours':'After quiet hours'};
+    const types = {restock:'Restock',sold_out:'Sellout',price_change:'Price change',status_change:'Status change',collection_ready:'Collection readiness'};
+    $('ownerDialogTitle').textContent = `Alerts · ${result.name}`;
+    $('ownerDialogBody').innerHTML = `<div class="alert-explanation"><section><h3>${escapeHtml(configuration.label)}</h3><ul>${configuration.reasons.map(reason=>`<li>${escapeHtml(reason)}</li>`).join('')}</ul><p>Server channels: ${escapeHtml(configuration.channels.map(channelLabel).join(', ') || 'None enabled')}.</p></section>
+      <section><h3>Delivery timing</h3><p>For a new matching event, using the current schedule (${escapeHtml(configuration.timeZone)}):</p>${result.plans.length ? `<ul>${result.plans.map(plan=>`<li>${escapeHtml(types[plan.type] || plan.type)}: ${escapeHtml(modes[plan.mode] || plan.mode)} · ${escapeHtml(alertDate(plan.deliverAt))}</li>`).join('')}</ul>` : '<p>No new server deliveries under the current rules.</p>'}${result.cooldowns.length ? `<p>Repeated events are held by cooldown: ${result.cooldowns.map(row=>`${escapeHtml(types[row.type] || row.type)} until ${escapeHtml(alertDate(row.until))}`).join('; ')}.</p>` : ''}</section>
+      <section><h3>Actual notification jobs</h3>${result.delivery.length ? `<p>Latest ${result.delivery.length} pending, processing or failed jobs (up to ${result.deliveryLimit}).</p><ul>${result.delivery.map(job=>`<li>${escapeHtml(channelLabel(job.channel))} · ${escapeHtml(job.status === 'processing' ? 'Sending' : job.status === 'failed' ? 'Failed' : 'Queued')} · ${escapeHtml(alertDate(job.deliverAt))}${job.mode ? ` · ${escapeHtml(modes[job.mode] || job.mode)}` : ''} · ${job.attempts} attempt${job.attempts === 1 ? '' : 's'}</li>`).join('')}</ul>` : '<p>No pending, processing or failed jobs for this item.</p>'}<p>Activity shows event decisions; Settings &gt; Operations provides delivery history and retry controls. Saving a rule does not create a notification job.</p></section></div>`;
+  } catch (error) { if (app.alertExplanationRequest === request) $('ownerDialogResult').textContent = error.message; }
+}
 function imageMarkup(p, className = 'product-image') {
   const failed = app.brokenImages.has(p.imageUrl);
   const retry = failed && p.imageUrl ? ` data-image-retry="${escapeHtml(p.imageUrl)}" title="Retry product image"` : '';
@@ -427,7 +533,7 @@ function watchCard(p) {
     <div class="meta">${escapeHtml(p.sku || p.slug)}${p.variantId ? '' : ' · Any variant'}</div>
     <div class="price">${escapeHtml(p.price || 'Price unavailable')}</div>
     <div class="detail">${escapeHtml(productDetail(p))}${changedRecently ? ' · changed recently' : ''}</div>
-    <div class="rule-chips">${ruleSummary(p)}</div>
+    ${alertSummaryMarkup(p)}
     <div class="rule-chips">${(p.collections || []).map((id) => app.collections.find((collection) => collection.id === id)).filter(Boolean).map((collection) => `<span class="rule-chip">Collection: ${escapeHtml(collection.name)}</span>`).join('')}</div>
     <div class="card-actions">
       <button data-product-detail="${escapeHtml(p.slug)}">Alert rules</button>
@@ -597,6 +703,8 @@ function renderBulkActions() {
   $('bulkActions').classList.toggle('hidden', count === 0);
 }
 function renderProducts(force = false) {
+  $('watchlistCards').classList.toggle('compact-list', $('watchLayout').value === 'compact');
+  renderSavedViews();
   const allWatched = app.products.filter((p) => p.watched);
   renderWatchFilters(allWatched); renderWatchOverview();
   if (app.watchQuickFilter==='all' && $('groupCollectedWatches').checked && $('watchCollection').value === 'all') {
@@ -606,7 +714,7 @@ function renderProducts(force = false) {
   const watched = filteredWatchlist();
   $('watchCount').textContent = allWatched.length;
   if ($('settingsWatchCount')) $('settingsWatchCount').textContent = `${allWatched.length} product${allWatched.length === 1 ? '' : 's'}`;
-  const watchKey = JSON.stringify([watched.map((p) => [p.slug,p.status,p.price,p.lastChangedAt,p.watchRule,p.collections]), app.collections.map(({ id,name,notifyReady,alertsOnly,archived }) => [id,name,notifyReady,alertsOnly,archived]), [...app.selectedWatch]]);
+  const watchKey = JSON.stringify([watched.map((p) => [p.slug,p.status,p.price,p.lastChangedAt,p.watchRule,p.collections,p.alertSummary]), app.collections.map(({ id,name,notifyReady,alertsOnly,archived,alertSummary }) => [id,name,notifyReady,alertsOnly,archived,alertSummary]), [...app.selectedWatch]]);
   if (force || watchKey !== app.watchRenderKey) {
     $('watchGrid').innerHTML = watched.map(watchCard).join('');
     app.watchRenderKey = watchKey;
@@ -863,7 +971,7 @@ function renderProductDialog(details) {
   $('productDialogTitle').textContent = p.name;
   const currentPause = rule.pausedUntil && rule.pausedUntil !== 'indefinite' ? `<option value="existing:${escapeHtml(rule.pausedUntil)}" selected>Paused until ${escapeHtml(new Date(rule.pausedUntil).toLocaleString())}</option>` : '';
   const ruleForm = p.watched ? `<form id="productRuleForm" class="product-rule-form" data-rule-slug="${escapeHtml(p.slug)}">
-    <h3>Product-specific alert rules</h3><p>Use global settings unless this product needs different behavior.</p>
+    <h3>Product-specific alert rules</h3><p>Use global settings unless this product needs different behavior.</p>${alertSummaryMarkup(p)}
     <div class="form-row">${ruleSelect('restock','Restock alerts',rule.restock)}${ruleSelect('soldOut','Sold-out alerts',rule.soldOut)}${ruleSelect('priceChange','Price-change alerts',rule.priceChange)}${ruleSelect('statusChange','Other status alerts',rule.statusChange)}</div>
     <div class="form-row"><label class="field"><span>Target price</span><input name="targetPrice" type="number" min="0" step="0.01" value="${rule.targetPrice ?? ''}" placeholder="No target" /></label><label class="field"><span>Pause alerts</span><select name="pause"><option value="active" ${!rule.pausedUntil ? 'selected' : ''}>Active</option>${currentPause}<option value="60">For 1 hour</option><option value="1440">For 1 day</option><option value="10080">For 1 week</option><option value="indefinite" ${rule.pausedUntil === 'indefinite' ? 'selected' : ''}>Until resumed</option></select></label></div>
     <div class="inline-checks"><label><input name="priceDropOnly" type="checkbox" ${rule.priceDropOnly ? 'checked' : ''}/> Only alert when price drops</label><label><input name="immediateRestock" type="checkbox" ${rule.immediateRestock ? 'checked' : ''}/> Deliver restocks immediately</label></div>
@@ -928,7 +1036,7 @@ async function saveProductRule(form) {
   try {
     const result = await api(`/api/watch/${encodeURIComponent(form.dataset.ruleSlug)}/rules`, { method:'PUT', body:JSON.stringify({ rule }) });
     const membership = await api(`/api/watch/${encodeURIComponent(form.dataset.ruleSlug)}/collections`, { method:'PUT', body:JSON.stringify({ collections:[...form.querySelectorAll('[name="collection"]:checked')].map((input) => input.value) }) });
-    app.collections = membership.collections; app.watchOverview=membership.overview || app.watchOverview;
+    app.collections = membership.collections; updateWatchAlertSummaries(membership); app.watchOverview=membership.overview || app.watchOverview;
     const product = app.products.find((item) => item.slug === form.dataset.ruleSlug); if (product) Object.assign(product, membership.product, { watchRule:result.rule });
     renderProducts(true); await openProductDialog(form.dataset.ruleSlug, true); toast('Product alert rules saved');
   } catch (err) { resultBox.classList.remove('hidden'); resultBox.textContent = err.message; button.disabled = false; button.textContent = 'Save alert rules'; }
@@ -1815,14 +1923,15 @@ function maybeBrowserNotify(events) {
 async function refresh() {
   try {
     const wasDisconnected = app.serverFailures > 0 || app.browserOffline || app.reconnectPending;
-    const [status, products, events] = await Promise.all([api('/api/status'), api('/api/products?includeVariants=1'), api('/api/events?limit=100')]);
+    const [status, products, events, views] = await Promise.all([api('/api/status'), api('/api/products?includeVariants=1'), api('/api/events?limit=100'), api('/api/views')]);
     app.serverFailures = 0;
     app.browserOffline = false;
     app.reconnectPending = false;
     app.status = status;
+    app.savedViews = views.views || [];
     app.catalogVariants = (products.products || []).filter((product) => product.variantId);
     app.products = (products.products || []).filter((product) => !product.variantId || product.watched);
-    app.collections = products.collections || []; app.watchOverview=products.overview || null;
+    app.collections = products.collections || []; updateWatchAlertSummaries(products); app.watchOverview=products.overview || null;
     renderCollections();
     maybeBrowserNotify(events.events || []);
     app.events = events.events || [];
@@ -1885,7 +1994,7 @@ async function openAddWatch(slug) {
   try {
     const [details,result]=await Promise.all([api(`/api/products/${encodeURIComponent(slug)}`),requireWatchWorkflow()]);
     if (app.addWatchDraft!==draft || draft.region!==app.currentRegion) return;
-    app.collections=result.collections; app.watchOverview=result.overview;
+    app.collections=result.collections; updateWatchAlertSummaries(result); app.watchOverview=result.overview;
     draft.products=[details.parent || details.product,...details.variants].filter((product,index,all)=>all.findIndex(item=>item.slug===product.slug)===index);
     $('addWatchVariant').innerHTML=draft.products.map(product=>`<option value="${escapeHtml(product.slug)}">${escapeHtml(product.variantTitle || (product.variantId ? product.sku || product.name : 'Any variant'))}${product.sku ? ` · ${escapeHtml(product.sku)}` : ''}</option>`).join('');
     $('addWatchVariant').value=slug;
@@ -1927,7 +2036,7 @@ async function saveAddedWatch() {
     const result=await api('/api/watch/add',{method:'POST',body:JSON.stringify(body)});
     const collection=result.collections?.find(item=>item.id===result.collectionId);
     if (!result.product?.watched || result.product.slug!==slug || (destination!=='watchlist' && (!collection?.slugs.includes(slug) || (destination!=='new' && collection.id!==destination) || (!result.alreadyMember && collection.items.find(item=>item.slug===slug)?.quantity!==body.quantity)))) throw new Error('The server did not confirm the product was added. Your selections are still here.');
-    app.collections=result.collections; app.watchOverview=result.overview;
+    app.collections=result.collections; updateWatchAlertSummaries(result); app.watchOverview=result.overview;
     const product=app.products.find(item=>item.slug===slug);
     if (product) Object.assign(product,result.product); else app.products.push(result.product);
     renderCollections(true); renderProducts(true);
@@ -2110,7 +2219,7 @@ async function commitCollection(method, id, body) {
     }
     if (body?.budget !== undefined && result.collections?.find(item=>item.id===(id || result.id))?.budget !== body.budget) throw new Error('The server did not confirm your budget was saved. Restart GearBeacon after updating and try again.');
     if (body?.archived !== undefined && result.collections?.find(item=>item.id===id)?.archived !== body.archived) throw new Error('The server did not confirm the archive change.');
-    app.collections = result.collections; app.watchOverview=result.overview || app.watchOverview;
+    app.collections = result.collections; updateWatchAlertSummaries(result); app.watchOverview=result.overview || app.watchOverview;
     for (const product of app.products) product.collections = app.collections.filter((collection) => collection.slugs.includes(product.slug)).map((collection) => collection.id);
     renderCollections(); renderProducts(true);
     return result;
@@ -2198,7 +2307,8 @@ function collectionCard(collection) {
     <div class="price" title="${escapeHtml(collectionPriceNote(collection))}">${escapeHtml(collectionPriceText(collection))}</div>
     <div class="detail readiness-status" role="status">${escapeHtml(collectionStatusText(collection))}</div>
     <div class="rule-chips"><span class="rule-chip">${escapeHtml(collectionPriceNote(collection))}</span></div>
-    <div class="rule-chips"><span class="rule-chip">${collection.archived ? 'Archived · alerts off' : !collection.archived && collection.notifyReady && collection.alertsOnly ? 'Collection alerts only' : `Ready alerts ${collection.notifyReady ? 'on' : 'off'}`}</span>${collection.budget !== null && collection.budget !== undefined ? `<span class="rule-chip">${escapeHtml(collectionBudgetText(collection))}</span>` : ''}</div>
+    ${alertSummaryMarkup(collection, 'collections')}
+    ${collection.budget !== null && collection.budget !== undefined ? `<div class="rule-chips"><span class="rule-chip">${escapeHtml(collectionBudgetText(collection))}</span></div>` : ''}
     <div class="card-actions"><button type="button" data-view-collection="${escapeHtml(collection.id)}">View items</button><button type="button" data-collection-alerts="${escapeHtml(collection.id)}" aria-label="Configure alerts for ${escapeHtml(collection.name)}">Alerts</button><button type="button" data-edit-collection="${escapeHtml(collection.id)}">Edit</button></div>
   </article>`;
 }
@@ -2290,7 +2400,7 @@ async function mutateCollectionItem(method, id, slug, body) {
     const collection=result.collections?.find(item=>item.id===id);
     const saved=collection?.items?.find(item=>item.slug===slug);
     if (!collection || (method==='DELETE' ? collection.slugs.includes(slug) : !saved || ['quantity','purchasedQuantity','paidTotal'].some(key=>saved[key]!==body[key]) || (body.targetPrice !== undefined && result.product?.watchRule?.targetPrice!==body.targetPrice))) throw new Error('The server did not confirm your item changes. Your edits are still here.');
-    app.collections=result.collections; app.watchOverview=result.overview || app.watchOverview;
+    app.collections=result.collections; updateWatchAlertSummaries(result); app.watchOverview=result.overview || app.watchOverview;
     const product=app.products.find(item=>item.slug===slug);
     if (product && result.product) Object.assign(product,result.product);
     for (const product of app.products) product.collections=app.collections.filter(item=>item.slugs.includes(product.slug)).map(item=>item.id);
@@ -2424,7 +2534,7 @@ async function setCollectionNotification(input) {
     const result = await api(`/api/collections/${encodeURIComponent(id)}`, { method:'PUT', body:JSON.stringify({ notifyReady:enabled, alertsOnly }) });
     const saved = result.collections?.find(item=>item.id===id);
     if (!saved || saved.notifyReady !== enabled || saved.alertsOnly !== alertsOnly) throw new Error('The server did not confirm the collection alert settings. Restart after updating and try again.');
-    app.collections = result.collections; app.watchOverview=result.overview || app.watchOverview; renderProducts(true);
+    app.collections = result.collections; updateWatchAlertSummaries(result); app.watchOverview=result.overview || app.watchOverview; renderProducts(true);
     toast(saved.archived ? 'Settings saved. This collection is archived, so its alerts and override stay inactive.' : !enabled ? 'Collection alerts disabled. Item rules apply unless another collection suppresses them.' : alertsOnly ? 'Collection-only alerts enabled. Individual item rules are preserved.' : 'Collection and item alerts enabled.');
   } catch (err) {
     if (app.collectionAlertId === id) { app.collectionAlertsKey=null; renderCollectionAlerts(); }
@@ -2451,7 +2561,7 @@ async function markPurchased(slug) {
   try {
     const result = await api('/api/watch/bulk', { method:'POST', body:JSON.stringify({ action, slugs:[slug] }) });
     Object.assign(product, result.products[0]);
-    const collections = await api('/api/collections'); app.collections = collections.collections; app.watchOverview=collections.overview || app.watchOverview;
+    const collections = await api('/api/collections'); app.collections = collections.collections; updateWatchAlertSummaries(collections); app.watchOverview=collections.overview || app.watchOverview;
     renderProducts(true);
     if (app.currentProductDetails?.product.slug === slug) {
       await openProductDialog(slug, true);
@@ -2471,7 +2581,7 @@ async function bulkWatchAction(action) {
     const result = await api('/api/watch/bulk', { method:'POST', body:JSON.stringify({ action, slugs, minutes:Number($('bulkPauseDuration').value) }) });
     if (action === 'remove') for (const product of app.products.filter((item) => slugs.includes(item.slug))) { product.watched = false; product.watchRule = null; }
     else for (const changed of result.products || []) { const product = app.products.find((item) => item.slug === changed.slug); if (product) Object.assign(product, changed); }
-    const workspace=await api('/api/collections'); app.collections=workspace.collections; app.watchOverview=workspace.overview;
+    const workspace=await api('/api/collections'); app.collections=workspace.collections; updateWatchAlertSummaries(workspace); app.watchOverview=workspace.overview;
     app.selectedWatch.clear(); renderProducts(true); toast(`${result.affected} product${result.affected === 1 ? '' : 's'} ${action === 'pause' ? 'paused' : action === 'resume' ? 'resumed' : 'removed'}`);
   } catch (err) { toast(err.message, 'error'); }
   finally { buttons.forEach((button) => { button.disabled = false; }); }
@@ -2637,6 +2747,21 @@ document.querySelectorAll('[data-settings-tab]').forEach((tab) => {
   });
 });
 $('themeBtn').addEventListener('click', () => applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
+$('watchLayout').addEventListener('change', () => { persistUiState(); renderProducts(true); });
+$('watchSavedView').addEventListener('change', event => applySavedView(event.target.value));
+$('browseSavedView').addEventListener('change', event => applySavedView(event.target.value));
+$('closeOwnerDialog').addEventListener('click', () => $('ownerDialog').close());
+$('ownerDialog').addEventListener('close', () => { if ($('ownerDialog').open) return; app.viewDraft = null; app.alertExplanationRequest = null; if (app.ownerDialogFocus?.isConnected && !app.ownerDialogFocus.closest('[inert]')) app.ownerDialogFocus.focus({preventScroll:true}); else (document.querySelector('[role="dialog"]:not(.hidden) button') || $('tabWatchlist')).focus({preventScroll:true}); });
+$('ownerDialog').addEventListener('submit', event => { if (event.target.id === 'savedViewForm') { event.preventDefault(); saveOwnerView(event.target); } });
+document.addEventListener('click', event => {
+  const save = event.target.closest('[data-save-view]'); if (save) showViewEditor(save.dataset.saveView);
+  const manage = event.target.closest('[data-manage-views]'); if (manage) showViewManager(manage.dataset.manageViews);
+  const edit = event.target.closest('[data-view-edit]'); if (edit) { const view = app.savedViews.find(view => view.id === edit.dataset.viewEdit); if (view) showViewEditor(view.scope, view.id); }
+  const remove = event.target.closest('[data-view-delete]'); if (remove) deleteOwnerView(remove.dataset.viewDelete, Number(remove.dataset.viewRevision));
+  if (event.target.closest('[data-owner-close]')) $('ownerDialog').close();
+  const explanation = event.target.closest('[data-alert-explain]');
+  if (explanation) showAlertExplanation(explanation.dataset.alertExplain, explanation.dataset.alertId);
+});
 $('toTop').addEventListener('click', scrollToTop);
 window.addEventListener('scroll', updateToTopVisibility, { passive:true });
 window.addEventListener('resize', updateToTopVisibility);
@@ -2721,6 +2846,7 @@ $('productDialogBackdrop').addEventListener('click', closeProductDialog);
 $('closeActivityDialog').addEventListener('click', closeActivityDialog);
 $('activityDialogBackdrop').addEventListener('click', closeActivityDialog);
 document.addEventListener('keydown', (event) => {
+  if ($('ownerDialog').open) return;
   if (event.key === 'Tab') {
     const dialog = [$('setupWizard'), $('collectionDialog'), $('watchImportDialog'), $('activityDialog'), $('productDialog')].find((item) => item && !item.classList.contains('hidden'));
     if (dialog) {
