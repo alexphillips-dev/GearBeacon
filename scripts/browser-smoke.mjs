@@ -201,8 +201,8 @@ try {
   assert(zoomReflow.viewport === 640 && zoomReflow.overflow, `Dashboard does not reflow at a 200% equivalent viewport: ${JSON.stringify(zoomReflow)}`);
   await cdp.send('Emulation.clearDeviceMetricsOverride');
 
-  const watchImportPlacement = await evaluate("(() => { const heading=document.querySelector('#watchlist .section-heading').getBoundingClientRect(); const button=document.getElementById('openWatchImport').getBoundingClientRect(); return { headingRight:heading.right, buttonRight:button.right, buttonLeft:button.left, headingMid:heading.left + heading.width / 2, visible:button.width > 0 && button.height > 0 }; })()");
-  assert(watchImportPlacement.visible && Math.abs(watchImportPlacement.headingRight - watchImportPlacement.buttonRight) <= 3 && watchImportPlacement.buttonLeft > watchImportPlacement.headingMid, `Watchlist import action is not positioned at the top right: ${JSON.stringify(watchImportPlacement)}`);
+  const watchManagePlacement = await evaluate("(() => { const heading=document.querySelector('#watchlist .section-heading').getBoundingClientRect(); const button=document.getElementById('watchManageToggle').getBoundingClientRect(); return { headingRight:heading.right, buttonRight:button.right, buttonLeft:button.left, headingMid:heading.left + heading.width / 2, visible:button.width > 0 && button.height > 0 }; })()");
+  assert(watchManagePlacement.visible && Math.abs(watchManagePlacement.headingRight - watchManagePlacement.buttonRight) <= 3 && watchManagePlacement.buttonLeft > watchManagePlacement.headingMid, `Watchlist Manage control is not positioned at the top right: ${JSON.stringify(watchManagePlacement)}`);
 
   const navigationTheme = await evaluate("document.documentElement.dataset.theme");
   const documentNode = await cdp.send('DOM.getDocument');
@@ -343,6 +343,13 @@ try {
         assert(await evaluate("document.getElementById('browseFilterPanel').open && document.querySelector('#browseFilters input').getBoundingClientRect().height > 0"), 'Mobile Browse filters did not open');
       }
       await assertAccessible(`Browse ${theme} at ${width}px`);
+      await evaluate("document.getElementById('browseViewToggle').click()");
+      const browseViews=await evaluate("(() => { const panel=document.getElementById('browseViewOptions'),rect=panel.getBoundingClientRect(),style=getComputedStyle(document.getElementById('browseSavedView')); return {open:!document.getElementById('browseViewOptions').classList.contains('hidden'),left:rect.left,right:rect.right,viewport:window.innerWidth,scroll:panel.scrollWidth,client:panel.clientWidth,radius:style.borderRadius,height:style.minHeight}; })()");
+      assert(browseViews.open && browseViews.left>=0 && browseViews.right<=browseViews.viewport+1 && browseViews.scroll<=browseViews.client+1 && browseViews.radius==='9px' && parseFloat(browseViews.height)>=42, `Browse views were clipped or retained unstyled dropdowns: ${JSON.stringify(browseViews)}`);
+      await assertAccessible(`Browse view options ${theme} ${width}px`);
+      await evaluate("document.getElementById('search').click()");
+      assert(await evaluate("document.getElementById('browseViewOptions').classList.contains('hidden')"), 'Outside click did not close Browse views');
+
       if (screenshotRoot) {
         if (width === 390) await evaluate("document.querySelector('#browseFilterPanel summary').click()");
         await evaluate("document.getElementById('browse').scrollIntoView()");
@@ -382,6 +389,48 @@ try {
 
   await evaluate("document.querySelector('[data-tab=\"watchlist\"]').click()");
   await waitForBrowser("document.querySelectorAll('#watchGrid .watch-card').length === 2", 'Watchlist did not render watched products');
+  // Secondary controls use themed, keyboard-accessible panels instead of extra rows.
+  assert(await evaluate("document.getElementById('watchManageMenu').classList.contains('hidden') && document.getElementById('watchViewOptions').classList.contains('hidden') && document.querySelectorAll('.watch-toolbar > select').length===3 && !document.querySelector('.collection-toolbar')"), 'Watchlist secondary controls were not consolidated');
+  for (const theme of ['dark','light']) {
+    await evaluate(`applyTheme('${theme}')`); await delay(250);
+    for (const width of [1280,390,640]) {
+      await cdp.send('Emulation.setDeviceMetricsOverride',{width,height:900,screenWidth:width===640?1280:width,screenHeight:900,deviceScaleFactor:width===640?2:1,mobile:false});
+      await evaluate("document.getElementById('watchlist').scrollIntoView(); document.getElementById('watchViewToggle').focus()");
+      const toolbarFocus=await evaluate("({active:document.activeElement.outerHTML,inert:document.querySelector('main').inert,open:!document.getElementById('watchViewOptions').classList.contains('hidden')})");
+      await cdp.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,text:'\r'});
+      await cdp.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
+      assert(await evaluate("!document.getElementById('watchViewOptions').classList.contains('hidden')"), `Keyboard activation did not open View options (${width}px): ${JSON.stringify(toolbarFocus)}; after: ${await evaluate('document.activeElement.outerHTML')}`);
+      assert(await evaluate("(() => { const base=getComputedStyle(document.getElementById('watchStatus')); return ['watchLayout','watchSavedView','watchCategory'].every(id=>{const style=getComputedStyle(document.getElementById(id));return ['backgroundColor','color','borderRadius','padding','fontSize','minHeight'].every(key=>style[key]===base[key]);}); })()"), 'Saved view or layout selects do not match the existing dropdown styling');
+      assert(await evaluate("(() => { const panel=document.getElementById('watchViewOptions'), rect=panel.getBoundingClientRect(); return rect.left>=0 && rect.right<=window.innerWidth+1 && panel.scrollWidth<=panel.clientWidth+1 && document.documentElement.scrollWidth<=window.innerWidth+1; })()"), `View options overflow at ${width}px in ${theme}`);
+      await assertAccessible(`Watchlist view options ${theme} ${width}px`);
+      if (screenshotRoot) {
+        const capture=await cdp.send('Page.captureScreenshot',{format:'png'});
+        await writeFile(join(screenshotRoot,`watch-options-${theme}-${width}.png`),Buffer.from(capture.data,'base64'));
+      }
+      await cdp.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
+      await cdp.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
+      assert(await evaluate("document.activeElement.id==='watchCategory'"), 'Tab did not enter View options');
+      await evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
+      assert(await evaluate("document.getElementById('watchViewOptions').classList.contains('hidden') && document.activeElement.matches('#watchViewToggle')"), 'Escape did not close View options and restore focus');
+      await evaluate("document.getElementById('watchManageToggle').click()");
+      assert(await evaluate("!document.getElementById('watchManageMenu').classList.contains('hidden') && document.getElementById('watchViewOptions').classList.contains('hidden')"), 'Manage actions were not discoverable');
+      await assertAccessible(`Manage watchlist ${theme} ${width}px`);
+      await evaluate("document.getElementById('watchSearch').focus()");
+      assert(await evaluate("document.getElementById('watchManageMenu').classList.contains('hidden')"), 'Leaving the panel did not dismiss it');
+      if (screenshotRoot) {
+        await evaluate("document.getElementById('watchlist').scrollIntoView()");
+        const capture=await cdp.send('Page.captureScreenshot',{format:'png'});
+        await writeFile(join(screenshotRoot,`watch-toolbar-${theme}-${width}.png`),Buffer.from(capture.data,'base64'));
+      }
+    }
+  }
+  await evaluate("document.getElementById('watchViewToggle').click(); const category=document.getElementById('watchCategory'); category.value=category.options[1].value; category.dispatchEvent(new Event('change')); document.getElementById('watchSearch').focus()");
+  assert(await evaluate("document.getElementById('watchViewOptions').classList.contains('hidden') && document.getElementById('watchViewContext').textContent.includes(document.getElementById('watchCategory').value) && !document.getElementById('watchViewContext').classList.contains('hidden')"), 'A hidden category filter was not explained outside View options');
+  await evaluate("document.getElementById('resetWatchFilters').click(); document.getElementById('watchManageToggle').click(); document.getElementById('selectVisibleWatches').click()");
+  assert(await evaluate("document.getElementById('watchManageMenu').classList.contains('hidden') && !document.getElementById('bulkActions').classList.contains('hidden') && app.selectedWatch.size===2"), 'Manage > Select visible watches did not reveal bulk actions');
+  await evaluate("document.getElementById('bulkClear').click()");
+  await cdp.send('Emulation.clearDeviceMetricsOverride');
+
   await evaluate(`(() => { const input=document.getElementById('watchSearch'); input.value='no watched product'; input.dispatchEvent(new Event('input',{bubbles:true})); })()`);
   await waitForBrowser("!document.getElementById('watchEmpty').classList.contains('hidden') && !document.getElementById('resetWatchEmpty').classList.contains('hidden')", 'Filtered Watchlist empty state did not offer a reset action');
   await evaluate("document.getElementById('resetWatchEmpty').click()");
@@ -580,7 +629,7 @@ try {
   await waitForBrowser("app.collections.some((item) => item.name === 'Camera project')", 'Collection creation failed');
   await assertAccessible('Collection manager');
   await evaluate("document.getElementById('closeCollectionManager').click()");
-  assert(await evaluate("document.activeElement.id === 'openCollectionManager' && !document.querySelector('main').inert"), 'Collection manager did not restore focus or release the page');
+  assert(await evaluate("document.activeElement.matches('#watchManageToggle') && !document.querySelector('main').inert"), 'Collection manager did not restore focus or release the page');
   await evaluate("activateTab('browse'); resetBrowseFilters(); document.getElementById('tabBrowse').focus(); openProductDialog('uvc-g5-ptz')");
   await waitForBrowser("document.querySelector('[data-variant-selector]')?.options.length === 3", 'Variant choices did not render');
   await evaluate("(() => { const picker=document.querySelector('[data-variant-selector]'); picker.value='uvc-g5-ptz::mock-black'; picker.dispatchEvent(new Event('change',{bubbles:true})); })()");
@@ -671,7 +720,7 @@ try {
   await evaluate("document.getElementById('openCollectionManager').focus(); document.getElementById('openCollectionManager').click(); document.querySelector('[data-edit-collection]').click(); document.getElementById('askDeleteCollection').click(); document.getElementById('confirmDeleteCollection').click()");
   await waitForBrowser("app.collections.length === 0 && !app.collectionBusy", 'Collection deletion failed');
   assert(await evaluate("app.products.some((item) => item.slug === 'uvc-g5-ptz::mock-black' && item.watched)"), 'Collection deletion removed its watch');
-  assert(await evaluate("document.getElementById('collectionDialog').classList.contains('hidden') && !document.querySelector('main').inert && !document.getElementById('toTop').inert && !document.body.classList.contains('dialog-open') && document.activeElement.id === 'openCollectionManager'"), 'Deleting the last collection reopened its empty manager or failed to restore page focus');
+  assert(await evaluate("document.getElementById('collectionDialog').classList.contains('hidden') && !document.querySelector('main').inert && !document.getElementById('toTop').inert && !document.body.classList.contains('dialog-open') && document.activeElement.matches('#watchManageToggle')"), 'Deleting the last collection reopened its empty manager or failed to restore page focus');
 
   // Collection management keeps name/membership edits together and preserves drafts until saved.
   const collectionTestSlugs = await evaluate("app.products.filter((product) => product.watched).slice(0,2).map((product) => product.slug)");
@@ -762,7 +811,7 @@ try {
   await evaluate("document.getElementById('askDeleteCollection').click(); document.getElementById('confirmDeleteCollection').click()");
   await waitForBrowser("app.collections.length === 1 && !app.collectionBusy", 'Confirmed collection deletion failed');
   assert(await evaluate(`${JSON.stringify(collectionTestSlugs)}.every((slug) => app.products.some((product) => product.slug === slug && product.watched))`), 'Collection deletion removed watched products');
-  assert(await evaluate(`document.getElementById('collectionDialog').classList.contains('hidden') && !document.querySelector('main').inert && document.activeElement.id === 'openCollectionManager' && !document.querySelector('[data-collection-card="${cameraCollection}"]')`), 'Deleting from a collection card reopened the manager or left focus on the removed card');
+  assert(await evaluate(`document.getElementById('collectionDialog').classList.contains('hidden') && !document.querySelector('main').inert && document.activeElement.matches('#watchManageToggle') && !document.querySelector('[data-collection-card="${cameraCollection}"]')`), 'Deleting from a collection card reopened the manager or left focus on the removed card');
   await evaluate("app.selectedWatch.clear(); renderProducts(true)");
   // Collections share the product grid and keep large checklists out of the card.
   await evaluate(`(async () => {
@@ -824,7 +873,7 @@ try {
   await evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
   assert(await evaluate("document.activeElement.dataset.collectionAlerts === window.previewCollectionId && !document.getElementById('collectionOverview').classList.contains('hidden')"), 'Closing alerts did not return to Manage collections');
   await evaluate("document.getElementById('closeCollectionManager').click()");
-  assert(await evaluate("document.activeElement.id === 'openCollectionManager' && !document.querySelector('main').inert"), 'Closing Manage collections did not restore page focus');
+  assert(await evaluate("document.activeElement.matches('#watchManageToggle') && !document.querySelector('main').inert"), 'Closing Manage collections did not restore page focus');
   await evaluate("document.querySelector('[data-collection-card=\"'+window.previewCollectionId+'\"] [data-edit-collection]').click()");
   assert(await evaluate("app.collectionDraft.id === window.previewCollectionId && !document.getElementById('collectionForm').classList.contains('hidden')"), 'Edit did not open the selected collection from its card');
   await evaluate("document.getElementById('collectionName').value='Unsaved preview name'; document.querySelector('[data-collection-watch=\"'+window.previewSlugs[0]+'\"]').click(); document.getElementById('collectionWatchSearch').value=window.previewSlugs[0]; document.getElementById('collectionWatchSearch').dispatchEvent(new Event('input')); window.collectionEditorSnapshot=JSON.stringify([document.getElementById('collectionName').value,document.getElementById('collectionWatchSearch').value,[...app.collectionDraft.slugs]]); document.getElementById('editCollectionAlerts').click()");
@@ -984,7 +1033,7 @@ try {
   await assertAccessible('Save named Watchlist view');
   await evaluate("document.getElementById('savedViewName').value='Daily <view>'; document.getElementById('savedViewForm').requestSubmit()");
   await waitForBrowser("app.savedViews.some(view=>view.name==='Daily <view>') && !document.getElementById('ownerDialog').open", 'View did not save');
-  assert(await evaluate("document.activeElement.matches('[data-save-view=watchlist]')"), 'Saving did not restore focus');
+  assert(await evaluate("document.activeElement.matches('#watchViewToggle')"), 'Saving did not restore focus');
   const savedView = await evaluate("app.savedViews.find(view=>view.name==='Daily <view>').id");
   await evaluate(`document.getElementById('watchLayout').value='cards'; document.getElementById('watchLayout').dispatchEvent(new Event('change')); document.getElementById('watchSavedView').value='${savedView}'; document.getElementById('watchSavedView').dispatchEvent(new Event('change'))`);
   assert(await evaluate("document.getElementById('watchLayout').value==='compact' && document.getElementById('watchlistCards').classList.contains('compact-list')"), 'Applying a saved view did not restore its layout');

@@ -130,7 +130,25 @@ function renderSavedViews() {
     const filters = viewFilters(scope);
     const matches = view => Object.keys(view.filters).every(key => view.filters[key] === filters[key]);
     select.value = views.find(view => view.id === select.value && matches(view))?.id || views.find(matches)?.id || '';
+    const toggle = $(scope === 'watchlist' ? 'watchViewToggle' : 'browseViewToggle');
+    const selected = views.find(view => view.id === select.value);
+    toggle.title = selected ? `View options. Saved view: ${selected.name}` : 'View options';
   }
+  const labels = [];
+  const selected = app.savedViews.find(view => view.id === $('watchSavedView').value);
+  if (selected) labels.push(`View: ${selected.name}`);
+  if ($('watchCategory').value !== 'all') labels.push($('watchCategory').value);
+  if ($('watchLayout').value === 'compact') labels.push('Compact list');
+  const context = $('watchViewContext'); const description = labels.join(' · ');
+  if (context.textContent !== description) context.textContent = description;
+  context.classList.toggle('hidden', !description);
+}
+
+function toolbarToggle(panel) { return document.querySelector(`[data-toolbar-toggle="${panel.id}"]`); }
+function closeToolbarPanels(except = null) {
+  document.querySelectorAll('[data-toolbar-panel]:not(.hidden)').forEach(panel => {
+    if (panel !== except) { panel.classList.add('hidden'); toolbarToggle(panel).setAttribute('aria-expanded','false'); }
+  });
 }
 function applySavedView(id) {
   const view = app.savedViews.find(view => view.id === id);
@@ -704,7 +722,6 @@ function renderBulkActions() {
 }
 function renderProducts(force = false) {
   $('watchlistCards').classList.toggle('compact-list', $('watchLayout').value === 'compact');
-  renderSavedViews();
   const allWatched = app.products.filter((p) => p.watched);
   renderWatchFilters(allWatched); renderWatchOverview();
   if (app.watchQuickFilter==='all' && $('groupCollectedWatches').checked && $('watchCollection').value === 'all') {
@@ -782,6 +799,7 @@ function renderProducts(force = false) {
   $('browseTitle').textContent = app.browseCategory === 'All' ? 'All products' : app.browseCategory;
   $('browseCount').textContent = filtered.length > visible.length ? `Showing ${visible.length} of ${filtered.length} products` : `${filtered.length} product${filtered.length === 1 ? '' : 's'}`;
   $('browseLoadMore').classList.toggle('hidden', visible.length >= filtered.length);
+  renderSavedViews();
 }
 
 function setWatchImportError(message = '') {
@@ -2135,7 +2153,7 @@ function closeCollectionManager() {
   const returnProduct=app.addWatchReturn; app.addWatchReturn=null;
   const original = app.collectionLastFocus;
   const replacement = (app.collectionLastCardSelector && document.querySelector(app.collectionLastCardSelector)) || (app.collectionLastAddSelector && document.querySelector(app.collectionLastAddSelector));
-  (original?.isConnected && original.offsetParent !== null ? original : replacement || $('openCollectionManager')).focus();
+  (original?.isConnected && original.offsetParent !== null ? original : replacement || $('watchManageToggle')).focus();
   if (returnProduct) openProductDialog(returnProduct);
 }
 
@@ -2747,6 +2765,20 @@ document.querySelectorAll('[data-settings-tab]').forEach((tab) => {
   });
 });
 $('themeBtn').addEventListener('click', () => applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
+// Secondary controls remain in the page flow. Tab can leave, Escape closes,
+// and dialog actions return focus to their visible toggle.
+document.addEventListener('click', event => {
+  const toggle = event.target.closest('[data-toolbar-toggle]');
+  if (toggle) {
+    toggle.focus({preventScroll:true});
+    const panel = document.getElementById(toggle.dataset.toolbarToggle); const opening = panel.classList.contains('hidden');
+    closeToolbarPanels(); panel.classList.toggle('hidden',!opening); toggle.setAttribute('aria-expanded',String(opening)); return;
+  }
+  const panel = event.target.closest('[data-toolbar-panel]');
+  closeToolbarPanels(panel);
+  if (panel && event.target.closest('button')) { closeToolbarPanels(); toolbarToggle(panel).focus({preventScroll:true}); }
+}, true);
+document.addEventListener('focusin', event => { const toggle=event.target.closest('[data-toolbar-toggle]'); closeToolbarPanels(toggle ? document.getElementById(toggle.dataset.toolbarToggle) : event.target.closest('[data-toolbar-panel]')); });
 $('watchLayout').addEventListener('change', () => { persistUiState(); renderProducts(true); });
 $('watchSavedView').addEventListener('change', event => applySavedView(event.target.value));
 $('browseSavedView').addEventListener('change', event => applySavedView(event.target.value));
@@ -2847,6 +2879,10 @@ $('closeActivityDialog').addEventListener('click', closeActivityDialog);
 $('activityDialogBackdrop').addEventListener('click', closeActivityDialog);
 document.addEventListener('keydown', (event) => {
   if ($('ownerDialog').open) return;
+  if (event.key === 'Escape') {
+    const panel = document.querySelector('[data-toolbar-panel]:not(.hidden)');
+    if (panel) { event.preventDefault(); closeToolbarPanels(); toolbarToggle(panel).focus({preventScroll:true}); return; }
+  }
   if (event.key === 'Tab') {
     const dialog = [$('setupWizard'), $('collectionDialog'), $('watchImportDialog'), $('activityDialog'), $('productDialog')].find((item) => item && !item.classList.contains('hidden'));
     if (dialog) {
