@@ -1,5 +1,12 @@
 ![GearBeacon — Track Ubiquiti gear and get notified when it is back in stock](.github/assets/banner.png)
 
+[![Latest release](https://img.shields.io/github/v/release/alexphillips-dev/GearBeacon?label=release&color=0088ff)](https://github.com/alexphillips-dev/GearBeacon/releases/latest)
+[![CI status on main](https://img.shields.io/github/actions/workflow/status/alexphillips-dev/GearBeacon/ci.yml?branch=main&label=CI%20%28main%29&logo=githubactions&logoColor=white)](https://github.com/alexphillips-dev/GearBeacon/actions/workflows/ci.yml?query=branch%3Amain)
+[![Apache 2.0 license](https://img.shields.io/github/license/alexphillips-dev/GearBeacon?color=0088ff)](LICENSE)
+[![Platforms: Windows, macOS, Linux](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-555555)](#choose-an-installation)
+[![Docker: GHCR](https://img.shields.io/badge/Docker-GHCR-2496ed?logo=docker&logoColor=white)](https://github.com/alexphillips-dev/GearBeacon/wiki/Docker-and-NAS)
+[![Documentation: Wiki](https://img.shields.io/badge/docs-Wiki-0088ff)](https://github.com/alexphillips-dev/GearBeacon/wiki)
+
 # GearBeacon
 
 **Know the second it's back.**

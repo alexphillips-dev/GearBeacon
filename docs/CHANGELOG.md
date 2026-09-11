@@ -6,6 +6,7 @@ The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. 
 
 ### Unreleased development updates
 
+- Added a compact README badge row beneath the banner for the latest release, main-branch CI status, Apache 2.0 license, supported desktop platforms, Docker image hosting, and Wiki documentation.
 - Added an opt-in **Only notify when this collection is within budget** condition under the existing collection Alerts button. Readiness combines recorded spending, remaining quantities, and confirmed qualifying variant prices; unknown costs and pending prices block qualification. Cards, details, and alert explanations show the blocker. Rule/budget edits establish a baseline and cancel obsolete pending deliveries; existing item-alert overrides remain intact.
 - Added backup-protected schema-v12 migration and format-v8 recovery exports for the budget condition. Existing collections and older recovery files default it off; quantities, payments, alert settings, and readiness state survive upgrades and recovery.
 - Made background refreshes reuse unchanged product, collection, and Activity rows, retain dropdown options, coalesce overlapping refresh requests, and reject stale responses after edits or region changes. Unsaved notification preferences remain intact. Hidden tabs defer catalog rendering and retain the lightweight browser-alert check when permission is enabled; server monitoring and notification delivery continue independently.
