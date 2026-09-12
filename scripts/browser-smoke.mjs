@@ -125,6 +125,22 @@ function assert(value, message) {
   if (!value) throw new Error(message);
 }
 
+async function assertOwnerDialogLayout(label) {
+  const layout = await evaluate(`(() => {
+    const dialog=document.getElementById('ownerDialog'), body=document.getElementById('ownerDialogBody');
+    const bounds=dialog.getBoundingClientRect(), header=dialog.querySelector('.product-dialog-head').getBoundingClientRect();
+    const title=document.getElementById('ownerDialogTitle').getBoundingClientRect(), close=document.getElementById('closeOwnerDialog').getBoundingClientRect();
+    const content=body.firstElementChild.getBoundingClientRect(), bodyBounds=body.getBoundingClientRect();
+    return {overflow:dialog.scrollWidth>dialog.clientWidth+1 || body.scrollWidth>body.clientWidth+1,
+      contained:bounds.left>=10 && bounds.right<=innerWidth-10 && bounds.top>=10 && bounds.bottom<=innerHeight-10,
+      contentInset:content.left-bounds.left,contentRightInset:bounds.right-content.right,contentTopInset:content.top-bodyBounds.top,
+      headerInset:title.left-bounds.left,closeInset:bounds.right-close.right,titleGap:close.left-title.right,
+      headerVisible:header.top>=bounds.top-1 && close.bottom<=bounds.bottom,
+      emptyResultHeight:document.getElementById('ownerDialogResult').getBoundingClientRect().height};
+  })()`);
+  assert(!layout.overflow && layout.contained && layout.contentInset>=17 && layout.contentRightInset>=17 && layout.contentTopInset>=18 && layout.headerInset>=17 && layout.closeInset>=17 && layout.titleGap>=10 && layout.headerVisible && layout.emptyResultHeight===0, `${label} has cramped or overflowing dialog content: ${JSON.stringify(layout)}`);
+}
+
 async function stopProcess(child) {
   if (!child || child.exitCode !== null || child.signalCode !== null) return;
   child.kill('SIGINT');
@@ -1140,6 +1156,7 @@ try {
   // Named views are persisted by the server; layout and dialogs remain accessible.
   await evaluate("resetWatchFilters(); document.getElementById('watchLayout').value='compact'; document.getElementById('watchLayout').dispatchEvent(new Event('change')); document.querySelector('[data-save-view=watchlist]').focus(); document.querySelector('[data-save-view=watchlist]').click()");
   assert(await evaluate("document.getElementById('ownerDialog').open && document.activeElement.id==='savedViewName'"), 'Saved view dialog did not open with name focus');
+  await assertOwnerDialogLayout('Saved view');
   await assertAccessible('Save named Watchlist view');
   await evaluate("document.getElementById('savedViewName').value='Daily <view>'; document.getElementById('savedViewForm').requestSubmit()");
   await waitForBrowser("app.savedViews.some(view=>view.name==='Daily <view>') && !document.getElementById('ownerDialog').open", 'View did not save');
@@ -1170,14 +1187,32 @@ try {
       }
     }
     await assertAccessible(`Compact Watchlist ${theme}`);
-    await evaluate("document.querySelector('[data-alert-explain=watch]').focus(); document.querySelector('[data-alert-explain=watch]').click()");
+    assert(await evaluate("[...document.querySelectorAll('[data-alert-explain]')].every(button=>button.textContent==='?' && button.getAttribute('aria-label').startsWith('Explain alerts for ') && button.getAttribute('aria-haspopup')==='dialog' && button.getAttribute('title')==='Explain alerts' && (!button.getClientRects().length || button.getBoundingClientRect().width===28 && button.getBoundingClientRect().height===28))"), 'Alert help controls lost their compact question mark or accessible explanation');
+    await evaluate("document.querySelector('[data-alert-explain=watch]').focus()");
+    await cdp.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,text:'\r'});
+    await cdp.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
     await waitForBrowser("document.querySelector('.alert-explanation')", 'Alert explanation did not load');
     assert(await evaluate("document.getElementById('ownerDialogBody').textContent.includes('Actual notification jobs') && document.getElementById('ownerDialogBody').textContent.includes('Saving a rule does not create a notification job')"), 'Explanation confused enabled rules with deliveries');
-    await assertAccessible(`Alert explanation ${theme}`);
+    for (const width of [1280,390,640]) {
+      await cdp.send('Emulation.setDeviceMetricsOverride',{width,height:width===640?422:844,deviceScaleFactor:width===640?2:1,mobile:false});
+      await evaluate("document.getElementById('ownerDialog').scrollTop=0");
+      await assertOwnerDialogLayout(`Alert explanation ${theme} ${width}px`);
+      await assertAccessible(`Alert explanation ${theme} ${width}px`);
+      if (screenshotRoot && width!==640) {
+        const capture=await cdp.send('Page.captureScreenshot',{format:'png'});
+        await writeFile(join(screenshotRoot,`alert-explanation-${theme}-${width}.png`),Buffer.from(capture.data,'base64'));
+      }
+      await evaluate("(() => { window.originalExplanationTitle=document.getElementById('ownerDialogTitle').textContent; document.getElementById('ownerDialogTitle').textContent='Alerts · Example doorbell kit · '+ 'ExactVariantIdentifier'.repeat(6); const reason=document.createElement('li'); reason.id='longExplanationFixture'; reason.textContent='Variant: '+ 'LongVariantIdentifier'.repeat(12); document.querySelector('.alert-explanation ul').append(reason); })()");
+      await assertOwnerDialogLayout(`Long alert explanation ${theme} ${width}px`);
+      await evaluate("document.getElementById('ownerDialog').scrollTop=document.getElementById('ownerDialog').scrollHeight");
+      await assertOwnerDialogLayout(`Scrolled alert explanation ${theme} ${width}px`);
+      await evaluate("document.getElementById('ownerDialogTitle').textContent=window.originalExplanationTitle; document.getElementById('longExplanationFixture').remove(); document.getElementById('ownerDialog').scrollTop=0");
+    }
     await cdp.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
     await cdp.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
     await waitForBrowser("!document.getElementById('ownerDialog').open", 'Escape did not dismiss alert explanation');
     assert(await evaluate("document.activeElement.matches('[data-alert-explain=watch]')"), 'Alert explanation did not restore focus');
+    await cdp.send('Emulation.clearDeviceMetricsOverride');
   }
   await evaluate("document.querySelector('#watchGrid [data-product-detail]').click()");
   await waitForBrowser("!document.getElementById('productDialog').classList.contains('hidden') && document.querySelector('#productRuleForm [data-alert-explain]')", 'Product alert rules did not open');

@@ -641,7 +641,7 @@ function alertDate(value) { return value ? new Date(value).toLocaleString() : 'N
 function alertSummaryMarkup(item, scope = 'watch') {
   const summary = item.alertSummary;
   if (!summary) return `<div class="rule-chips">${scope === 'watch' ? ruleSummary(item) : ''}</div>`;
-  return `<div class="alert-summary"><span>${escapeHtml(summary.label)}</span><button type="button" class="alert-why" data-alert-explain="${scope}" data-alert-id="${escapeHtml(scope === 'collections' ? item.id : item.slug)}" aria-label="Why these alerts for ${escapeHtml(item.name)}?">Why?</button></div>`;
+  return `<div class="alert-summary"><span>${escapeHtml(summary.label)}</span><button type="button" class="alert-why" data-alert-explain="${scope}" data-alert-id="${escapeHtml(scope === 'collections' ? item.id : item.slug)}" aria-label="Explain alerts for ${escapeHtml(item.name)}" title="Explain alerts" aria-haspopup="dialog" aria-controls="ownerDialog">?</button></div>`;
 }
 async function showAlertExplanation(scope, id) {
   const request = {};

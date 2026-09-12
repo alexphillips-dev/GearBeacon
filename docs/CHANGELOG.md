@@ -6,6 +6,8 @@ The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. 
 
 ### Unreleased development updates
 
+- Replaced the card and alert-rule “Why?” controls with compact question-mark buttons, descriptive accessible labels, and tooltips. Fixed the shared alert explanation dialog's cramped edges and horizontal scrollbar with padded content, a contained sticky header, and wrapping long names; empty result messages no longer leave a blank bar below the explanation.
+
 - Added current availability and check freshness, current watch/collection membership, exact variant identity, and event-price comparisons against the current target to individual Activity cards and details. A 30-day observed-low indicator requires sufficient retained history for that Store and exact item, ending at the event. Original event snapshots remain unchanged.
 - Activity delivery badges now name suppression reasons and successful channels. Added Today/Yesterday/date separators and totals for all matching events across pages, using the configured timezone for headings and calendar-date filters. Every event remains an individual 64-pixel card, with automatic arrivals and reading/focus preservation. See the [Activity guide](ACTIVITY.md).
 
