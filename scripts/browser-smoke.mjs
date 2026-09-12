@@ -1172,30 +1172,108 @@ try {
   }
   await cdp.send('Emulation.setDeviceMetricsOverride', { width:640,height:450,screenWidth:1280,screenHeight:900,deviceScaleFactor:2,mobile:false });
   assert(await evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), 'Activity page-size controls overflowed at 200% equivalent zoom');
-  // Background reads preserve the committed Activity page, including keyboard focus.
+  // Real arrivals appear through the one-second Activity timer, including on older pages.
   await evaluate("refreshActivity(2)");
-  await evaluate("window.heldActivityIds=app.activity.events.map(event=>event.id); document.querySelector('#activityList .event').focus(); window.heldActivityFocus=document.activeElement");
-  await evaluate(`(async () => {
-    const product=app.products.find(product=>!product.variantId && !product.comingSoon);
-    await api('/api/mock/product/'+encodeURIComponent(product.slug),{method:'POST',body:JSON.stringify({status:product.inStock ? 'SoldOut' : 'Available'})});
-    await api('/api/check',{method:'POST'}); await api('/api/check',{method:'POST'});
-    await refreshActivity(app.activity.page,{background:true});
+  await evaluate(`(() => {
+    window.heldActivityIds=app.activity.events.map(event=>event.id);
+    window.heldActivityFocus=document.querySelectorAll('#activityList .event')[6];
+    window.heldActivityFocus.scrollIntoView({block:'start'}); window.scrollBy(0,17);
+    window.heldActivityFocus.focus({preventScroll:true});
+    window.heldActivityTop=window.heldActivityFocus.getBoundingClientRect().top;
   })()`);
-  assert(await evaluate("app.activity.page===2 && JSON.stringify(app.activity.events.map(event=>event.id))===JSON.stringify(window.heldActivityIds) && document.activeElement===window.heldActivityFocus && !document.getElementById('activityNew').classList.contains('hidden')"), 'Incoming activity shifted the current page or lost focus');
+  await evaluate(`(async () => {
+    window.activityToggleSlug=app.products.find(product=>!product.variantId && !product.comingSoon).slug;
+    await api('/api/mock/toggle/'+encodeURIComponent(window.activityToggleSlug),{method:'POST'});
+    await api('/api/check',{method:'POST'}); await api('/api/check',{method:'POST'});
+  })()`);
+  await waitForBrowser("app.activity.arrivals?.length>0 && document.querySelector('#activityLiveList .event')", 'New Activity cards did not appear automatically within four seconds',40);
+  const arrivalPosition=await evaluate("({page:app.activity.page, sameIds:JSON.stringify(app.activity.events.map(event=>event.id))===JSON.stringify(window.heldActivityIds), sameFocus:document.activeElement===window.heldActivityFocus, focusedId:document.activeElement.dataset.activityEvent, heldId:window.heldActivityFocus.dataset.activityEvent, connected:window.heldActivityFocus.isConnected, top:window.heldActivityFocus.getBoundingClientRect().top, expectedTop:window.heldActivityTop, scroll:window.scrollY})");
+  assert(arrivalPosition.page===2 && arrivalPosition.sameIds && arrivalPosition.sameFocus && Math.abs(arrivalPosition.top-arrivalPosition.expectedTop)<2, `Automatic arrivals moved the card being read, replaced the older page, or lost keyboard focus: ${JSON.stringify(arrivalPosition)}`);
+  assert(await evaluate("!document.getElementById('activityNew') && !document.getElementById('activityLiveHeading').classList.contains('hidden') && document.getElementById('activityEarlierHeading').textContent.includes('Page 2')"), 'Live arrivals require a click or are not distinguished from the older page');
   for (const theme of ['dark','light']) {
-    await evaluate(`applyTheme(${JSON.stringify(theme)})`); await delay(250);
+    await evaluate(`applyTheme(${JSON.stringify(theme)}); window.scrollTo(0,0)`); await delay(250);
     await cdp.send('Emulation.setDeviceMetricsOverride',{width:390,height:844,screenWidth:390,screenHeight:844,deviceScaleFactor:1,mobile:false});
-    assert(await evaluate("document.documentElement.scrollWidth<=innerWidth+1 && Math.round(document.querySelector('#activityList .event').getBoundingClientRect().height)===64"), 'New Activity notice changed row height or overflowed');
-    await assertAccessible(`New Activity notice ${theme}`);
+    assert(await evaluate("document.documentElement.scrollWidth<=innerWidth+1 && [...document.querySelectorAll('#activityFeed .event')].every(row=>Math.round(row.getBoundingClientRect().height)===64)"), 'Live Activity changed row height or overflowed');
+    await assertAccessible(`Live Activity ${theme}`);
     if (screenshotRoot) {
+      await evaluate("document.getElementById('activityResultCount').scrollIntoView({block:'start'}); window.scrollBy(0,-12)");
       const capture=await cdp.send('Page.captureScreenshot',{format:'png'});
-      await writeFile(join(screenshotRoot,`activity-new-${theme}.png`),Buffer.from(capture.data,'base64'));
+      await writeFile(join(screenshotRoot,`activity-live-${theme}.png`),Buffer.from(capture.data,'base64'));
     }
   }
   await cdp.send('Emulation.setDeviceMetricsOverride',{width:640,height:450,screenWidth:1280,screenHeight:900,deviceScaleFactor:2,mobile:false});
-  assert(await evaluate("document.documentElement.scrollWidth<=innerWidth+1"), 'New Activity notice overflowed at 200% equivalent zoom');
-  await evaluate("document.getElementById('activityNew').focus(); document.activeElement.click()");
-  await waitForBrowser("app.activity.page===1 && document.getElementById('activityNew').classList.contains('hidden') && document.activeElement.matches('#activityList .event')", 'Loading new activity did not reset the boundary or restore focus');
+  assert(await evaluate("document.documentElement.scrollWidth<=innerWidth+1"), 'Live Activity overflowed at 200% equivalent zoom');
+  // Stay at the top to follow automatically; a later burst cannot evict a card being read.
+  await evaluate("refreshActivity(1,{reset:true})");
+  await evaluate("window.scrollTo(0,0); window.activityAtTopIds=app.activity.events.map(event=>event.id)");
+  await evaluate(`(async () => {
+    await api('/api/mock/toggle/'+encodeURIComponent(window.activityToggleSlug),{method:'POST'});
+    await api('/api/check',{method:'POST'}); await api('/api/check',{method:'POST'});
+  })()`);
+  await waitForBrowser("app.activity.arrivals?.length>0", 'First-page arrivals did not appear automatically',40);
+  assert(await evaluate("window.scrollY===0 && JSON.stringify(app.activity.events.map(event=>event.id))===JSON.stringify(window.activityAtTopIds) && document.getElementById('activityLiveHeading').classList.contains('hidden')"), 'Following the top moved the viewport or evicted the oldest page row');
+  await evaluate(`(() => {
+    window.heldActivityFocus=document.querySelector('#activityLiveList .event');
+    window.heldActivityFocus.scrollIntoView({block:'start'}); window.scrollBy(0,11);
+    window.heldActivityFocus.focus({preventScroll:true}); window.heldActivityTop=window.heldActivityFocus.getBoundingClientRect().top;
+  })()`);
+  await evaluate(`(async () => {
+    await api('/api/mock/fault',{method:'POST',body:JSON.stringify({catalogSize:150})});
+    await api('/api/check',{method:'POST'}); await api('/api/check',{method:'POST'});
+  })()`);
+  await waitForBrowser("app.activity.arrivals?.length>100 && !app.activityController", 'A burst spanning multiple Activity responses was not loaded automatically',50);
+  assert(await evaluate("document.activeElement===window.heldActivityFocus && Math.abs(window.heldActivityFocus.getBoundingClientRect().top-window.heldActivityTop)<2 && new Set([...document.querySelectorAll('#activityFeed .event')].map(row=>row.dataset.activityEvent)).size===app.activity.events.length+app.activity.arrivals.length"), 'A large burst lost the reading position, focus, or introduced duplicate cards');
+  assert(await evaluate("app.activity.arrivals.length===app.activity.newCount"), 'A large arrival burst was truncated');
+  // Refresh a visible delivery outcome, retaining the invoker if a dialog is open.
+  await evaluate("window.heldActivityFocus.click()");
+  await waitForBrowser("!document.getElementById('activityDialog').classList.contains('hidden') && !document.querySelector('#activityDialogBody .dialog-loading')", 'Live Activity details did not open');
+  await waitForBrowser("!app.activityController", 'Activity refresh did not settle before delivery fixture');
+  await evaluate(`(() => {
+    window.deliveryActivityFetch=window.fetch;
+    window.fetch=async (...args)=>{
+      const response=await window.deliveryActivityFetch(...args);
+      if (!String(args[0]).includes('/api/activity?') || !response.ok) return response;
+      const data=await response.json();
+      for (const event of data.events) if (event.id===window.heldActivityFocus.dataset.activityEvent) event.serverAlert={state:'retrying',label:'Retrying',detail:'Fixture delivery is retrying.',channels:['webhook']};
+      return new Response(JSON.stringify(data),{status:200,headers:{'Content-Type':'application/json'}});
+    };
+  })()`);
+  await waitForBrowser("window.heldActivityFocus.querySelector('.event-alert-label').textContent==='Retrying'", 'Live delivery outcome did not update on the retained card',40);
+  assert(await evaluate("window.heldActivityFocus.isConnected && document.activeElement.id==='closeActivityDialog' && !document.getElementById('activityDialog').classList.contains('hidden')"), 'Automatic Activity refresh replaced the invoker or stole dialog focus');
+  await evaluate("window.fetch=window.deliveryActivityFetch");
+  await evaluate("document.getElementById('closeActivityDialog').click()");
+  assert(await evaluate("document.activeElement.dataset.activityEvent===window.heldActivityFocus.dataset.activityEvent"), 'Closing live Activity details did not restore its invoker');
+  // Filter drafts do not change the live query until Apply; matching arrivals respect filters.
+  await evaluate("document.getElementById('activitySearch').value='unapplied Activity draft'; refreshActivity(app.activity.page,{background:true})");
+  assert(await evaluate("document.getElementById('activitySearch').value==='unapplied Activity draft' && app.activity.arrivals.length>100"), 'Live refresh applied or discarded a filter draft');
+  // Removing the snapshot boundary during recovery must not apply that draft.
+  await evaluate(`(async () => {
+    window.beforeRestoreActivitySnapshot=app.activity.snapshot;
+    const anchorId=app.activity.snapshot.slice(app.activity.snapshot.indexOf(':')+1);
+    const backup=await api('/api/data/export');
+    backup.regions.us.events=backup.regions.us.events.filter(event=>event.id!==anchorId);
+    await api('/api/data/import',{method:'POST',body:JSON.stringify({backup})});
+  })()`);
+  await waitForBrowser("app.activity.snapshot!==window.beforeRestoreActivitySnapshot && !app.activityController", 'Activity did not recover an expired reading boundary automatically',40);
+  assert(await evaluate("document.getElementById('activitySearch').value==='unapplied Activity draft' && app.activity.count>100 && app.activity.filters.search!=='unapplied Activity draft'"), 'Recovering the Activity boundary applied or lost an unsaved filter draft');
+  await evaluate("document.getElementById('activityFilters').requestSubmit()");
+  await waitForBrowser("app.activity.count===0 && app.activity.arrivals?.length===0", 'Applying filters did not reset the live reading boundary');
+  await evaluate("resetActivityFilters()");
+  await waitForBrowser("app.activity.loaded && app.activity.events.length===20 && app.activity.arrivals?.length===0", 'Resetting filters did not restore standard Activity pagination');
+  // A failed poll retains the last good cards and retries without a button.
+  await waitForBrowser("!app.activityController", 'Activity refresh did not settle');
+  await evaluate(`(() => {
+    window.activityOriginalFetch=window.fetch; window.activityFailureIds=app.activity.events.map(event=>event.id);
+    window.activityFailureAnchor=document.querySelectorAll('#activityList .event')[6];
+    window.activityFailureAnchor.scrollIntoView({block:'start'}); window.scrollBy(0,9);
+    window.activityFailureTop=window.activityFailureAnchor.getBoundingClientRect().top;
+    window.fetch=(...args)=>String(args[0]).includes('/api/activity?') ? Promise.reject(new TypeError('Fixture disconnected')) : window.activityOriginalFetch(...args);
+  })()`);
+  await waitForBrowser("document.getElementById('activityLiveStatus').textContent.includes('Reconnecting')", 'Activity did not expose a failed poll',40);
+  assert(await evaluate("JSON.stringify(app.activity.events.map(event=>event.id))===JSON.stringify(window.activityFailureIds) && Math.abs(window.activityFailureAnchor.getBoundingClientRect().top-window.activityFailureTop)<2"), 'A failed live poll cleared the last good Activity cards or moved the reading position');
+  await evaluate("window.fetch=window.activityOriginalFetch");
+  await waitForBrowser("document.getElementById('activityLiveStatus').textContent==='Live · Updates automatically'", 'Activity did not recover automatically',40);
+  assert(await evaluate("Math.abs(window.activityFailureAnchor.getBoundingClientRect().top-window.activityFailureTop)<2"), 'Reconnecting moved the reading position');
   // Slow refreshes coalesce; a saved edit cannot be overwritten by an older response.
   await evaluate(`(async () => {
     await refresh();
@@ -1222,6 +1300,7 @@ try {
     Object.defineProperty(document,'hidden',{configurable:true,value:true});
     await refresh({background:true});
   })()`);
+  await delay(1100);
   assert(await evaluate("window.hiddenRequests.every(path=>path.includes('/api/events?'))"), 'Hidden tab fetched the catalog or rendered settings');
   await evaluate("delete document.hidden; document.dispatchEvent(new Event('visibilitychange'))");
   await waitForBrowser("window.hiddenRequests.some(path=>path.includes('/api/products?')) && !refreshTask", 'Returning to the tab did not refresh the catalog');
@@ -1358,7 +1437,7 @@ try {
   assert(Object.values(freshnessResult).every(Boolean), `Freshness labels did not preserve observations or focus: ${JSON.stringify(freshnessResult)}`);
   await evaluate("closeProductDialog(); activateTab('browse'); renderProducts(true)");
   assert(await evaluate("document.querySelectorAll('#browseGrid .store-card').length>0 && [...document.querySelectorAll('#browseGrid .store-card')].every(card=>card.querySelector('[data-product-freshness]'))"), 'Browse cards lack freshness evidence');
-  console.log(`BROWSER SMOKE PASSED: ${process.platform} · setup/auth · WCAG axe scans · keyboard/focus/reduced-motion · persistent navigation/filters · resettable empty states · offline recovery · copy actions · unclipped navigation · dark/light · images · watch/rules/bulk/import · exact variants/combined preview/collections/purchased · stock insights/windows/collection readiness/budget alerts/deep-links · compact searchable activity/evidence/stable pages · serialized refresh/hidden tabs/drafts/large lists · email settings/preview/deep-link · backup/import · diagnostics/operations · responsive`);
+  console.log(`BROWSER SMOKE PASSED: ${process.platform} · setup/auth · WCAG axe scans · keyboard/focus/reduced-motion · persistent navigation/filters · resettable empty states · offline recovery · copy actions · unclipped navigation · dark/light · images · watch/rules/bulk/import · exact variants/combined preview/collections/purchased · stock insights/windows/collection readiness/budget alerts/deep-links · compact searchable activity/evidence/live arrivals/anchored scrolling/stable pages · serialized refresh/hidden tabs/drafts/large lists · email settings/preview/deep-link · backup/import · diagnostics/operations · responsive`);
 } catch (error) {
   if (serverOutput.length) process.stderr.write(`\nGearBeacon server output:\n${serverOutput.join('').slice(-12000)}\n`);
   throw error;

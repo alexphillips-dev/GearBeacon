@@ -466,6 +466,10 @@ button.ghost { background: transparent; }
 .connection-dot { width:7px; height:7px; flex:0 0 auto; border-radius:99px; background:var(--muted2); }
 .connection-dot.enabled { background:var(--good); box-shadow:0 0 0 4px color-mix(in srgb, var(--good) 9%, transparent); }
 
+/* Activity restores a visible card explicitly when arrivals are inserted above it. */
+html.activity-active { overflow-anchor:none; }
+.activity-feed { display:flex; flex-direction:column; gap:8px; }
+.activity-feed > h3 { margin:8px 0; font-size:14px; color:var(--muted); }
 .activity-list { display:flex; flex-direction:column; gap:8px; }
 .activity-filters { display:grid; grid-template-columns:minmax(180px,1.5fr) repeat(5,minmax(115px,1fr)) auto auto; align-items:end; gap:8px; margin-bottom:12px; padding:12px; border:1px solid var(--border); border-radius:12px; background:var(--panel); }
 .activity-filters button { min-height:40px; padding:8px 11px; }

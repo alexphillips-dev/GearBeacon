@@ -228,10 +228,15 @@
         <button id="clearActivityFilters" type="button">Reset filters</button>
       </form>
       <div class="activity-results-bar">
-        <div class="activity-results-summary"><strong id="activityResultCount" role="status">Loading activity…</strong><span id="activityRetention">Retained activity</span><button id="activityNew" type="button" class="hidden" aria-live="polite">New activity available</button></div>
+        <div class="activity-results-summary"><strong id="activityResultCount" role="status">Loading activity…</strong><span id="activityRetention">Retained activity</span><span id="activityLiveStatus" role="status">Live · Updates automatically</span></div>
         <label class="activity-page-size"><span>Entries per page</span><select id="activityPageSize"><option value="20">20</option><option value="50">50</option><option value="100">100</option></select></label>
       </div>
-      <div id="activityList" class="activity-list"></div>
+      <div id="activityFeed" class="activity-feed">
+        <h3 id="activityLiveHeading" class="hidden">Latest activity</h3>
+        <div id="activityLiveList" class="activity-list hidden"></div>
+        <h3 id="activityEarlierHeading" class="hidden">Earlier activity</h3>
+        <div id="activityList" class="activity-list"></div>
+      </div>
       <div id="activityEmpty" class="empty hidden"><h3>No stock changes detected yet</h3><p>The first check establishes a baseline. Changes appear here after that.</p><button id="resetActivityEmpty" class="hidden" type="button">Reset Activity filters</button></div>
       <div id="activityPagination" class="activity-pagination hidden"><button id="activityPrevious" type="button">Previous</button><span id="activityPage">Page 1</span><button id="activityNext" type="button">Next</button></div>
     </section>

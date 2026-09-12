@@ -3680,12 +3680,23 @@ function activityQuery(url, { exportLimit = null } = {}) {
     const sequence = Number(match[1]);
     if (sequence === 0 && !match[2] || db.prepare('SELECT id FROM events WHERE rowid=?').get(sequence)?.id === match[2]) {
       ceiling = sequence; anchor = match[2];
-    } else snapshotReset = true; // Retention or a restore removed the anchor. Let the reader choose to refresh.
+    } else snapshotReset = true; // Retention or a restore removed the reading boundary.
   }
   const snapshot = `${ceiling}:${anchor}`;
   const newCount = Number(db.prepare(`SELECT COUNT(*) AS count FROM events e WHERE ${filter.where} AND e.rowid>?`).get(...filter.parameters,ceiling)?.count || 0);
-  const where = `${filter.where} AND e.rowid<=?`;
-  const parameters = [...filter.parameters,ceiling];
+  // A bounded, separately paginated range supplies arrivals above the page being read.
+  // Validate both the row sequence and ID so a restore cannot silently reuse a cursor.
+  let floor = 0;
+  const after = exportLimit ? null : url.searchParams.get('after');
+  if (after !== null) {
+    const match = /^(\d+):(.{0,200})$/.exec(after);
+    if (!match || !Number.isSafeInteger(Number(match[1]))) throw new Error('Activity cursor is invalid.');
+    const sequence = Number(match[1]);
+    if (sequence <= ceiling && (sequence === 0 && !match[2] || db.prepare('SELECT id FROM events WHERE rowid=?').get(sequence)?.id === match[2])) floor = sequence;
+    else snapshotReset = true;
+  }
+  const where = `${filter.where} AND e.rowid<=?${after !== null ? ' AND e.rowid>?' : ''}`;
+  const parameters = [...filter.parameters,ceiling,...(after !== null ? [floor] : [])];
   const count = Number(db.prepare(`SELECT COUNT(*) AS count FROM events e WHERE ${where}`).get(...parameters)?.count || 0);
   const requestedLimit = Number(url.searchParams.get('limit') || 20);
   const requestedPage = Number(url.searchParams.get('page') || 1);

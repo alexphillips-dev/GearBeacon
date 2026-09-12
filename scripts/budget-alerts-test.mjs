@@ -178,6 +178,17 @@ try {
   assert.equal(held.count,first.count); assert.ok(held.newCount>0);
   const live=await request('/api/activity?scope=us&limit=10');
   assert.ok(live.count>first.count);
+  const arrivals=await request(`/api/activity?scope=us&limit=10&after=${anchor}`);
+  assert.equal(arrivals.count,held.newCount);
+  assert.ok(arrivals.events.every(event=>!first.events.some(previous=>previous.id===event.id)), 'Arrival range repeated historical entries.');
+  assert.equal((await request(`/api/activity?scope=ca&after=${anchor}`)).count,0, 'Arrival range ignored the Store filter.');
+  assert.equal((await request(`/api/activity?scope=us&search=no-such-fixture&after=${anchor}`)).count,0, 'Arrival range ignored search.');
+  assert.equal((await request(`/api/activity?scope=us&snapshot=${anchor}&after=${anchor}`)).count,0, 'Arrival lower boundary was not exclusive.');
+  assert.equal((await request('/api/activity?after=1:deleted-event')).snapshotReset,true, 'Removed arrival cursor was not detected.');
+  await request('/api/activity?after=invalid',undefined,'GET',400);
+  await request('/api/activity?after=9007199254740992:unsafe',undefined,'GET',400);
+  const exportWithCursor=await request(`/api/activity/export?scope=us&format=json&after=${anchor}`);
+  assert.equal(exportWithCursor.count,live.count, 'Export was restricted to arrivals.');
   const caPage=await request('/api/activity?scope=ca');
   const caHeld=await request(`/api/activity?scope=ca&snapshot=${anchor}`);
   assert.equal(caHeld.newCount,0,'Snapshot new-event count ignored the region filter.');
@@ -187,6 +198,19 @@ try {
   const exportedActivity=await request(`/api/activity/export?scope=us&format=json&snapshot=${anchor}`);
   assert.equal(exportedActivity.count,live.count,'Export was limited to the reading snapshot.');
   await request('/api/activity?snapshot=invalid',undefined,'GET',400);
+  await request('/api/mock/fault',{catalogSize:150}); await check(); await check();
+  const burst=await request(`/api/activity?scope=us&limit=100&after=${anchor}`);
+  assert.ok(burst.count>100 && burst.events.length===100,'Arrival batches exceeded the API limit or missed the burst.');
+  const burstBoundary=encodeURIComponent(burst.snapshot);
+  const burstIds=burst.events.map(event=>event.id);
+  await observe({status:'SoldOut'},2);
+  for (let page=2;page<=burst.pages;page++) {
+    const batch=await request(`/api/activity?scope=us&limit=100&after=${anchor}&snapshot=${burstBoundary}&page=${page}`);
+    assert.equal(batch.count,burst.count,'New arrivals changed the pinned batch range.');
+    burstIds.push(...batch.events.map(event=>event.id));
+  }
+  assert.equal(new Set(burstIds).size,burst.count,'Batched arrivals were missing or duplicated.');
+  assert.ok((await request(`/api/activity?scope=us&after=${burstBoundary}`)).count>0,'A subsequent arrival was lost beyond the upper boundary.');
   // Recreate exactly the shipped v11 layout in this disposable database.
   await stop();
   const migrationDb=new DatabaseSync(join(dataDir,'gearbeacon.mock.sqlite3'));
@@ -197,6 +221,6 @@ try {
   assert.equal((await collection(project)).budgetRequired,false);
   assert.equal((await collection(project)).items[0].paidTotal,740);
   assert.ok(query('SELECT COUNT(*) AS count FROM backup_log')[0].count>backupCount);
-  console.log('BUDGET ALERTS TEST PASSED: budget boundary, confirmed prices, quantities, paid/unknown costs, variants, baseline/queue/restart, recovery, migration, and stable Activity pages.');
+  console.log('BUDGET ALERTS TEST PASSED: budget boundary, confirmed prices, quantities, paid/unknown costs, variants, baseline/queue/restart, recovery, migration, and stable Activity pages with bounded live arrivals.');
 } catch (err) { console.error(output.slice(-4000)); throw err; }
 finally { await stop(); await new Promise(done=>webhook.close(done)); await rm(dataDir,{recursive:true,force:true}); }

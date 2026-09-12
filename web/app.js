@@ -349,7 +349,7 @@ async function api(path, options = {}) {
 }
 
 const renderedRows = new WeakMap();
-function reconcileList(container, values, attribute, render, force = false) {
+function reconcileList(container, values, attribute, render, force = false, update = null) {
   const existing = new Map([...container.children].map(node => [node.getAttribute(attribute),node]));
   const focused = container.contains(document.activeElement) ? document.activeElement : null;
   const focusedRow = focused?.closest(`[${attribute}]`);
@@ -364,8 +364,9 @@ function reconcileList(container, values, attribute, render, force = false) {
     if (!node || force || renderedRows.get(node) !== markup) {
       const template = document.createElement('template'); template.innerHTML = markup;
       const replacement = template.content.firstElementChild;
-      if (node) node.replaceWith(replacement);
-      node = replacement; renderedRows.set(node,markup);
+      if (node && update && !force) update(node,replacement);
+      else { if (node) node.replaceWith(replacement); node = replacement; }
+      renderedRows.set(node,markup);
     }
     if (container.children[index] !== node) container.insertBefore(node,container.children[index] || null);
     keep.add(node);
@@ -374,7 +375,7 @@ function reconcileList(container, values, attribute, render, force = false) {
   if (focused && document.activeElement !== focused) {
     const row = [...container.children].find(node => node.getAttribute(attribute) === focusKey);
     const target = focused.isConnected ? focused : focusIndex < 0 ? row : row?.querySelectorAll('button,a,input,select,[tabindex]')[focusIndex];
-    (target || (container.id === 'activityList' ? $('activityType') : $('watchSearch')))?.focus({preventScroll:true});
+    (target || (attribute === 'data-activity-event' ? $('activityType') : $('watchSearch')))?.focus({preventScroll:true});
   }
   if (window.scrollX !== scroll.left || window.scrollY !== scroll.top) window.scrollTo(scroll);
 }
@@ -1154,10 +1155,48 @@ async function saveProductRule(form) {
   } catch (err) { resultBox.classList.remove('hidden'); resultBox.textContent = err.message; button.disabled = false; button.textContent = 'Save alert rules'; }
 }
 
+function activityReadingPosition() {
+  if (window.scrollY <= 1 || app.activeTab !== 'activity') return [];
+  const rows = [...$('activityFeed').querySelectorAll('[data-activity-event]')];
+  const visible = rows.filter(row => { const rect = row.getBoundingClientRect(); return rect.bottom > 0 && rect.top < window.innerHeight; });
+  // Keep fallback anchors for a row removed by retention or an outcome filter.
+  return (visible.length ? visible : rows.slice(-1)).map(row => ({ id:row.dataset.activityEvent, top:row.getBoundingClientRect().top }));
+}
+
+function restoreActivityReadingPosition(positions) {
+  const rows = new Map([...$('activityFeed').querySelectorAll('[data-activity-event]')].map(row => [row.dataset.activityEvent,row]));
+  for (const position of positions) {
+    const row = rows.get(position.id);
+    if (!row) continue;
+    const delta = row.getBoundingClientRect().top - position.top;
+    if (Math.abs(delta) > 0.5) window.scrollBy({ top:delta, behavior:'instant' });
+    break;
+  }
+  const dialogEventId = app.activityDialogLastFocus?.dataset.activityEvent;
+  if (dialogEventId) app.activityDialogLastFocus = rows.get(dialogEventId) || $('activityType');
+}
+
+function setActivityLiveStatus(message) {
+  if ($('activityLiveStatus').textContent === message) return;
+  const position = activityReadingPosition();
+  $('activityLiveStatus').textContent = message;
+  restoreActivityReadingPosition(position);
+}
+
+function updateActivityRow(row, replacement) {
+  // Relative times and delivery outcomes change frequently. Keep the button itself,
+  // including its keyboard focus and any open dialog's return target.
+  for (const attribute of [...row.attributes]) if (!replacement.hasAttribute(attribute.name)) row.removeAttribute(attribute.name);
+  for (const attribute of replacement.attributes) if (row.getAttribute(attribute.name) !== attribute.value) row.setAttribute(attribute.name,attribute.value);
+  row.replaceChildren(...replacement.childNodes);
+}
+
 function renderEvents() {
+  const position = activityReadingPosition();
   const icon = { restock:'↑', sold_out:'↓', price_change:'$', status_change:'↔', new_product:'+' };
   const events = app.activity.events || [];
-  reconcileList($('activityList'), events, 'data-activity-event', (e) => {
+  const arrivals = app.activity.arrivals || [];
+  const renderEvent = (e) => {
     const metadata = activityMeta(e);
     const metadataText = metadata.map((part) => `${part.text}${part.extra ? ` ${part.extra}` : ''}`).join(' · ');
     const metadataHtml = metadata.map((part) => `<span class="event-meta-part ${escapeHtml(part.className)}">${escapeHtml(part.text)}${part.extra ? ` <span class="event-delta-percent">${escapeHtml(part.extra)}</span>` : ''}</span>`).join('');
@@ -1169,29 +1208,34 @@ function renderEvents() {
       <span class="event-main"><strong>${escapeHtml(e.name)}</strong><span class="event-meta" title="${escapeHtml(metadataText)}">${metadataHtml}</span></span>
       <span class="event-side"><span class="event-alert ${escapeHtml(alert.state)}" title="${escapeHtml(serverAlertTitle(e))}"><span class="event-alert-dot" aria-hidden="true"></span><span class="event-alert-label">${escapeHtml(alert.label)}</span></span><time datetime="${escapeHtml(e.detectedAt)}" title="${escapeHtml(exactTime)}">${escapeHtml(relativeTime(e.detectedAt))}</time></span>
     </button>`;
-  });
-  $('activityEmpty').classList.toggle('hidden', events.length > 0 || !app.activity.loaded);
+  };
+  reconcileList($('activityLiveList'), arrivals, 'data-activity-event', renderEvent, false, updateActivityRow);
+  reconcileList($('activityList'), events, 'data-activity-event', renderEvent, false, updateActivityRow);
+  $('activityLiveList').classList.toggle('hidden', !arrivals.length);
+  $('activityList').classList.toggle('hidden', !events.length);
+  const separatePage = arrivals.length > 0 && app.activity.page > 1;
+  $('activityLiveHeading').classList.toggle('hidden', !separatePage);
+  $('activityEarlierHeading').classList.toggle('hidden', !separatePage);
+  $('activityEarlierHeading').textContent = `Earlier activity · Page ${app.activity.page}`;
+  $('activityEmpty').classList.toggle('hidden', events.length + arrivals.length > 0 || !app.activity.loaded);
   const filteredEmpty = activityFiltersActive();
   $('activityEmpty').querySelector('h3').textContent = filteredEmpty ? 'No activity matches these filters' : 'No stock changes detected yet';
   $('activityEmpty').querySelector('p').textContent = filteredEmpty ? 'Reset or change a filter to see retained stock activity.' : 'The first check establishes a baseline. Changes appear here after that.';
   $('resetActivityEmpty').classList.toggle('hidden', !filteredEmpty);
   const first = (app.activity.page - 1) * app.activity.limit + 1;
-  $('activityResultCount').textContent = app.activity.loaded ? (app.activity.count > app.activity.limit && events.length ? `Showing ${first}–${first + events.length - 1} of ${app.activity.count} events` : `${app.activity.count} matching event${app.activity.count === 1 ? '' : 's'}`) : 'Loading activity…';
+  const total = app.activity.count + arrivals.length;
+  let summary = app.activity.loaded ? `${total} matching event${total === 1 ? '' : 's'}` : 'Loading activity…';
+  if (events.length && app.activity.count > app.activity.limit) {
+    summary = separatePage ? `${arrivals.length} new · Showing ${first}–${first + events.length - 1} of ${app.activity.count} earlier events` : `Showing ${first}–${first + events.length + arrivals.length - 1} of ${total} events`;
+  }
+  if ($('activityResultCount').textContent !== summary) $('activityResultCount').textContent = summary;
   const retention = app.config?.config?.eventRetentionDays;
   $('activityRetention').textContent = retention === 0 ? 'Activity retained until manually changed' : retention ? `${retention}-day activity retention` : 'Retained activity';
   $('activityPagination').classList.toggle('hidden', !app.activity.loaded || app.activity.pages <= 1);
-  $('activityPage').textContent = `Page ${app.activity.page} of ${app.activity.pages}`;
+  $('activityPage').textContent = `Page ${app.activity.page} of ${app.activity.pages}${arrivals.length ? ' · Earlier activity' : ''}`;
   $('activityPrevious').disabled = app.activity.page <= 1;
   $('activityNext').disabled = app.activity.page >= app.activity.pages;
-  renderActivityNotice();
-}
-
-function renderActivityNotice() {
-  const button = $('activityNew');
-  const pending = Boolean(app.activity.newCount || app.activity.pendingUpdate);
-  button.classList.toggle('hidden', !pending);
-  const label = app.activity.newCount ? `New activity available (${app.activity.newCount})` : 'Activity changed · Refresh';
-  if (button.textContent !== label) button.textContent = label;
+  restoreActivityReadingPosition(position);
 }
 
 function activityQueryParameters(page = app.activity.page || 1) {
@@ -1209,12 +1253,13 @@ function activityQueryParameters(page = app.activity.page || 1) {
 }
 
 async function refreshActivity(page = app.activity.page || 1, { background = false, reset = false } = {}) {
-  if (background && (app.activityController || document.hidden)) return;
+  if (background && (app.activityController || document.hidden || app.activeTab !== 'activity' || app.browserOffline || $('appShell').classList.contains('hidden'))) return;
   app.activityController?.abort();
   const controller = new AbortController(); app.activityController = controller;
   const request = (app.activityRequest || 0) + 1;
   app.activityRequest = request;
   const region = app.currentRegion;
+  const stale = () => request !== app.activityRequest || region !== app.currentRegion || background && (document.hidden || app.activeTab !== 'activity' || $('appShell').classList.contains('hidden'));
   const params = background && app.activityQueryKey ? new URLSearchParams(app.activityQueryKey) : activityQueryParameters(page);
   params.delete('page');
   const queryKey = params.toString();
@@ -1222,17 +1267,41 @@ async function refreshActivity(page = app.activity.page || 1, { background = fal
   params.set('page',String(page));
   if (!background) $('activityResultCount').textContent = 'Loading activity…';
   try {
-    const result = await api(`/api/activity?${params}`, { signal:AbortSignal.any([controller.signal,AbortSignal.timeout(20000)]) });
-    if (request !== app.activityRequest || region !== app.currentRegion || background && (document.hidden || app.activeTab !== 'activity')) return;
-    if (background && app.activity.loaded && (result.snapshotReset || result.count !== app.activity.count || result.events.map(event=>event.id).join() !== app.activity.events.map(event=>event.id).join())) {
-      app.activity.newCount = result.newCount; app.activity.pendingUpdate = true; renderActivityNotice(); return;
+    const options = { signal:AbortSignal.any([controller.signal,AbortSignal.timeout(20000)]) };
+    const latestPage = () => {
+      const latestParams = new URLSearchParams(queryKey); latestParams.set('page','1');
+      return api(`/api/activity?${latestParams}`, options);
+    };
+    let result = await api(`/api/activity?${params}`, options);
+    if (stale()) return;
+    // Recover in this request, keeping the committed filters rather than applying drafts.
+    if (result.snapshotReset) result = await latestPage();
+    if (stale()) return;
+    const arrivals = [];
+    if (result.newCount > 0) {
+      const liveParams = new URLSearchParams(queryKey);
+      liveParams.set('after',result.snapshot); liveParams.set('limit','100');
+      // Pin the upper boundary too, so a burst spanning multiple requests has no gaps.
+      let livePage = 1, livePages = 1;
+      do {
+        liveParams.set('page',String(livePage));
+        const live = await api(`/api/activity?${liveParams}`, options);
+        if (stale()) return;
+        if (live.snapshotReset) { result = await latestPage(); arrivals.length = 0; break; }
+        liveParams.set('snapshot',live.snapshot);
+        livePages = live.pages;
+        arrivals.push(...live.events);
+      } while (++livePage <= livePages);
     }
+    if (stale()) return;
     app.activityQueryKey = queryKey;
-    app.activity = { ...result, loaded:true };
+    app.activity = { ...result, newCount:arrivals.length, arrivals:[...new Map(arrivals.map(event => [event.id,event])).values()], loaded:true };
     renderEvents();
+    setActivityLiveStatus('Live · Updates automatically');
   } catch (err) {
-    if (request !== app.activityRequest || region !== app.currentRegion || err.name === 'AbortError') return;
-    $('activityResultCount').textContent = `Activity unavailable: ${err.message}`;
+    if (stale() || err.name === 'AbortError') return;
+    setActivityLiveStatus('Reconnecting · Updates will resume automatically');
+    if (!app.activity.loaded) $('activityResultCount').textContent = `Activity unavailable: ${err.message}`;
   } finally { if (request === app.activityRequest) app.activityController = null; }
 }
 
@@ -2912,6 +2981,7 @@ function activateTab(tab) {
   }
   if (!APP_TABS.includes(tab)) tab = 'watchlist';
   app.activeTab = tab;
+  document.documentElement.classList.toggle('activity-active', tab === 'activity');
   if (tab === 'settings') {
     refreshDataInfo(); refreshNotificationPreferences(); refreshSessions(); refreshConfiguration();
     if (app.activeSettingsTab === 'operations') refreshOperations();
@@ -3158,11 +3228,6 @@ $('clearActivityFilters').addEventListener('click', resetActivityFilters);
 $('resetActivityEmpty').addEventListener('click', resetActivityFilters);
 $('activityPrevious').addEventListener('click', () => refreshActivity(Math.max(1, app.activity.page - 1)));
 $('activityNext').addEventListener('click', () => refreshActivity(Math.min(app.activity.pages, app.activity.page + 1)));
-$('activityNew').addEventListener('click', async () => {
-  const focused = document.activeElement === $('activityNew');
-  await refreshActivity(1, { reset:true });
-  if (focused && $('activityNew').classList.contains('hidden')) ($('activityList').querySelector('button') || $('activityType')).focus({preventScroll:true});
-});
 $('exportActivityCsv').addEventListener('click', () => exportActivity('csv'));
 $('exportActivityJson').addEventListener('click', () => exportActivity('json'));
 $('applyLogFilter').addEventListener('click', refreshLogs);
@@ -3223,15 +3288,17 @@ activateSettingsTab(initialOperationsTab ? 'operations' : app.activeSettingsTab)
 
 window.addEventListener('offline', () => {
   app.browserOffline = true;
+  setActivityLiveStatus('Browser offline · Updates will resume automatically');
   $('statusDot').className = 'dot bad'; $('statusTitle').textContent = 'Browser offline'; $('statusSub').textContent = 'Waiting for the network to return';
   renderAttentionBanner();
 });
-window.addEventListener('online', () => { app.reconnectPending = app.browserOffline; app.browserOffline = false; renderAttentionBanner(); refresh(); });
+window.addEventListener('online', () => { app.reconnectPending = app.browserOffline; app.browserOffline = false; renderAttentionBanner(); refreshActivity(app.activity.page, { background:true }); refresh(); });
 
 initialize().finally(updateToTopVisibility);
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && !$('appShell').classList.contains('hidden')) refresh();
+  if (!document.hidden && !$('appShell').classList.contains('hidden')) { refreshActivity(app.activity.page, { background:true }); refresh(); }
 });
+setInterval(() => refreshActivity(app.activity.page, { background:true }), 1000);
 setInterval(() => {
   if (!document.hidden) updateProductFreshness();
   if (!$('appShell').classList.contains('hidden')) refresh({ background:true });

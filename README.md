@@ -17,7 +17,7 @@ One installation serves one owner. Monitoring and external notification delivery
 
 **Current version: 1.2.0** · [Downloads](https://github.com/alexphillips-dev/GearBeacon/releases) · [Release notes](docs/RELEASE_NOTES.md) · [Wiki](https://github.com/alexphillips-dev/GearBeacon/wiki)
 
-The current `dev` checkout also includes named views, a compact Watchlist, budget-aware collection alerts, alert explanations, smoother background refreshes, update startup verification, per-watch/collection delivery channels, delayed-alert context and expiry, and product freshness indicators. It uses schema v13 and recovery export format v9, with a validated backup before migration. These additions are not included in the published v1.2.0 downloads; see the [changelog](docs/CHANGELOG.md) and [Wiki](https://github.com/alexphillips-dev/GearBeacon/wiki).
+The current `dev` checkout also includes named views, a compact Watchlist, budget-aware collection alerts, alert explanations, smoother background refreshes, automatic Activity arrivals that preserve your reading position, update startup verification, per-watch/collection delivery channels, delayed-alert context and expiry, and product freshness indicators. It uses schema v13 and recovery export format v9, with a validated backup before migration. These additions are not included in the published v1.2.0 downloads; see the [changelog](docs/CHANGELOG.md) and [Wiki](https://github.com/alexphillips-dev/GearBeacon/wiki).
 
 ## What it does
 
