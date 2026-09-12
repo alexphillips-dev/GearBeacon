@@ -10,6 +10,7 @@ const net = require('node:net');
 const tls = require('node:tls');
 const { AsyncLocalStorage } = require('node:async_hooks');
 const { URL } = require('node:url');
+const { execFileSync } = require('node:child_process');
 const { DatabaseSync } = require('node:sqlite');
 const { renderEmail, buildMimeEmail, numericPrice } = require('./email');
 const APP_VERSION = '1.2.0';
@@ -74,6 +75,7 @@ let SMTP_TO = String(process.env.SMTP_TO || '').split(',').map((value) => value.
 const MOCK_MODE = ['1', 'true', 'yes'].includes(String(process.env.MOCK_MODE || '').toLowerCase());
 const UPDATE_MANIFEST_URL = String(process.env.GEARBEACON_UPDATE_MANIFEST_URL || '').trim();
 const GITHUB_RELEASE_API = String(process.env.GEARBEACON_GITHUB_RELEASE_API !== undefined ? process.env.GEARBEACON_GITHUB_RELEASE_API : 'https://api.github.com/repos/alexphillips-dev/GearBeacon/releases/latest').trim();
+const AUTO_UPDATE_CHECKS = !['0', 'false', 'no'].includes(String(process.env.GEARBEACON_AUTO_UPDATE_CHECKS ?? '1').toLowerCase());
 let PUBLIC_BASE_URL = String(process.env.GEARBEACON_PUBLIC_BASE_URL || '').trim().replace(/\/$/, '');
 const MIN_CATALOG_RATIO = Math.min(0.95, Math.max(0.1, Number(process.env.GEARBEACON_MIN_CATALOG_RATIO || 0.55)));
 const STALE_AFTER_SECONDS = Math.max(POLL_SECONDS * 3, Number(process.env.GEARBEACON_STALE_AFTER_SECONDS || 180));
@@ -140,6 +142,13 @@ const LEGACY_DATA_DIR = path.join(PROJECT_ROOT, 'data');
 const RELEASE_MANIFEST_FILE = path.join(PROJECT_ROOT, 'release-manifest.json');
 const BUILD_INFO_FILE = path.join(PROJECT_ROOT, 'build-info.json');
 const BUILD_INFO = fs.existsSync(BUILD_INFO_FILE) ? safeJsonParse(fs.readFileSync(BUILD_INFO_FILE, 'utf8'), {}) : {};
+const RUNNING_BUILD = runningBuildIdentity();
+let updateCheckTask = null;
+let updateCheckTimer = null;
+let updateRetryAfter = 0;
+let updateStatus = { currentVersion: RUNNING_BUILD.version, latestVersion: RUNNING_BUILD.version, channel: RUNNING_BUILD.channel,
+    currentCommit: RUNNING_BUILD.commit, updateAvailable: false, verified: false, checkedAt: null, lastAttemptAt: null, nextCheckAt: null,
+    releaseNotesUrl: null, warning: null, automatic: AUTO_UPDATE_CHECKS };
 function defaultUserDataDir() {
     if (process.env.GEARBEACON_DATA_DIR)
         return path.resolve(process.env.GEARBEACON_DATA_DIR);
@@ -4693,105 +4702,267 @@ function compareVersions(a, b) {
     }
     return 0;
 }
-function normalizeReleasePayload(payload, source) {
-    if (!payload || typeof payload !== 'object')
+function releaseVersion(value) {
+    const version = String(value || '').replace(/^v/, '');
+    if (version.length > 128)
         return null;
-    if (payload.latestVersion)
-        return {
-            latestVersion: String(payload.latestVersion),
-            downloadUrl: payload.downloadUrl || null,
-            releaseNotes: payload.releaseNotes || payload.notes || null,
-            publishedAt: payload.publishedAt || null,
-            minimumSchemaVersion: Number(payload.minimumSchemaVersion || 0) || null,
-            maximumSchemaVersion: Number(payload.maximumSchemaVersion || 0) || null,
-            minimumNodeVersion: payload.minimumNodeVersion || null,
-            releasePageUrl: payload.releasePageUrl || null,
-            source,
-        };
-    if (payload.tag_name) {
-        const assets = Array.isArray(payload.assets) ? payload.assets : [];
-        const zipAsset = assets.find((a) => /gearbeacon.*\.zip$/i.test(String(a?.name || '')))
-            || assets.find((a) => /\.zip$/i.test(String(a?.name || '')));
-        return {
-            latestVersion: String(payload.tag_name).replace(/^v/i, ''),
-            downloadUrl: zipAsset?.browser_download_url || payload.html_url || null,
-            releaseNotes: payload.body || null,
-            publishedAt: payload.published_at || payload.created_at || null,
-            releasePageUrl: payload.html_url || null,
-            source,
-        };
-    }
-    return null;
+    const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/.exec(version);
+    if (!match || match.slice(1, 4).some(part => !Number.isSafeInteger(Number(part))))
+        return null;
+    const pre = match[4] ? match[4].split('.') : [];
+    if (pre.some(part => /^0\d+$/.test(part)))
+        return null;
+    return { version, core: match.slice(1, 4).map(Number), pre };
 }
-async function fetchReleaseJson(url, source) {
-    const res = await fetchWithTimeout(url, {
-        headers: {
-            Accept: 'application/vnd.github+json, application/json',
-            'User-Agent': `GearBeacon/${APP_VERSION}`,
-            'X-GitHub-Api-Version': '2022-11-28',
-        },
-    }, 10000);
-    if (!res.ok)
-        throw new Error(`HTTP ${res.status}`);
-    const payload = await res.json();
-    const normalized = normalizeReleasePayload(payload, source);
-    if (!normalized?.latestVersion)
-        throw new Error('Release payload did not include a version.');
-    return normalized;
+function compareReleaseVersions(a, b) {
+    const left = releaseVersion(a), right = releaseVersion(b);
+    if (!left || !right)
+        throw new Error('Invalid release version.');
+    for (let index = 0; index < 3; index++)
+        if (left.core[index] !== right.core[index])
+            return Math.sign(left.core[index] - right.core[index]);
+    if (!left.pre.length || !right.pre.length)
+        return Number(!left.pre.length) - Number(!right.pre.length);
+    for (let index = 0; index < Math.max(left.pre.length, right.pre.length); index++) {
+        const x = left.pre[index], y = right.pre[index];
+        if (x === y)
+            continue;
+        if (x === undefined || y === undefined)
+            return x === undefined ? -1 : 1;
+        const numericX = /^\d+$/.test(x), numericY = /^\d+$/.test(y);
+        if (numericX !== numericY)
+            return numericX ? -1 : 1;
+        if (numericX && x.length !== y.length)
+            return Math.sign(x.length - y.length);
+        return x < y ? -1 : 1;
+    }
+    return 0;
+}
+function runningBuildIdentity() {
+    const override = String(process.env.GEARBEACON_UPDATE_CHANNEL || 'auto').trim().toLowerCase();
+    if (!['auto', 'main', 'dev'].includes(override))
+        throw new Error('GEARBEACON_UPDATE_CHANNEL must be auto, main, or dev.');
+    const validCommit = value => /^[a-f0-9]{40}$/i.test(String(value || '')) ? String(value).toLowerCase() : null;
+    const git = args => {
+        if (runningAsSea || !fs.existsSync(path.join(PROJECT_ROOT, '.git')))
+            return '';
+        try {
+            return execFileSync('git', args, { cwd: PROJECT_ROOT, encoding: 'utf8', timeout: 2000, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+        }
+        catch {
+            return '';
+        }
+    };
+    const branch = git(['symbolic-ref', '--short', 'HEAD']);
+    const taggedVersion = git(['tag', '--points-at', 'HEAD']).split('\n').map(releaseVersion).find(value => value?.core.join('.') === APP_VERSION);
+    const imageTag = String(process.env.GEARBEACON_IMAGE || '').split(':').at(-1);
+    const packaged = releaseVersion(process.env.GEARBEACON_PACKAGE_VERSION || BUILD_INFO.packageVersion || imageTag);
+    const version = packaged?.core.join('.') === APP_VERSION ? packaged.version : taggedVersion?.version || APP_VERSION;
+    const recorded = String(process.env.GEARBEACON_BUILD_BRANCH || BUILD_INFO.branch || '');
+    const channel = override !== 'auto' ? override : ['main', 'dev'].includes(branch) ? branch : ['main', 'dev'].includes(recorded) ? recorded
+        : releaseVersion(version)?.pre.length || imageTag === 'dev' ? 'dev' : 'main';
+    return { channel, version, commit: validCommit(git(['rev-parse', 'HEAD'])) || validCommit(process.env.GEARBEACON_BUILD_COMMIT) || validCommit(BUILD_INFO.commit) };
+}
+function releaseLink(value) {
+    try {
+        const url = new URL(value);
+        return ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password ? url.href : null;
+    }
+    catch {
+        return null;
+    }
+}
+function normalizeReleasePayload(payload, source) {
+    if (!payload || typeof payload !== 'object' || payload.draft)
+        return null;
+    const version = releaseVersion(payload.latestVersion || payload.tag_name);
+    if (!version)
+        return null;
+    const prerelease = Boolean(payload.prerelease || version.pre.length);
+    const channel = payload.channel || (prerelease ? 'dev' : 'main');
+    if (channel !== RUNNING_BUILD.channel || RUNNING_BUILD.channel === 'main' && prerelease)
+        return null;
+    const assets = Array.isArray(payload.assets) ? payload.assets : [];
+    const zip = assets.find(asset => /gearbeacon.*\.zip$/i.test(String(asset?.name || '')));
+    return { latestVersion: version.version, channel, prerelease,
+        downloadUrl: releaseLink(payload.downloadUrl || zip?.browser_download_url || payload.html_url),
+        releasePageUrl: releaseLink(payload.releasePageUrl || payload.html_url),
+        releaseNotesUrl: releaseLink(payload.releaseNotesUrl || payload.releasePageUrl || payload.html_url),
+        releaseNotes: typeof (payload.releaseNotes || payload.notes || payload.body) === 'string' ? String(payload.releaseNotes || payload.notes || payload.body).slice(0, 100000) : null,
+        publishedAt: payload.publishedAt || payload.published_at || null,
+        minimumSchemaVersion: Number(payload.minimumSchemaVersion || 0) || null,
+        maximumSchemaVersion: Number(payload.maximumSchemaVersion || 0) || null,
+        minimumNodeVersion: payload.minimumNodeVersion || null, source };
+}
+async function fetchUpdateJson(url, signal) {
+    const response = await fetch(url, { signal, headers: { Accept: 'application/vnd.github+json, application/json', 'User-Agent': `GearBeacon/${APP_VERSION}`, 'X-GitHub-Api-Version': '2022-11-28' } });
+    if (!response.ok) {
+        const retry = response.headers.get('retry-after');
+        const reset = response.headers.get('x-ratelimit-remaining') === '0' ? Number(response.headers.get('x-ratelimit-reset')) * 1000 : 0;
+        if (retry || reset)
+            updateRetryAfter = Math.max(updateRetryAfter, reset || 0, /^\d+$/.test(retry || '') ? Date.now() + Number(retry) * 1000 : Date.parse(retry || '') || 0);
+        await response.body?.cancel();
+        const error = new Error(`Update source returned HTTP ${response.status}.`);
+        error.statusCode = response.status;
+        throw error;
+    }
+    const chunks = [];
+    let size = 0;
+    for await (const chunk of response.body) {
+        size += chunk.length;
+        if (size > 2 * 1024 * 1024)
+            throw new Error('Update information exceeded the size limit.');
+        chunks.push(chunk);
+    }
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+}
+function githubRepositoryApi() {
+    const url = new URL(GITHUB_RELEASE_API);
+    if (!/\/releases(?:\/latest)?\/?$/.test(url.pathname))
+        throw new Error('The development update source must use a GitHub repository releases endpoint.');
+    url.pathname = url.pathname.replace(/\/releases(?:\/latest)?\/?$/, '');
+    url.search = '';
+    url.hash = '';
+    return url.href;
+}
+async function githubFile(api, file, commit, signal) {
+    const payload = await fetchUpdateJson(`${api}/contents/${file}?ref=${commit}`, signal);
+    if (payload.type !== 'file' || payload.encoding !== 'base64' || typeof payload.content !== 'string')
+        throw new Error('Invalid repository file response.');
+    return Buffer.from(payload.content, 'base64').toString('utf8');
+}
+async function developmentManifest(signal) {
+    const api = githubRepositoryApi();
+    const head = await fetchUpdateJson(`${api}/commits/dev`, signal);
+    if (!/^[a-f0-9]{40}$/i.test(head.sha || ''))
+        throw new Error('The development update source did not identify its commit.');
+    const commit = head.sha.toLowerCase();
+    const payload = JSON.parse(await githubFile(api, 'release-manifest.json', commit, signal));
+    const manifest = normalizeReleasePayload({ ...payload, channel: 'dev', releasePageUrl: null, releaseNotesUrl: null, downloadUrl: null }, 'GitHub dev');
+    if (!manifest)
+        throw new Error('The development update source did not include a valid version.');
+    let comparison = 'unknown';
+    if (RUNNING_BUILD.commit === commit)
+        comparison = 'identical';
+    else if (RUNNING_BUILD.commit) {
+        try {
+            const compared = await fetchUpdateJson(`${api}/compare/${RUNNING_BUILD.commit}...${commit}?per_page=1`, signal);
+            if (['ahead', 'behind', 'identical', 'diverged'].includes(compared.status))
+                comparison = compared.status;
+        }
+        catch (error) {
+            if (error.statusCode !== 404 && error.statusCode !== 422)
+                throw error;
+        }
+    }
+    // A published prerelease may provide notes for this exact development commit.
+    // Never send a dev build to an older stable release that shares its base version.
+    if (releaseVersion(manifest.latestVersion).pre.length) {
+        try {
+            const release = await fetchUpdateJson(`${api}/releases/tags/v${manifest.latestVersion}`, signal);
+            const normalized = normalizeReleasePayload(release, 'GitHub dev');
+            const tag = normalized && await fetchUpdateJson(`${api}/commits/${encodeURIComponent(release.tag_name)}`, signal);
+            if (tag?.sha === commit)
+                manifest.releaseNotesUrl = normalized.releaseNotesUrl;
+        }
+        catch (error) {
+            if (error.statusCode !== 404)
+                manifest.warning = 'Release notes are temporarily unavailable.';
+        }
+    }
+    if (!manifest.releaseNotesUrl && !signal.aborted && Date.now() >= updateRetryAfter) {
+        for (const file of ['docs/CHANGELOG.md', 'docs/RELEASE_NOTES.md']) {
+            try {
+                await githubFile(api, file, commit, signal);
+                manifest.releaseNotesUrl = `https://github.com/alexphillips-dev/GearBeacon/blob/${commit}/${file}`;
+                break;
+            }
+            catch (error) {
+                if (error.statusCode !== 404) {
+                    manifest.warning = 'Release notes are temporarily unavailable.';
+                    break;
+                }
+            }
+        }
+    }
+    return { ...manifest, latestCommit: commit, comparison, publishedAt: head.commit?.committer?.date || manifest.publishedAt };
 }
 async function readUpdateManifest() {
-    const warnings = [];
+    const signal = AbortSignal.timeout(15000);
     if (UPDATE_MANIFEST_URL) {
-        try {
-            const remote = await fetchReleaseJson(UPDATE_MANIFEST_URL, UPDATE_MANIFEST_URL);
-            return { manifest: remote, source: UPDATE_MANIFEST_URL, warning: null };
-        }
-        catch (err) {
-            warnings.push(`Configured update channel failed: ${err?.message || String(err)}.`);
-        }
+        const url = UPDATE_MANIFEST_URL.replaceAll('{channel}', RUNNING_BUILD.channel);
+        const result = normalizeReleasePayload(await fetchUpdateJson(url, signal), 'Configured update manifest');
+        if (!result)
+            throw new Error('The configured manifest does not contain a release for this update channel.');
+        return result;
     }
-    else if (GITHUB_RELEASE_API) {
-        try {
-            const github = await fetchReleaseJson(GITHUB_RELEASE_API, 'GitHub Releases');
-            return { manifest: github, source: 'GitHub Releases', warning: null };
-        }
-        catch (err) {
-            warnings.push(`GitHub Releases check failed: ${err?.message || String(err)}.`);
-        }
-    }
-    if (!fs.existsSync(RELEASE_MANIFEST_FILE))
-        throw new Error(`${warnings.join(' ')} No bundled GearBeacon release information is available.`);
-    const payload = safeJsonParse(fs.readFileSync(RELEASE_MANIFEST_FILE, 'utf8'), null);
-    const bundled = normalizeReleasePayload(payload, 'bundled');
-    if (!bundled?.latestVersion)
-        throw new Error('The bundled GearBeacon update manifest is invalid.');
-    return { manifest: bundled, source: 'bundled', warning: warnings.length ? `${warnings.join(' ')} Using bundled release information.` : null };
+    if (!GITHUB_RELEASE_API)
+        return null;
+    if (RUNNING_BUILD.channel === 'dev')
+        return developmentManifest(signal);
+    const payload = await fetchUpdateJson(GITHUB_RELEASE_API, signal);
+    const releases = (Array.isArray(payload) ? payload : [payload]).map(item => normalizeReleasePayload(item, 'GitHub Releases')).filter(Boolean);
+    releases.sort((a, b) => compareReleaseVersions(b.latestVersion, a.latestVersion));
+    if (!releases.length)
+        throw new Error('No stable release is available from this update source.');
+    return releases[0];
+}
+function updateCheckSnapshot() { return { ...updateStatus, checking: Boolean(updateCheckTask) }; }
+function scheduleUpdateCheck() {
+    if (updateCheckTimer)
+        clearTimeout(updateCheckTimer);
+    if (!AUTO_UPDATE_CHECKS || !(UPDATE_MANIFEST_URL || GITHUB_RELEASE_API))
+        return;
+    const next = Math.max(Date.parse(updateStatus.nextCheckAt || '') || 0, updateRetryAfter);
+    updateCheckTimer = setTimeout(() => { void checkForUpdates(); }, Math.max(0, next - Date.now()));
+    updateCheckTimer.unref();
 }
 async function checkForUpdates() {
-    const { manifest, source, warning } = await readUpdateManifest();
-    const latestVersion = String(manifest.latestVersion);
-    const compatibilityWarnings = [];
-    if (Number(latestVersion.split('.')[0] || 0) > Number(APP_VERSION.split('.')[0] || 0))
-        compatibilityWarnings.push('This is a major-version update. Review migration and rollback notes before continuing.');
-    if (manifest.minimumSchemaVersion && schemaVersion() < manifest.minimumSchemaVersion)
-        compatibilityWarnings.push(`The release requires database schema v${manifest.minimumSchemaVersion}; GearBeacon will create a validated backup before migration.`);
-    if (manifest.maximumSchemaVersion && schemaVersion() > manifest.maximumSchemaVersion)
-        compatibilityWarnings.push(`This database schema is newer than the release supports. Do not downgrade without restoring a compatible backup.`);
-    if (!runningAsSea && manifest.minimumNodeVersion && compareVersions(process.versions.node, manifest.minimumNodeVersion) < 0)
-        compatibilityWarnings.push(`Source installs require Node.js ${manifest.minimumNodeVersion} or newer for this release.`);
-    return {
-        currentVersion: APP_VERSION,
-        latestVersion,
-        updateAvailable: compareVersions(latestVersion, APP_VERSION) > 0,
-        downloadUrl: manifest.downloadUrl || null,
-        releasePageUrl: manifest.releasePageUrl || null,
-        releaseNotes: manifest.releaseNotes || null,
-        publishedAt: manifest.publishedAt || null,
-        source,
-        warning,
-        compatibilityWarnings,
-        checkedAt: isoNow(),
-    };
+    if (updateCheckTask) {
+        await updateCheckTask;
+        return updateCheckSnapshot();
+    }
+    if (Date.now() < updateRetryAfter)
+        return updateCheckSnapshot();
+    updateCheckTask = (async () => {
+        const attempted = isoNow();
+        try {
+            const manifest = await readUpdateManifest();
+            if (!manifest) {
+                updateStatus = { ...updateStatus, verified: false, warning: 'Online update checks are disabled.', lastAttemptAt: attempted, nextCheckAt: null };
+                return updateCheckSnapshot();
+            }
+            const versionNewer = compareReleaseVersions(manifest.latestVersion, RUNNING_BUILD.version) > 0;
+            const updateAvailable = compareVersions(manifest.latestVersion, APP_VERSION) >= 0 && (RUNNING_BUILD.channel === 'dev' && manifest.comparison
+                ? manifest.comparison === 'ahead' || manifest.comparison === 'unknown' && versionNewer
+                : versionNewer);
+            const compatibilityWarnings = [];
+            if (Number(manifest.latestVersion.split('.')[0]) > Number(APP_VERSION.split('.')[0]))
+                compatibilityWarnings.push('This is a major-version update. Review migration and rollback notes before continuing.');
+            if (manifest.minimumSchemaVersion && schemaVersion() < manifest.minimumSchemaVersion)
+                compatibilityWarnings.push(`The release requires database schema v${manifest.minimumSchemaVersion}; GearBeacon will create a validated backup before migration.`);
+            if (manifest.maximumSchemaVersion && schemaVersion() > manifest.maximumSchemaVersion)
+                compatibilityWarnings.push('This database is newer than the release supports. Do not downgrade without restoring a compatible backup.');
+            if (!runningAsSea && manifest.minimumNodeVersion && compareVersions(process.versions.node, manifest.minimumNodeVersion) < 0)
+                compatibilityWarnings.push(`Source installs require Node.js ${manifest.minimumNodeVersion} or newer for this release.`);
+            updateStatus = { ...manifest, currentVersion: RUNNING_BUILD.version, currentCommit: RUNNING_BUILD.commit, channel: RUNNING_BUILD.channel, updateAvailable,
+                verified: true, stale: false, compatibilityWarnings, checkedAt: isoNow(), lastAttemptAt: attempted, nextCheckAt: new Date(Date.now() + 86400000).toISOString(), automatic: AUTO_UPDATE_CHECKS,
+                warning: manifest.comparison === 'unknown' ? 'The installed commit could not be compared; only version changes can be detected.' : manifest.comparison === 'diverged' ? 'This checkout has diverged from dev; review its history before updating.' : manifest.warning || null };
+        }
+        catch (error) {
+            const safeMessage = String(error?.message || '').startsWith('The ') || String(error?.message || '').startsWith('No ') || String(error?.message || '').startsWith('Update ') ? error.message : 'The update source could not be checked.';
+            updateStatus = { ...updateStatus, stale: true, warning: safeMessage, lastAttemptAt: attempted, nextCheckAt: new Date(Math.max(Date.now() + 3600000, updateRetryAfter)).toISOString() };
+        }
+        return updateCheckSnapshot();
+    })();
+    try {
+        await updateCheckTask;
+    }
+    finally {
+        updateCheckTask = null;
+        scheduleUpdateCheck();
+    }
+    return updateCheckSnapshot();
 }
 function isLoopbackHost(host) {
     const normalized = String(host || '').trim().toLowerCase().replace(/^\[|\]$/g, '').replace(/^::ffff:/, '');
@@ -5005,7 +5176,7 @@ function listSessions(current) {
 function outboundConnections() {
     return [
         { name: 'UniFi Store', enabled: true, required: true, destination: [...new Set(ACTIVE_REGIONS.map((region) => REGIONS[region].origin))].join(', '), purpose: 'Inventory checks' },
-        { name: 'GitHub Releases', enabled: Boolean(GITHUB_RELEASE_API || UPDATE_MANIFEST_URL), required: false, destination: UPDATE_MANIFEST_URL || GITHUB_RELEASE_API || null, purpose: 'Manual update checks' },
+        { name: 'GitHub Releases', enabled: Boolean(GITHUB_RELEASE_API || UPDATE_MANIFEST_URL), required: false, destination: UPDATE_MANIFEST_URL || GITHUB_RELEASE_API || null, purpose: AUTO_UPDATE_CHECKS ? 'Startup, daily, and manual update checks for the running channel' : 'Manual update checks for the running channel' },
         { name: 'ntfy', enabled: channelConfigured('ntfy'), required: false, destination: NTFY_TOPIC ? NTFY_BASE_URL : null, purpose: 'Notifications' },
         { name: 'Discord', enabled: channelConfigured('discord'), required: false, destination: DISCORD_WEBHOOK_URL ? 'Configured webhook' : null, purpose: 'Notifications' },
         { name: 'Generic webhook', enabled: channelConfigured('webhook'), required: false, destination: GENERIC_WEBHOOK_URL ? 'Configured webhook' : null, purpose: 'Notifications' },
@@ -5018,6 +5189,7 @@ function apiStatus() {
     return {
         name: 'GearBeacon',
         version: APP_VERSION,
+        update: updateCheckSnapshot(),
         region: currentRegion(),
         regionLabel: REGIONS[currentRegion()].label,
         regions: ACTIVE_REGIONS.map((key) => ({ key, label: REGIONS[key].label })),
@@ -6139,7 +6311,7 @@ const server = http.createServer(async (req, res) => {
             return sendJson(res, 400, { error: 'Request target is invalid.' });
         const url = new URL(requestTarget, `http://${requestHost}`);
         if (url.pathname === '/healthz')
-            return sendJson(res, 200, { ok: true, name: 'GearBeacon', version: APP_VERSION, packageVersion: BUILD_INFO.packageVersion || APP_VERSION });
+            return sendJson(res, 200, { ok: true, name: 'GearBeacon', version: APP_VERSION, packageVersion: RUNNING_BUILD.version });
         if (url.pathname === '/readyz') {
             const ready = MOCK_MODE || ACTIVE_REGIONS.every((region) => {
                 const item = monitors[region];
@@ -6219,9 +6391,12 @@ async function start() {
     })));
     scheduleBackups();
     scheduleNotificationWorker();
+    scheduleUpdateCheck();
     writeAppLog('info', 'app', `GearBeacon V${APP_VERSION} started.`, { regions: ACTIVE_REGIONS, accessMode: ACCESS_MODE, platform: `${process.platform}/${process.arch}` });
 }
 function shutdown(signal) {
+    if (updateCheckTimer)
+        clearTimeout(updateCheckTimer);
     for (const timer of monitorTimers.values())
         clearTimeout(timer);
     if (backupTimer)

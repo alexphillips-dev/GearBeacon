@@ -2157,6 +2157,43 @@ async function testLatestBackup(location) {
   finally { button.disabled = false; }
 }
 
+function updateNotesLink(value) {
+  try { const url=new URL(value); return ['https:','http:'].includes(url.protocol) && !url.username && !url.password ? url.href : null; }
+  catch { return null; }
+}
+
+function renderUpdateNotice(result) {
+  const position=activityReadingPosition();
+  const notice=$('appUpdateNotice'), button=$('appUpdateButton');
+  const visible=Boolean(result?.verified && result.updateAvailable && /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(result.latestVersion));
+  if (visible) {
+    const text=`update available · v${result.latestVersion}`;
+    if (button.textContent !== text) button.textContent=text;
+    const notes=updateNotesLink(result.releaseNotesUrl);
+    button.href=notes || '#settings';
+    if (notes) { button.target='_blank'; button.rel='noopener noreferrer'; }
+    else { button.removeAttribute('target'); button.removeAttribute('rel'); }
+    button.title=notes ? `Read ${result.channel} update notes (opens in a new tab)` : 'View update details';
+  } else if (notice.contains(document.activeElement)) $('tabSettings').focus({preventScroll:true});
+  notice.classList.toggle('hidden',!visible);
+  restoreActivityReadingPosition(position);
+}
+
+function renderUpdateResult(result) {
+  const resultEl=$('updateResult');
+  resultEl.classList.remove('hidden'); resultEl.classList.toggle('update-available',Boolean(result.updateAvailable));
+  const notes=updateNotesLink(result.releaseNotesUrl), download=updateNotesLink(result.downloadUrl);
+  const link=notes ? ` <a href="${escapeHtml(notes)}" target="_blank" rel="noopener noreferrer">Release notes ↗</a>` : '';
+  const warnings=[...(result.compatibilityWarnings || []),result.warning].filter(Boolean).map(item=>`<br><span class="warning-text">${escapeHtml(item)}</span>`).join('');
+  const channel=escapeHtml(result.channel || 'configured');
+  if (result.updateAvailable) {
+    resultEl.innerHTML=`<strong>GearBeacon V${escapeHtml(result.latestVersion)} is available (${channel}).</strong>${link}${download ? ` <a href="${escapeHtml(download)}" target="_blank" rel="noopener noreferrer">Downloads ↗</a>` : ''}${result.releaseNotes ? `<br>${escapeHtml(result.releaseNotes)}` : ''}${warnings}`;
+  } else {
+    const title=!result.verified || result.stale ? 'Update status unavailable.' : result.warning ? 'No newer version confirmed.' : 'No update available.';
+    resultEl.innerHTML=`<strong>${title}</strong> Running GearBeacon V${escapeHtml(result.currentVersion)} on ${channel}.${warnings}`;
+  }
+}
+
 async function checkUpdates() {
   const button = $('updateBtn');
   const resultEl = $('updateResult');
@@ -2164,15 +2201,8 @@ async function checkUpdates() {
   button.textContent = 'Checking…';
   try {
     const result = await api('/api/update/check');
-    resultEl.classList.remove('hidden', 'update-available');
-    if (result.updateAvailable) {
-      resultEl.classList.add('update-available');
-      const link = result.downloadUrl ? ` <a href="${escapeHtml(result.downloadUrl)}" target="_blank" rel="noopener">Download V${escapeHtml(result.latestVersion)} ↗</a>` : '';
-      const warnings = (result.compatibilityWarnings || []).map((item) => `<br><span class="warning-text">${escapeHtml(item)}</span>`).join('');
-      resultEl.innerHTML = `<strong>GearBeacon V${escapeHtml(result.latestVersion)} is available.</strong>${link}${result.releaseNotes ? `<br>${escapeHtml(result.releaseNotes)}` : ''}${warnings}`;
-    } else {
-      resultEl.innerHTML = `<strong>You're up to date.</strong> GearBeacon V${escapeHtml(result.currentVersion)} is the latest version on the configured update channel.${result.warning ? `<br>${escapeHtml(result.warning)}` : ''}`;
-    }
+    if (app.status) app.status.update=result;
+    renderUpdateResult(result); renderUpdateNotice(result);
   } catch (err) {
     resultEl.classList.remove('hidden');
     resultEl.textContent = `Update check failed: ${err.message}`;
@@ -2288,6 +2318,7 @@ async function performRefresh(background) {
     app.browserOffline = false;
     app.reconnectPending = false;
     app.status = status;
+    renderUpdateNotice(status.update);
     if (views) { app.savedViews = views.views || []; app.lastViewsRefresh = Date.now(); }
     app.catalogVariants = (products.products || []).filter((product) => product.variantId);
     app.products = (products.products || []).filter((product) => !product.variantId || product.watched);
@@ -3387,6 +3418,11 @@ $('exportPlainBtn').addEventListener('click', () => exportData(false));
 $('importBtn').addEventListener('click', () => $('importFile').click());
 $('importFile').addEventListener('change', () => importDataFile($('importFile').files?.[0]));
 $('updateBtn').addEventListener('click', checkUpdates);
+$('appUpdateButton').addEventListener('click', event => {
+  if (updateNotesLink(app.status?.update?.releaseNotesUrl)) return;
+  event.preventDefault(); openSettingsSection('general','application');
+  if (app.status?.update) renderUpdateResult(app.status.update);
+});
 $('prepareUpdateBtn').addEventListener('click', prepareUpdate);
 $('saveNotificationPrefs').addEventListener('click', saveNotificationPreferences);
 $('testNotificationBtn').addEventListener('click', testServerNotification);

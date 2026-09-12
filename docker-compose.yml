@@ -2,7 +2,11 @@ services:
   gearbeacon:
     image: "ghcr.io/alexphillips-dev/gearbeacon:${GEARBEACON_IMAGE_TAG:-latest}"
     pull_policy: missing
-    build: .
+    build:
+      context: .
+      args:
+        BUILD_BRANCH: "${GEARBEACON_BUILD_BRANCH:-main}"
+        VCS_REF: "${GEARBEACON_BUILD_COMMIT:-unknown}"
     restart: unless-stopped
     read_only: true
     cap_drop:
@@ -25,6 +29,10 @@ services:
       GEARBEACON_BIND_HOST: "0.0.0.0"
       GEARBEACON_DATA_DIR: "/data"
       GEARBEACON_IMAGE: "ghcr.io/alexphillips-dev/gearbeacon:${GEARBEACON_IMAGE_TAG:-latest}"
+      GEARBEACON_UPDATE_CHANNEL: "${GEARBEACON_UPDATE_CHANNEL:-auto}"
+      GEARBEACON_AUTO_UPDATE_CHECKS: "${GEARBEACON_AUTO_UPDATE_CHECKS:-1}"
+      GEARBEACON_GITHUB_RELEASE_API: "${GEARBEACON_GITHUB_RELEASE_API-https://api.github.com/repos/alexphillips-dev/GearBeacon/releases/latest}"
+      GEARBEACON_UPDATE_MANIFEST_URL: "${GEARBEACON_UPDATE_MANIFEST_URL:-}"
       GEARBEACON_SETUP_TOKEN: "${GEARBEACON_SETUP_TOKEN:-}"
       GEARBEACON_OWNER_PASSWORD: "${GEARBEACON_OWNER_PASSWORD:-}"
       GEARBEACON_PUBLIC_BASE_URL: "${GEARBEACON_PUBLIC_BASE_URL:-}"

@@ -1,5 +1,7 @@
 FROM node:24-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf
 ARG VCS_REF=unknown
+ARG BUILD_BRANCH=main
+ARG PACKAGE_VERSION=
 ARG IMAGE_NAME=ghcr.io/alexphillips-dev/gearbeacon
 WORKDIR /app
 LABEL org.opencontainers.image.source="https://github.com/alexphillips-dev/GearBeacon" \
@@ -15,6 +17,8 @@ RUN apk upgrade --no-cache libcrypto3 libssl3 \
     && chown node:node /data
 ENV NODE_ENV=production \
     GEARBEACON_BUILD_COMMIT=$VCS_REF \
+    GEARBEACON_BUILD_BRANCH=$BUILD_BRANCH \
+    GEARBEACON_PACKAGE_VERSION=$PACKAGE_VERSION \
     GEARBEACON_IMAGE=$IMAGE_NAME \
     PORT=8787 \
     GEARBEACON_ACCESS_MODE=private \

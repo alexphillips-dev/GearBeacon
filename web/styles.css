@@ -121,6 +121,9 @@ button { cursor: pointer; }
 .settings-result.error { border-color:var(--bad); color:var(--bad); }
 .shell { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 28px 0 56px; }
 .topbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 24px; }
+.update-notice { display:flex; margin:-8px 0 16px; }
+.update-available-button { display:inline-flex; align-items:center; min-height:36px; max-width:100%; padding:8px 12px; border:1px solid color-mix(in srgb,var(--price-drop) 45%,var(--border)); border-radius:9px; background:color-mix(in srgb,var(--price-drop) 8%,var(--panel)); color:var(--price-drop); font-size:12px; font-weight:700; line-height:1.4; text-decoration:none; overflow-wrap:anywhere; }
+.update-available-button:hover { background:color-mix(in srgb,var(--price-drop) 14%,var(--panel)); border-color:var(--price-drop); }
 .brand-wrap { display: flex; align-items: center; gap: 13px; }
 .brand-icon { width: 46px; height: 46px; display: block; object-fit: contain; flex: 0 0 auto; }
 h1 { font-size: 22px; line-height: 1; margin: 0 0 6px; letter-spacing: -.03em; }

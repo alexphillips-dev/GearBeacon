@@ -6,6 +6,9 @@ The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. 
 
 ### Unreleased development updates
 
+- Added a compact blue `update available · vX.Y.Z` button below the main header on every tab. It opens matching release notes in a new tab, or Settings > General > Application when no notes link is available, and preserves Activity reading position and keyboard focus when it appears.
+- Update checks now run on server startup and daily, with shared results across browsers and retry/rate-limit handling. Main installations follow published stable releases; dev installations compare the running commit with dev, including newer commits with the same version. Source, packaged, and container builds retain channel/commit identity. Downloads and installation remain owner-initiated. See [update checks and channels](UPDATES.md).
+
 - Added consistent vertical spacing between the Store choices, field rows, and access options in Settings > General > Stores & access, including fields that stack on mobile, so labels no longer crowd the controls above them.
 
 - Replaced the card and alert-rule “Why?” controls with compact question-mark buttons, descriptive accessible labels, and tooltips. Fixed the shared alert explanation dialog's cramped edges and horizontal scrollbar with padded content, a contained sticky header, and wrapping long names; empty result messages no longer leave a blank bar below the explanation.

@@ -140,6 +140,7 @@ jobs:
           STAGE="GearBeacon-v${VERSION}-source"
           mkdir -p "$STAGE" dist/packages "$RUNNER_TEMP/source-rehearsal"
           rsync -a ./ "$STAGE/" --exclude '/.git/' --exclude '/node_modules/' --exclude '/dist/' --exclude '/release-assets/' --exclude "/$STAGE/"
+          node scripts/build-metadata.mjs "$STAGE" "$VERSION"
           "${{ steps.syft.outputs.cmd }}" "dir:$STAGE" -o "spdx-json=dist/packages/$STAGE.spdx.json"
           zip -qr "dist/packages/$STAGE.zip" "$STAGE"
           (cd dist/packages && sha256sum "$STAGE.zip" > "$STAGE.zip.sha256")

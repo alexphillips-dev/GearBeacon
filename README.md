@@ -27,7 +27,7 @@ The current `dev` checkout also includes named views, a compact Watchlist, budge
 - **Flexible alerts:** Restocks, price drops, available-at-target conditions, and collection readiness; per-item rules, pauses, quiet hours, digests, and collection-only overrides. The current dev checkout adds [delivery routes, optional expiry, and freshness indicators](docs/ALERT_DELIVERY.md).
 - **Multiple channels:** ntfy, Discord, Gotify, SMTP email, and signed webhooks, with durable delivery and bounded retries. Browser popups are also available while the page is running.
 - **Useful evidence:** Observed stock timelines, 7/30/90-day price insights, and searchable, paginated Activity with delivery outcomes and exports.
-- **Recovery and oversight:** Validated SQLite backups, encrypted exports, secondary recovery copies, restore tests, diagnostics, and owner-controlled updates.
+- **Recovery and oversight:** Validated SQLite backups, encrypted exports, secondary recovery copies, restore tests, diagnostics, and owner-controlled updates. The current dev checkout adds [automatic update notices for the installed branch](docs/UPDATES.md).
 
 Complete valid restocks are recorded immediately; sellouts, ordinary price/status changes, and catalog disappearance require two matching complete observations. Failed or partial checks preserve the last-known-good state. GearBeacon observes catalog data; it does not predict stock, reserve items, or automate checkout.
 
