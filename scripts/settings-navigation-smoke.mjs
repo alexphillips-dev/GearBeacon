@@ -43,6 +43,24 @@ export async function testSettingsNavigation({ evaluate, waitForBrowser, reloadB
             };
           })()`);
           assert(state.selection === `${category}/${section}` && state.label && state.selectedCount === 1 && state.tabStops === 1 && state.visiblePanels === 1 && state.visible && !state.overflow && state.contained && !state.leakedControls, `Settings ${category}/${section} (${theme}, ${width}px) is inaccessible or overflows: ${JSON.stringify(state)}`);
+          if (category === 'general' && section === 'stores') {
+            const spacing = await evaluate(`(() => {
+              const form=document.getElementById('appConfigForm');
+              const blocks=[...form.querySelector('fieldset').children].filter(node=>node.tagName!=='LEGEND').map(node=>node.getBoundingClientRect());
+              const gaps=blocks.slice(1).map((bounds,index)=>bounds.top-blocks[index].bottom);
+              for (const row of form.querySelectorAll('.form-row')) {
+                const fields=[...row.children].map(node=>node.getBoundingClientRect());
+                if (fields[1].top>fields[0].top+1) gaps.push(fields[1].top-fields[0].bottom);
+              }
+              return gaps;
+            })()`);
+            assert(spacing.length>=4 && spacing.every(gap=>gap>=12), `Stores & access labels crowd the preceding controls (${theme}, ${width}px): ${JSON.stringify(spacing)}`);
+            if (screenshotRoot && width!==640) {
+              await evaluate("document.getElementById('settingsGeneralStoresPanel').scrollIntoView({block:'start'})");
+              const capture=await cdp.send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});
+              await writeFile(join(screenshotRoot,`settings-stores-${theme}-${width}.png`),Buffer.from(capture.data,'base64'));
+            }
+          }
           if (width !== 640) await assertAccessible(`Settings ${category}/${section} (${theme}, ${width}px)`);
           if (width === 390 && category === 'operations' && section === 'logs') {
             await evaluate("document.getElementById('operationsLogs').focus(); document.getElementById('operationsLogs').scrollTop=0");

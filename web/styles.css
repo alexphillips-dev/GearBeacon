@@ -416,6 +416,9 @@ button.ghost { background: transparent; }
 .wide-card { grid-column:1 / -1; }
 .config-form, .channel-config { display:flex; flex-direction:column; gap:14px; }
 .config-form fieldset, .channel-block { border:1px solid var(--border); border-radius:12px; padding:14px; min-width:0; }
+#appConfigForm fieldset { display:grid; gap:14px; }
+#appConfigForm .form-row { row-gap:14px; }
+#appConfigForm .inline-check { margin-top:0; }
 .config-form legend, .channel-block legend { color:var(--text); font-size:12px; font-weight:750; padding:0 7px; }
 .channel-config { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); margin-top:16px; }
 .channel-block { display:flex; flex-direction:column; gap:10px; }
