@@ -6,6 +6,9 @@ The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. 
 
 ### Unreleased development updates
 
+- Added current availability and check freshness, current watch/collection membership, exact variant identity, and event-price comparisons against the current target to individual Activity cards and details. A 30-day observed-low indicator requires sufficient retained history for that Store and exact item, ending at the event. Original event snapshots remain unchanged.
+- Activity delivery badges now name suppression reasons and successful channels. Added Today/Yesterday/date separators and totals for all matching events across pages, using the configured timezone for headings and calendar-date filters. Every event remains an individual 64-pixel card, with automatic arrivals and reading/focus preservation. See the [Activity guide](ACTIVITY.md).
+
 - Split each Settings category into compact section tabs, including separate notification, recovery, security, privacy, and Operations pages. Each category remembers its last section in this browser; switching sections preserves unsaved inputs. Added scoped keyboard navigation, mobile wrapping, and links that reveal the relevant settings section. See the [Settings navigation guide](SETTINGS.md).
 
 - Activity restock rows now show “In stock” in green to match the restock icon, including a darker light-theme shade that keeps the text readable on hover.

@@ -2766,7 +2766,7 @@ function eventServerAlertSummary(event, decision, queueRows = [], logRows = []) 
         return { state: attempts ? 'retrying' : mode === 'digest' ? 'digest' : mode === 'after-quiet-hours' ? 'quiet' : 'queued', label, detail: `${explanation}${channelText ? ` through ${channelText}` : ''}.`, channels, mode, deliverAt: next };
     }
     if (sentChannels.length || statuses.has('sent'))
-        return { state: 'sent', label: 'Sent', detail: `Server alert sent${channelText ? ` through ${channelText}` : ''}.`, channels, mode: event.serverAlert?.mode || null, deliverAt: event.serverAlert?.deliverAt || null };
+        return { state: 'sent', label: sentChannels.length === 1 ? `Sent · ${displayChannel(sentChannels[0])}` : sentChannels.length > 1 ? `Sent · ${sentChannels.length} channels` : 'Sent', detail: `Server alert sent${channelText ? ` through ${channelText}` : ''}.`, channels, mode: event.serverAlert?.mode || null, deliverAt: event.serverAlert?.deliverAt || null };
     if (statuses.has('cancelled')) {
         const expired = currentRows.some(row => (row.last_error || row.detail) === 'Alert expired before delivery.');
         const removed = currentRows.some(row => (row.last_error || row.detail) === 'Channel removed from this alert route.');
@@ -2787,8 +2787,11 @@ function eventServerAlertSummary(event, decision, queueRows = [], logRows = []) 
             disabled: 'This event type was disabled by your alert rules.',
             cooldown: 'The alert was suppressed by the configured cooldown.',
             'unsupported-event': 'This event type does not send server alerts.',
+            'variant-baseline': 'The initial discovery of an exact variant does not send a new-product alert.',
+            'collection-disabled': 'Readiness alerts for this collection are disabled.',
         };
-        return { state: 'muted', label: reason === 'not-watched' ? 'No alert' : 'Muted', detail: reasons[reason] || 'No server alert was sent for this event.', channels: [], mode: null, deliverAt: null };
+        const labels = { 'not-watched': 'Not watched', paused: 'Alerts paused', purchased: 'Purchased', disabled: 'Rule filtered', cooldown: 'Cooldown', 'collection-only': 'Collection only', 'collection-disabled': 'Collection alerts off', 'condition-not-met': 'Target not met', 'condition-already-matched': 'Already alerted', 'variant-baseline': 'Variant discovered', 'unsupported-event': 'No alert for this type' };
+        return { state: 'muted', reason, label: labels[reason] || 'No alert', detail: reasons[reason] || 'No server alert was sent for this event.', channels: [], mode: null, deliverAt: null };
     }
     if (snapshot?.state === 'queued')
         return { state: 'queued', label: 'Alerted', detail: 'A server alert was queued when this change was detected; detailed delivery history is no longer available.', channels: snapshot.channels || [], mode: snapshot.mode || null, deliverAt: snapshot.deliverAt || null };
@@ -3954,6 +3957,30 @@ function operationsSummary() {
         onboardingComplete: getSetting('onboarding_complete', '0') === '1',
     };
 }
+// Calendar-date filters use the same timezone as the feed headings. Binary search
+// also handles 23/25-hour days and zones whose clocks change at midnight.
+function activityDayBoundary(value, timeZone, end = false) {
+    const date = new Date(`${value}T00:00:00.000Z`);
+    if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== value)
+        throw new Error('Activity dates must be valid ISO dates.');
+    if (end)
+        date.setUTCDate(date.getUTCDate() + 1);
+    const target = date.toISOString().slice(0, 10);
+    const formatter = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
+    const key = (at) => {
+        const parts = Object.fromEntries(formatter.formatToParts(new Date(at)).map(part => [part.type, part.value]));
+        return `${parts.year}-${parts.month}-${parts.day}`;
+    };
+    let low = date.getTime() - 36 * 3600000, high = date.getTime() + 36 * 3600000;
+    while (low < high) {
+        const middle = Math.floor((low + high) / 2);
+        if (key(middle) < target)
+            low = middle + 1;
+        else
+            high = middle;
+    }
+    return new Date(low).toISOString();
+}
 function activityFilterSql(url) {
     const scope = String(url.searchParams.get('scope') || url.searchParams.get('region') || DEFAULT_REGION).toLowerCase();
     const regions = scope === 'all' ? [...ACTIVE_REGIONS] : ACTIVE_REGIONS.includes(scope) ? [scope] : null;
@@ -3974,15 +4001,22 @@ function activityFilterSql(url) {
         conditions.push("(lower(COALESCE(e.name,'')) LIKE ? OR lower(COALESCE(e.slug,'')) LIKE ?)");
         parameters.push(`%${search}%`, `%${search}%`);
     }
+    let timeZone;
+    try {
+        timeZone = validTimeZone(url.searchParams.get('timeZone') || 'UTC');
+    }
+    catch {
+        throw new Error('Activity timezone must be a valid IANA timezone.');
+    }
     const normalizeDate = (value, end = false) => {
         if (!value)
             return null;
         const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
-        const date = new Date(dateOnly ? `${value}T00:00:00.000Z` : value);
+        if (dateOnly)
+            return activityDayBoundary(value, timeZone, end);
+        const date = new Date(value);
         if (Number.isNaN(date.valueOf()))
             throw new Error('Activity dates must be valid ISO dates.');
-        if (end && dateOnly)
-            date.setUTCDate(date.getUTCDate() + 1);
         return date.toISOString();
     };
     const from = normalizeDate(String(url.searchParams.get('from') || ''));
@@ -4006,7 +4040,76 @@ function activityFilterSql(url) {
         conditions.push("(EXISTS (SELECT 1 FROM notification_queue nq WHERE nq.event_id=e.id AND nq.status='failed') OR EXISTS (SELECT 1 FROM notification_log nl WHERE nl.event_id=e.id AND nl.status='failed'))");
     if (delivery === 'not-sent')
         conditions.push('NOT EXISTS (SELECT 1 FROM notification_queue nq WHERE nq.event_id=e.id) AND NOT EXISTS (SELECT 1 FROM notification_log nl WHERE nl.event_id=e.id)');
-    return { where: conditions.join(' AND '), parameters, filters: { scope, type, search, from, to, delivery } };
+    return { where: conditions.join(' AND '), parameters, filters: { scope, type, search, from, to, delivery, timeZone } };
+}
+// This is read-time context, separate from the immutable event and alert snapshot.
+// A per-response cache avoids repeating current-product queries for busy feeds.
+function activityEventContext(event, cache) {
+    const region = event.region || DEFAULT_REGION;
+    const slug = event.slug;
+    if (event.type === 'collection_ready') {
+        const key = `collections:${region}`;
+        if (!cache.has(key))
+            cache.set(key, watchCollections(region));
+        const collection = cache.get(key).find(item => item.id === event.collectionId);
+        const ready = collection?.readiness;
+        return { asOf: isoNow(), collection: true, current: collection ? {
+                status: collection.archived ? 'Archived' : ready.ready ? 'Ready' : 'Not ready',
+                inStock: null, freshness: { state: coverageFresh(region) && !ready.unknown && (!collection.budgetRequired || ready.budget?.state !== 'unknown') ? 'confirmed' : 'unknown', checkedAt: ready.checkedAt },
+            } : { status: null, inStock: null, freshness: { state: 'unknown', checkedAt: null } },
+            watch: { watched: false, parentWatched: false, collections: collection ? [{ id: collection.id, name: collection.name, archived: collection.archived, viaParent: false }] : [] }, price: null, identity: null };
+    }
+    const key = JSON.stringify([region, slug]);
+    if (!cache.has(key)) {
+        const product = states[region]?.products[slug];
+        const parentSlug = product?.parentSlug || event.parentSlug;
+        const watched = Boolean(states[region]?.watchlist.includes(slug));
+        const parentWatched = Boolean(parentSlug && states[region]?.watchlist.includes(parentSlug));
+        const collections = db.prepare(`SELECT c.id,c.name,c.archived,m.slug FROM watch_collection_members m
+      JOIN watch_collections c ON c.region=m.region AND c.id=m.collection_id WHERE m.region=? AND (m.slug=? OR m.slug=?) ORDER BY c.name`).all(region, slug || '', parentSlug || '');
+        const unique = new Map();
+        for (const item of collections) {
+            if (!unique.has(item.id) || item.slug === slug)
+                unique.set(item.id, { id: item.id, name: item.name, archived: Boolean(item.archived), viaParent: item.slug !== slug });
+        }
+        const exactPriceScope = Boolean(product) && (Boolean(product.variantId) || !Object.values(states[region].products).some(item => item.parentSlug === slug));
+        cache.set(key, {
+            current: { status: product ? product.unlisted ? 'Unlisted' : product.inStock ? 'In stock' : product.comingSoon ? 'Coming soon' : 'Sold out' : null,
+                inStock: product ? Boolean(product.inStock && !product.unlisted) : null, price: product?.price || null, freshness: productFreshness(product, region) },
+            watch: { watched, parentWatched, collections: [...unique.values()] },
+            identity: { parentSlug: parentSlug || null, variantId: product?.variantId || null, variantTitle: product?.variantTitle || null, sku: product?.sku || null },
+            exactPriceScope, targetPrice: watched ? watchRule(slug, region).targetPrice : null,
+        });
+    }
+    const current = cache.get(key);
+    const value = typeof event.priceValue === 'number' && Number.isFinite(event.priceValue) ? event.priceValue : priceValue(event.price);
+    const identity = { parentSlug: event.parentSlug || current.identity.parentSlug, variantId: event.variantId || current.identity.variantId, variantTitle: event.variantTitle || current.identity.variantTitle, sku: event.sku || current.identity.sku };
+    const exactPriceScope = current.exactPriceScope && (!event.variantId || event.variantId === current.identity.variantId);
+    let low30 = null;
+    const detected = new Date(event.detectedAt).getTime();
+    if (exactPriceScope && value !== null && Number.isFinite(detected)) {
+        const since = new Date(detected - 30 * 86400000).toISOString(), until = new Date(detected).toISOString();
+        // End the window at this event; later bargains must not rewrite its comparison.
+        const stats = db.prepare(`SELECT MIN(price_value) AS lowest,COUNT(price_value) AS samples,
+      MIN(started_at) AS firstObservedAt, SUM(MAX(0,julianday(MIN(ended_at,?))-julianday(MAX(started_at,?))))*86400 AS observedSeconds
+      FROM inventory_history WHERE region=? AND slug=? AND currency=? AND ended_at>=? AND started_at<=? AND price_value IS NOT NULL`).get(until, since, region, slug, REGIONS[region].currency, since, until);
+        low30 = { ...stats, since, until, fullWindow: Boolean(stats.firstObservedAt && stats.firstObservedAt <= since && HISTORY_RETENTION_DAYS >= 30 && stats.observedSeconds > 0),
+            isLowest: false };
+        low30.isLowest = low30.fullWindow && stats.lowest !== null && value <= stats.lowest;
+    }
+    return { asOf: isoNow(), current: current.current, watch: current.watch, identity,
+        price: { currency: REGIONS[region]?.currency || null, exactPriceScope, eventPrice: value, targetPrice: exactPriceScope ? current.targetPrice : null,
+            targetDifference: exactPriceScope && value !== null && current.targetPrice !== null ? Math.round((value - current.targetPrice) * 100) / 100 : null, low30 } };
+}
+function activitySummary(filter, ceiling) {
+    const difference = `COALESCE(json_extract(e.data_json,'$.priceDifference'),json_extract(e.data_json,'$.priceValue')-json_extract(e.data_json,'$.previousPriceValue'),CASE WHEN json_extract(e.data_json,'$.alertKind')='price_drop' THEN -1 END)`;
+    const counts = db.prepare(`SELECT COUNT(*) AS total,
+    SUM(e.type='restock') AS restocks,SUM(e.type='sold_out') AS soldOut,SUM(e.type='price_change') AS priceChanges,
+    SUM(CASE WHEN e.type='price_change' AND ${difference}<0 THEN 1 ELSE 0 END) AS priceDrops,
+    SUM(CASE WHEN e.type='price_change' AND ${difference}>0 THEN 1 ELSE 0 END) AS priceIncreases,
+    SUM(e.type='status_change') AS statusChanges,SUM(e.type='new_product') AS newProducts,SUM(e.type='collection_ready') AS collectionReady
+    FROM events e WHERE ${filter.where} AND e.rowid<=?`).get(...filter.parameters, ceiling);
+    return { ...Object.fromEntries(Object.entries(counts).map(([key, value]) => [key, Number(value) || 0])), timeZone: filter.filters.timeZone, asOf: isoNow() };
 }
 function enrichActivityEvents(events) {
     const eventIds = events.map((event) => event.id).filter(Boolean);
@@ -4028,9 +4131,10 @@ function enrichActivityEvents(events) {
             }
         }
     }
+    const contextCache = new Map();
     return events.map((event) => regionContext.run(event.region || DEFAULT_REGION, () => {
         const decision = notificationDecision(event);
-        return { ...event, notificationDecision: decision, serverAlert: eventServerAlertSummary(event, decision, queueByEvent.get(event.id) || [], logsByEvent.get(event.id) || []) };
+        return { ...event, context: activityEventContext(event, contextCache), notificationDecision: decision, serverAlert: eventServerAlertSummary(event, decision, queueByEvent.get(event.id) || [], logsByEvent.get(event.id) || []) };
     }));
 }
 function activityQuery(url, { exportLimit = null } = {}) {
@@ -4077,7 +4181,8 @@ function activityQuery(url, { exportLimit = null } = {}) {
     const offset = exportLimit ? 0 : (page - 1) * limit;
     const rows = db.prepare(`SELECT e.data_json FROM events e WHERE ${where} ORDER BY e.detected_at DESC,e.id DESC LIMIT ? OFFSET ?`).all(...parameters, limit, offset);
     const events = enrichActivityEvents(rows.map((row) => safeJsonParse(row.data_json, null)).filter(Boolean));
-    return { events, count, page, limit, pages, snapshot, newCount, snapshotReset, filters: filter.filters, truncated: Boolean(exportLimit && count > exportLimit) };
+    const summary = activitySummary(filter, after !== null ? ceiling : Number(latest?.sequence || 0));
+    return { events, count, page, limit, pages, snapshot, newCount, snapshotReset, summary, filters: filter.filters, truncated: Boolean(exportLimit && count > exportLimit) };
 }
 function csvCell(value) {
     const text = value == null ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value);

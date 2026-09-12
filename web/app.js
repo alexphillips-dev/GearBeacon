@@ -239,7 +239,7 @@ function humanStatus(value) {
 function exactEventTime(event) {
   const date = new Date(event.detectedAt);
   if (Number.isNaN(date.valueOf())) return String(event.detectedAt || 'Unknown time');
-  const timeZone = event.notificationTimeZone || app.config?.config?.notificationTimeZone;
+  const timeZone = app.activity?.summary?.timeZone || app.config?.config?.notificationTimeZone || event.notificationTimeZone;
   try { return new Intl.DateTimeFormat(undefined, { dateStyle:'full', timeStyle:'long', ...(timeZone ? { timeZone } : {}) }).format(date); }
   catch { return date.toLocaleString(); }
 }
@@ -304,6 +304,87 @@ function serverAlertTitle(event) {
   }
   return detail;
 }
+function activityTimeZone() { return app.activity.summary?.timeZone || app.config?.config?.notificationTimeZone || Intl.DateTimeFormat().resolvedOptions().timeZone; }
+function activityDateKey(value, timeZone = activityTimeZone()) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return 'unknown';
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {timeZone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(date).map(part => [part.type,part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+function activityTime(event) {
+  if (Date.now() - new Date(event.detectedAt).getTime() < 86400000) return relativeTime(event.detectedAt);
+  try { return new Intl.DateTimeFormat(undefined,{timeZone:activityTimeZone(),dateStyle:'short',timeStyle:'short'}).format(new Date(event.detectedAt)); }
+  catch { return relativeTime(event.detectedAt); }
+}
+function activityCurrentStatus(event) {
+  const current = event.context?.current;
+  if (!current) return {label:'',tone:'',title:''};
+  const freshness = current.freshness || {};
+  const expired = freshness.expiresAt && new Date(freshness.expiresAt).getTime() < Date.now();
+  const state = expired && freshness.state === 'confirmed' ? 'stale' : freshness.state;
+  const detail = `${current.status ? `Last known: ${current.status}${current.price ? ` · ${current.price}` : ''}. ` : ''}${freshness.checkedAt ? `Checked ${alertDate(freshness.checkedAt)}.` : 'No complete check is available for this item.'}`;
+  if (state !== 'confirmed') return {label:state === 'pending' ? 'Confirming change' : state === 'stale' ? 'Checks delayed' : 'Status unconfirmed',tone:'uncertain',title:detail};
+  if (event.context.collection) return {label:current.status === 'Ready' ? 'Still ready' : current.status === 'Archived' ? 'Archived' : 'No longer ready',tone:current.status === 'Ready' ? 'available' : 'unavailable',title:detail};
+  if (current.status === 'Unlisted') return {label:'Now unlisted',tone:'uncertain',title:detail};
+  if (current.status === 'Coming soon') return {label:'Now coming soon',tone:'uncertain',title:detail};
+  if (current.inStock) return {label:event.type === 'restock' || event.inStock === true ? 'Still in stock' : 'Now in stock',tone:'available',title:detail};
+  return {label:event.type === 'restock' || event.inStock === true ? 'Sold out since' : 'Still sold out',tone:'unavailable',title:detail};
+}
+function activityContextParts(event) {
+  const context = event.context;
+  if (!context) return {current:activityCurrentStatus(event),watch:'',watchTitle:'',parts:[]};
+  const watch = context.collection ? 'Collection' : context.watch.watched ? 'Watching' : context.watch.parentWatched ? 'Parent watched' : '';
+  const watchTitle = context.collection ? 'Collection readiness event' : context.watch.watched ? 'Currently on your watchlist' : 'The parent product is currently watched; this exact variant is not watched separately';
+  const parts = [];
+  const comparison = context.price;
+  if (comparison?.targetDifference !== null && comparison?.targetDifference !== undefined) {
+    const difference = comparison.targetDifference;
+    parts.push({kind:'target',text:difference === 0 ? 'At your target' : `${activityMoney(event,difference)} ${difference < 0 ? 'below' : 'above'} target`,title:`Event price compared with your current target of ${activityMoney(event,comparison.targetPrice)} for this exact item.`,tone:difference <= 0 ? 'available' : ''});
+  }
+  if (comparison?.low30?.isLowest) parts.push({kind:'low',text:'Lowest observed in 30 days',title:'Lowest price GearBeacon recorded for this Store and exact item during the 30 days ending at this event. Monitoring gaps may exist.',tone:'price-low'});
+  if (context.watch.collections.length) {
+    const names = context.watch.collections.map(item => `${item.name}${item.archived ? ' (archived)' : ''}${item.viaParent ? ' (parent product)' : ''}`);
+    parts.push({kind:'collection',text:names.length === 1 ? `Collection: ${names[0]}` : `${names.length} collections`,title:`Current membership: ${names.join('; ')}`,tone:''});
+  }
+  const identity = context.identity;
+  if (identity?.variantId) parts.push({kind:'variant',text:`Variant: ${identity.variantTitle || identity.sku || identity.variantId}`,title:[identity.variantTitle,identity.sku ? `SKU: ${identity.sku}` : ''].filter(Boolean).join(' · '),tone:''});
+  return {current:activityCurrentStatus(event),watch,watchTitle,parts};
+}
+function activityContextDetails(event) {
+  const context = event.context;
+  if (!context) return '';
+  const info = activityContextParts(event), current = context.current, comparison = context.price;
+  const money = value => value === null || value === undefined ? 'Unknown' : new Intl.NumberFormat(undefined,{style:'currency',currency:comparison.currency || 'USD'}).format(value);
+  const identity = context.identity;
+  const membership = context.watch.collections.map(item => `${item.name}${item.archived ? ' (archived)' : ''}${item.viaParent ? ' (parent product)' : ''}`).join('; ') || 'None';
+  const priceDetail = comparison ? `<article class="settings-card"><span class="settings-kicker">Price context at detection</span><h3>Price comparison</h3><dl class="settings-details"><div><dt>Event price</dt><dd>${escapeHtml(money(comparison.eventPrice))}</dd></div><div><dt>Current target</dt><dd>${comparison.targetPrice === null ? 'Not set for this exact item' : escapeHtml(money(comparison.targetPrice))}</dd></div>${info.parts.filter(part => part.kind === 'target').map(part => `<div><dt>Difference</dt><dd>${escapeHtml(part.text)}</dd></div>`).join('')}<div><dt>30-day observed low</dt><dd>${comparison.low30?.fullWindow ? escapeHtml(money(comparison.low30.lowest)) : 'Not enough recorded price history'}</dd></div></dl><p>${comparison.exactPriceScope ? 'Historical prices cover the same Store and exact item, ending at this event. Monitoring gaps may exist. Target comparisons use your current watch settings.' : !context.current.status ? 'This item is not in the current catalog, so a reliable current target comparison is unavailable.' : 'Choose an exact variant to compare prices reliably; parent prices can combine different variants.'}</p></article>` : '';
+  return `<div class="activity-evidence activity-context-details"><article class="settings-card"><span class="settings-kicker">Current context</span><h3>${escapeHtml(info.current.label)}</h3><p>${escapeHtml(info.current.title)}</p><dl class="settings-details"><div><dt>Latest known status</dt><dd>${escapeHtml(current.status || 'Unknown')}</dd></div>${current.price ? `<div><dt>Latest known price</dt><dd>${escapeHtml(current.price)}</dd></div>` : ''}${!context.collection ? `<div><dt>Watching now</dt><dd>${escapeHtml(info.watch || 'Not watched')}</dd></div><div><dt>Watched at detection</dt><dd>${typeof event.watchedAtDetection === 'boolean' ? event.watchedAtDetection ? 'Yes' : 'No' : 'Not recorded'}</dd></div>` : ''}<div><dt>Collections now</dt><dd>${escapeHtml(membership)}</dd></div>${identity?.variantId ? `<div><dt>Exact variant</dt><dd>${escapeHtml(identity.variantTitle || identity.variantId)}</dd></div>` : ''}${identity?.sku ? `<div><dt>SKU</dt><dd>${escapeHtml(identity.sku)}</dd></div>` : ''}</dl></article>${priceDetail}</div>`;
+}
+function activityDatedRows(events, previousDay = null) {
+  const today = activityDateKey(new Date());
+  const yesterdayDate = new Date(`${today}T12:00:00Z`); yesterdayDate.setUTCDate(yesterdayDate.getUTCDate()-1);
+  const yesterday = yesterdayDate.toISOString().slice(0,10);
+  const rows = [];
+  for (const event of events) {
+    const day = activityDateKey(event.detectedAt);
+    if (day !== previousDay) {
+      const label = day === today ? 'Today' : day === yesterday ? 'Yesterday' : day === 'unknown' ? 'Date unavailable' : new Intl.DateTimeFormat(undefined,{timeZone:activityTimeZone(),weekday:'short',month:'short',day:'numeric',year:'numeric'}).format(new Date(event.detectedAt));
+      rows.push({id:`date:${day}`,day,label}); previousDay = day;
+    }
+    rows.push({id:`event:${event.id}`,event});
+  }
+  return rows;
+}
+function renderActivitySummary() {
+  const summary = app.activity.summary;
+  const container = $('activitySummary');
+  container.classList.toggle('hidden', !summary);
+  if (!summary) return;
+  const counts = [[summary.restocks,'restock','restocks'],[summary.soldOut,'sellout','sellouts'],[summary.priceDrops,'price drop','price drops'],[summary.priceIncreases,'price increase','price increases'],[summary.priceChanges-summary.priceDrops-summary.priceIncreases,'other price change','other price changes'],[summary.statusChanges,'status change','status changes'],[summary.newProducts,'new product','new products'],[summary.collectionReady,'collection ready','collections ready']];
+  const markup = `<span class="activity-summary-label">All matching activity <small>Dates: ${escapeHtml(summary.timeZone)}</small></span><span class="activity-summary-counts">${counts.filter(([count]) => count > 0).map(([count,singular,plural]) => `<span><b>${count}</b> ${count === 1 ? singular : plural}</span>`).join('') || '<span>No matching events</span>'}</span>`;
+  if (container.innerHTML !== markup) container.innerHTML = markup;
+}
+
 function toast(message, tone = 'neutral') {
   $('toast').textContent = message;
   $('toast').className = `toast ${tone}`;
@@ -380,7 +461,7 @@ function reconcileList(container, values, attribute, render, force = false, upda
   if (focused && document.activeElement !== focused) {
     const row = [...container.children].find(node => node.getAttribute(attribute) === focusKey);
     const target = focused.isConnected ? focused : focusIndex < 0 ? row : row?.querySelectorAll('button,a,input,select,[tabindex]')[focusIndex];
-    (target || (attribute === 'data-activity-event' ? $('activityType') : $('watchSearch')))?.focus({preventScroll:true});
+    (target || (attribute.startsWith('data-activity-') ? $('activityType') : $('watchSearch')))?.focus({preventScroll:true});
   }
   if (window.scrollX !== scroll.left || window.scrollY !== scroll.top) window.scrollTo(scroll);
 }
@@ -1216,15 +1297,33 @@ function renderEvents() {
     }).join('');
     const alert = e.serverAlert || { state:'no-channel', label:'No channel' };
     const exactTime = exactEventTime(e);
-    const activityLabel = `Open ${e.name} activity details. ${metadataText}. Server alert: ${alert.label}. Detected ${exactTime}.`;
-    return `<button class="event event-button ${escapeHtml(e.type)}${priceClass}" type="button" data-activity-event="${escapeHtml(e.id)}" aria-label="${escapeHtml(activityLabel)}">
+    const context = activityContextParts(e);
+    const contextParts = [context.current.label ? {kind:'current',text:context.current.label,title:context.current.title,tone:context.current.tone} : null,...context.parts].filter(Boolean);
+    const contextText = contextParts.map(part => `${part.text}. ${part.title}`).join(' ');
+    const contextHtml = contextParts.map(part => `<span class="event-context-part ${part.tone}" data-activity-context="${part.kind}" title="${escapeHtml(part.title)}">${escapeHtml(part.text)}</span>`).join('');
+    const activityLabel = `Open ${e.name} activity details. ${metadataText}. ${context.watch ? `${context.watchTitle}. ` : ''}${contextText} Server alert: ${alert.label}. Detected ${exactTime}.`;
+    return `<button class="event event-button ${escapeHtml(e.type)}${priceClass}" type="button" data-activity-event="${escapeHtml(e.id)}" data-activity-row="event:${escapeHtml(e.id)}" aria-label="${escapeHtml(activityLabel)}">
       <span class="event-icon" aria-hidden="true">${icon[e.type] || '•'}</span>
-      <span class="event-main"><strong>${escapeHtml(e.name)}</strong><span class="event-meta" title="${escapeHtml(metadataText)}">${metadataHtml}</span></span>
-      <span class="event-side"><span class="event-alert ${escapeHtml(alert.state)}" title="${escapeHtml(serverAlertTitle(e))}"><span class="event-alert-dot" aria-hidden="true"></span><span class="event-alert-label">${escapeHtml(alert.label)}</span></span><time datetime="${escapeHtml(e.detectedAt)}" title="${escapeHtml(exactTime)}">${escapeHtml(relativeTime(e.detectedAt))}</time></span>
+      <span class="event-main"><span class="event-title"><strong>${escapeHtml(e.name)}</strong>${context.watch ? `<span class="event-watch" title="${escapeHtml(context.watchTitle)}">${escapeHtml(context.watch)}</span>` : ''}</span><span class="event-meta" title="${escapeHtml(metadataText)}">${metadataHtml}</span>${contextHtml ? `<span class="event-context" title="${escapeHtml(contextText)}">${contextHtml}</span>` : ''}</span>
+      <span class="event-side"><span class="event-alert ${escapeHtml(alert.state)}" title="${escapeHtml(serverAlertTitle(e))}"><span class="event-alert-dot" aria-hidden="true"></span><span class="event-alert-label">${escapeHtml(alert.label)}</span></span><time datetime="${escapeHtml(e.detectedAt)}" title="${escapeHtml(exactTime)}">${escapeHtml(activityTime(e))}</time></span>
     </button>`;
   };
-  reconcileList($('activityLiveList'), arrivals, 'data-activity-event', renderEvent, false, updateActivityRow);
-  reconcileList($('activityList'), events, 'data-activity-event', renderEvent, false, updateActivityRow);
+  const renderRow = row => row.event ? renderEvent(row.event) : `<h3 class="activity-date-heading" data-activity-row="${escapeHtml(row.id)}">${escapeHtml(row.label)}</h3>`;
+  reconcileList($('activityLiveList'), activityDatedRows(arrivals), 'data-activity-row', renderRow, false, updateActivityRow);
+  const previousDay = arrivals.length && app.activity.page === 1 ? activityDateKey(arrivals.at(-1).detectedAt) : null;
+  reconcileList($('activityList'), activityDatedRows(events,previousDay), 'data-activity-row', renderRow, false, updateActivityRow);
+  renderActivitySummary();
+  if (app.activityDialogEvent && !$('activityDialog').classList.contains('hidden')) {
+    const updated = [...arrivals,...events].find(event => event.id === app.activityDialogEvent.id) || app.activityDialogEvent;
+    const panel = $('activityDialogBody').querySelector('.activity-context-details');
+    const markup = activityContextDetails(updated);
+    if (panel && markup && panel.outerHTML !== markup) {
+      const scroll = $('activityDialogBody').scrollTop;
+      panel.outerHTML = markup;
+      $('activityDialogBody').scrollTop = scroll;
+    }
+    app.activityDialogEvent = updated;
+  }
   $('activityLiveList').classList.toggle('hidden', !arrivals.length);
   $('activityList').classList.toggle('hidden', !events.length);
   const separatePage = arrivals.length > 0 && app.activity.page > 1;
@@ -1259,6 +1358,7 @@ function activityQueryParameters(page = app.activity.page || 1) {
     delivery:$('activityDelivery').value || 'all',
     page:String(page),
     limit:$('activityPageSize').value || '20',
+    timeZone:app.config?.config?.notificationTimeZone || Intl.DateTimeFormat().resolvedOptions().timeZone,
   });
   if ($('activitySearch').value.trim()) params.set('search', $('activitySearch').value.trim());
   if ($('activityFrom').value) params.set('from', $('activityFrom').value);
@@ -1292,6 +1392,7 @@ async function refreshActivity(page = app.activity.page || 1, { background = fal
     if (result.snapshotReset) result = await latestPage();
     if (stale()) return;
     const arrivals = [];
+    let summary = result.summary;
     if (result.newCount > 0) {
       const liveParams = new URLSearchParams(queryKey);
       liveParams.set('after',result.snapshot); liveParams.set('limit','100');
@@ -1301,7 +1402,8 @@ async function refreshActivity(page = app.activity.page || 1, { background = fal
         liveParams.set('page',String(livePage));
         const live = await api(`/api/activity?${liveParams}`, options);
         if (stale()) return;
-        if (live.snapshotReset) { result = await latestPage(); arrivals.length = 0; break; }
+        if (live.snapshotReset) { result = await latestPage(); summary = result.summary; arrivals.length = 0; break; }
+        if (livePage === 1) summary = live.summary;
         liveParams.set('snapshot',live.snapshot);
         livePages = live.pages;
         arrivals.push(...live.events);
@@ -1309,7 +1411,7 @@ async function refreshActivity(page = app.activity.page || 1, { background = fal
     }
     if (stale()) return;
     app.activityQueryKey = queryKey;
-    app.activity = { ...result, newCount:arrivals.length, arrivals:[...new Map(arrivals.map(event => [event.id,event])).values()], loaded:true };
+    app.activity = { ...result, summary, newCount:arrivals.length, arrivals:[...new Map(arrivals.map(event => [event.id,event])).values()], loaded:true };
     renderEvents();
     setActivityLiveStatus('Live · Updates automatically');
   } catch (err) {
@@ -1330,11 +1432,12 @@ async function exportActivity(format) {
 }
 
 function renderActivityDialog(event) {
+  app.activityDialogEvent = event;
   const metadata = activityMeta(event).map((item) => `${item.text}${item.extra ? ` ${item.extra}` : ''}`).join(' · ');
   const confirmation = event.confirmation || {};
   const alert = event.serverAlert || {};
   $('activityDialogTitle').textContent = event.name || 'Activity details';
-  $('activityDialogBody').innerHTML = `<section class="activity-detail-hero"><span class="settings-kicker">${escapeHtml(String(event.region || '').toUpperCase())} · ${escapeHtml(humanStatus(event.type))}</span><h3>${escapeHtml(event.name || event.slug)}</h3><p>${escapeHtml(metadata)}</p></section><div class="activity-evidence"><article class="settings-card"><span class="settings-kicker">Monitor evidence</span><h3>Confirmation</h3><dl class="settings-details"><div><dt>Policy</dt><dd>${escapeHtml(humanStatus(confirmation.policy || 'legacy event'))}</dd></div><div><dt>Observations</dt><dd>${escapeHtml(confirmation.observations || 1)} of ${escapeHtml(confirmation.required || 1)}</dd></div><div><dt>First observed</dt><dd>${escapeHtml(confirmation.firstObservedAt ? new Date(confirmation.firstObservedAt).toLocaleString() : exactEventTime(event))}</dd></div><div><dt>Confirmed</dt><dd>${escapeHtml(confirmation.confirmedAt ? new Date(confirmation.confirmedAt).toLocaleString() : exactEventTime(event))}</dd></div></dl></article><article class="settings-card"><span class="settings-kicker">Server notification</span><h3>${escapeHtml(alert.label || 'No delivery')}</h3><p>${escapeHtml(serverAlertTitle(event))}</p><dl class="settings-details"><div><dt>Outcome</dt><dd>${escapeHtml(humanStatus(alert.state || 'not recorded'))}</dd></div><div><dt>Channels</dt><dd>${escapeHtml((alert.channels || []).join(', ') || 'None')}</dd></div><div><dt>Detected</dt><dd>${escapeHtml(exactEventTime(event))}</dd></div></dl></article></div><div class="settings-actions wrap activity-detail-actions">${event.collectionId ? `<button class="primary button-link" type="button" data-activity-collection="${escapeHtml(event.collectionId)}" data-activity-region="${escapeHtml(event.region || app.currentRegion || '')}">Open collection</button>` : `<button class="primary button-link" type="button" data-activity-product="${escapeHtml(event.slug)}" data-activity-region="${escapeHtml(event.region || app.currentRegion || '')}">Open product details</button>`}${event.url ? `<a class="button-link" href="${escapeHtml(event.url)}" target="_blank" rel="noopener">Open UniFi Store ↗</a>` : ''}</div>`;
+  $('activityDialogBody').innerHTML = `<section class="activity-detail-hero"><span class="settings-kicker">${escapeHtml(String(event.region || '').toUpperCase())} · ${escapeHtml(humanStatus(event.type))}</span><h3>${escapeHtml(event.name || event.slug)}</h3><p>${escapeHtml(metadata)}</p></section>${activityContextDetails(event)}<div class="activity-evidence"><article class="settings-card"><span class="settings-kicker">Monitor evidence</span><h3>Confirmation</h3><dl class="settings-details"><div><dt>Policy</dt><dd>${escapeHtml(humanStatus(confirmation.policy || 'legacy event'))}</dd></div><div><dt>Observations</dt><dd>${escapeHtml(confirmation.observations || 1)} of ${escapeHtml(confirmation.required || 1)}</dd></div><div><dt>First observed</dt><dd>${escapeHtml(confirmation.firstObservedAt ? new Date(confirmation.firstObservedAt).toLocaleString() : exactEventTime(event))}</dd></div><div><dt>Confirmed</dt><dd>${escapeHtml(confirmation.confirmedAt ? new Date(confirmation.confirmedAt).toLocaleString() : exactEventTime(event))}</dd></div></dl></article><article class="settings-card"><span class="settings-kicker">Server notification</span><h3>${escapeHtml(alert.label || 'No delivery')}</h3><p>${escapeHtml(serverAlertTitle(event))}</p><dl class="settings-details"><div><dt>Outcome</dt><dd>${escapeHtml(humanStatus(alert.state || 'not recorded'))}</dd></div><div><dt>Channels</dt><dd>${escapeHtml((alert.channels || []).join(', ') || 'None')}</dd></div><div><dt>Detected</dt><dd>${escapeHtml(exactEventTime(event))}</dd></div></dl></article></div><div class="settings-actions wrap activity-detail-actions">${event.collectionId ? `<button class="primary button-link" type="button" data-activity-collection="${escapeHtml(event.collectionId)}" data-activity-region="${escapeHtml(event.region || app.currentRegion || '')}">Open collection</button>` : `<button class="primary button-link" type="button" data-activity-product="${escapeHtml(event.slug)}" data-activity-region="${escapeHtml(event.region || app.currentRegion || '')}">Open product details</button>`}${event.url ? `<a class="button-link" href="${escapeHtml(event.url)}" target="_blank" rel="noopener">Open UniFi Store ↗</a>` : ''}</div>`;
 }
 
 async function openActivityDialog(id) {
@@ -1346,6 +1449,7 @@ async function openActivityDialog(id) {
 }
 
 function closeActivityDialog() {
+  app.activityDialogEvent = null;
   $('activityDialog').classList.add('hidden');
   if ($('productDialog').classList.contains('hidden') && $('watchImportDialog').classList.contains('hidden')) document.body.classList.remove('dialog-open');
   app.activityDialogLastFocus?.focus?.();

@@ -1,3 +1,4 @@
+import { testActivityDisplay } from './activity-display-smoke.mjs';
 import { testSettingsNavigation } from './settings-navigation-smoke.mjs';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -523,7 +524,7 @@ try {
   await waitForBrowser("app.activity.loaded && app.activity.count > 0 && document.getElementById('activitySearch').value === ''", 'Activity reset action did not restore retained events');
   await cdp.send('Emulation.setDeviceMetricsOverride', { width:390, height:844, screenWidth:390, screenHeight:844, deviceScaleFactor:1, mobile:false });
   const compactActivity = await evaluate("(() => { const row=document.querySelector('#activityList .event'); return { height:row.getBoundingClientRect().height, overflow:document.documentElement.scrollWidth <= window.innerWidth + 1, alertLabel:getComputedStyle(row.querySelector('.event-alert-label')).display, timeColumn:row.querySelector('time').getBoundingClientRect().top - row.getBoundingClientRect().top, filterColumns:getComputedStyle(document.getElementById('activityFilters')).gridTemplateColumns.split(' ').length }; })()");
-  assert(compactActivity?.height === 64 && compactActivity.overflow && compactActivity.alertLabel === 'none' && compactActivity.timeColumn < 32 && compactActivity.filterColumns === 1, `Mobile activity feed or filters did not remain compact: ${JSON.stringify(compactActivity)}`);
+  assert(compactActivity?.height === 64 && compactActivity.overflow && compactActivity.alertLabel !== 'none' && compactActivity.timeColumn < 32 && compactActivity.filterColumns === 1, `Mobile activity feed or filters did not remain compact: ${JSON.stringify(compactActivity)}`);
   await cdp.send('Emulation.clearDeviceMetricsOverride');
 
   // Distinguish price directions and stock statuses in the Activity feed.
@@ -602,6 +603,7 @@ try {
     await cdp.send('Emulation.clearDeviceMetricsOverride');
   }
 
+  await testActivityDisplay({ evaluate, waitForBrowser, assertAccessible, assert, cdp, screenshotRoot });
   await evaluate("document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabNotifications').click()");
   await waitForBrowser("!document.getElementById('settingsPanelNotifications').hidden && document.getElementById('settingsPanelData').hidden", 'Notification settings tab failed');
   await assertAccessible('Notification settings');
