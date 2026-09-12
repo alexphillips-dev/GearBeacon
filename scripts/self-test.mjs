@@ -218,6 +218,7 @@ function downgradeDatabaseForUpgradeTest(databaseFile, appVersion, schema) {
     DROP TABLE events_v7;
     CREATE INDEX idx_events_region_detected ON events(region,detected_at);
   `);
+  if (schema < 13) target.exec('ALTER TABLE watch_collections DROP COLUMN delivery_json;');
   if (schema < 12) target.exec('ALTER TABLE watch_collections DROP COLUMN budget_required;');
   if (schema < 11) target.exec('ALTER TABLE watch_collections DROP COLUMN archived;');
   if (schema < 10) target.exec('ALTER TABLE watch_collections DROP COLUMN budget; ALTER TABLE watch_collections DROP COLUMN alerts_only; ALTER TABLE watch_collection_members DROP COLUMN paid_total; ALTER TABLE watch_collection_members DROP COLUMN purchased_quantity; ALTER TABLE watch_collection_members DROP COLUMN quantity;');
@@ -256,7 +257,7 @@ try {
   });
   const status = await waitFor('/api/status?region=us');
   if (status.version !== '1.2.0') throw new Error(`Unexpected app version: ${status.version}`);
-  if (status.storage?.engine !== 'SQLite' || status.storage?.schemaVersion !== 12) throw new Error('SQLite schema v12 was not initialized.');
+  if (status.storage?.engine !== 'SQLite' || status.storage?.schemaVersion !== 13) throw new Error('SQLite schema v13 was not initialized.');
   if (status.deployment?.mode !== 'local' || status.deployment?.bindHost !== '127.0.0.1' || status.deployment?.authenticationRequired) throw new Error('Safe local access defaults are wrong.');
   if (status.privacy?.telemetry !== false || status.privacy?.publicCloudRequired !== false) throw new Error('Privacy status is wrong.');
   if (status.regions?.length !== 2) throw new Error('Multi-region configuration was not loaded.');
@@ -275,7 +276,7 @@ try {
   const schemaDb = new DatabaseSync(join(localData, 'gearbeacon.mock.sqlite3'));
   const pushTable = schemaDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='push_tokens'").get();
   schemaDb.close();
-  if (pushTable) throw new Error('The obsolete push-token table still exists in schema v12.');
+  if (pushTable) throw new Error('The obsolete push-token table still exists in schema v13.');
 
   const initialConfig = await request('/api/config');
   if ((await request('/api/auth/status')).onboardingComplete) throw new Error('Fresh installation incorrectly skipped guided onboarding.');
@@ -545,7 +546,7 @@ try {
   startServer(8899, localData);
   await waitFor('/api/status?region=us');
   const afterUpgrade = await request('/api/data/info?region=us');
-  if (afterUpgrade.backup.count <= beforeUpgrade || afterUpgrade.schemaVersion !== 12) throw new Error('Automatic V0.1.5 pre-update backup or schema migration failed.');
+  if (afterUpgrade.backup.count <= beforeUpgrade || afterUpgrade.schemaVersion !== 13) throw new Error('Automatic V0.1.5 pre-update backup or schema migration failed.');
   const migratedDb = new DatabaseSync(join(localData, 'gearbeacon.mock.sqlite3'));
   const migratedPushTable = migratedDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='push_tokens'").get();
   migratedDb.close();
@@ -564,7 +565,7 @@ try {
     startServer(8899, localData);
     await waitFor('/api/status?region=us');
     const migrated = await request('/api/data/info?region=us');
-    if (migrated.schemaVersion !== 12 || migrated.backup.count < 1) throw new Error(`Automatic V${historical.version} to V1.2.0 migration failed.`);
+    if (migrated.schemaVersion !== 13 || migrated.backup.count < 1) throw new Error(`Automatic V${historical.version} to V1.2.0 migration failed.`);
     const migratedCheck = await request('/api/check?region=us', { method:'POST', body:'{}' });
     if (!migratedCheck.ok) throw new Error(`V${historical.version} monitoring did not work after migration.`);
     const migratedWatch = await request('/api/watchlist?region=us');

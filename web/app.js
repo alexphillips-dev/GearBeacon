@@ -482,12 +482,46 @@ async function logout() {
 
 function productDetail(p) {
   if (p.unlisted) return 'No longer listed in two complete catalog checks';
-  if (p.inStock) return 'Available now';
+  if (p.inStock) return 'Last known available';
   if (p.restockEtaAt) return `Store ETA ${new Date(p.restockEtaAt).toLocaleDateString()}`;
   if (p.comingSoon) return 'Coming soon';
   if (p.soldOutAt) return `Sold out ${relativeTime(p.soldOutAt)}`;
   return 'Waiting for restock';
 }
+function freshnessLabel(product) {
+  const evidence = product.freshness;
+  let state = evidence?.state || 'unknown';
+  if (['confirmed','pending'].includes(state) && (app.browserOffline || app.serverFailures > 0 || !evidence.expiresAt || Date.now() > new Date(evidence.expiresAt).getTime())) state = 'stale';
+  if (state === 'pending') return { state, text:'Change awaiting confirmation', title:`Stock or price change awaiting a second complete observation. Last confirmed: ${evidence.checkedAt ? alertDate(evidence.checkedAt) : 'not yet observed'}.` };
+  if (state === 'confirmed') return { state, text:`Confirmed ${relativeTime(evidence.checkedAt)}`, title:`Last complete, confirmed observation: ${alertDate(evidence.checkedAt)}.` };
+  return { state, text:state === 'stale' ? `${product.inStock ? 'Last known available' : 'Last known status'} · checks delayed` : 'Awaiting a complete check', title:evidence?.checkedAt ? `Last confirmed ${alertDate(evidence.checkedAt)}. Current stock and price are unconfirmed.` : 'No current, complete observation is available.' };
+}
+function freshnessMarkup(product) {
+  const label = freshnessLabel(product);
+  return `<span class="product-freshness" data-product-freshness="${escapeHtml(product.slug)}" data-freshness-state="${label.state}" title="${escapeHtml(label.title)}" aria-label="${escapeHtml(`${label.text}. ${label.title}`)}">${escapeHtml(label.text)}</span>`;
+}
+function updateProductFreshness() {
+  const products = new Map([...app.products,...app.catalogVariants].map(product => [product.slug,product]));
+  const dialogProduct = app.currentProductDetails?.product;
+  if (dialogProduct && !products.has(dialogProduct.slug)) products.set(dialogProduct.slug, dialogProduct);
+  document.querySelectorAll('[data-product-freshness]').forEach(node => {
+    const product = products.get(node.dataset.productFreshness);
+    if (!product) return;
+    const label = freshnessLabel(product);
+    if (node.textContent !== label.text) node.textContent = label.text;
+    node.title = label.title; node.dataset.freshnessState = label.state;
+    node.setAttribute('aria-label', `${label.text}. ${label.title}`);
+    if (node.closest('#productDialog')) {
+      const status = $('productDialogBody').querySelector('.product-status-row .badge');
+      const price = $('productDialogBody').querySelector('.product-status-row strong');
+      if (status) { status.textContent=product.unlisted ? 'Unlisted' : product.inStock ? 'In stock' : product.comingSoon ? 'Coming soon' : 'Sold out'; status.className=`badge ${product.inStock ? 'in' : product.comingSoon ? 'soon' : 'out'}`; }
+      if (price) price.textContent=product.price || 'Price unavailable';
+      // Refresh displayed facts together with their evidence without replacing the rule draft.
+      if (dialogProduct) for (const key of ['status','inStock','unlisted','comingSoon','price','freshness','lastSeenAt']) dialogProduct[key]=product[key];
+    }
+  });
+}
+
 function priceNumber(value) {
   const parsed = Number.parseFloat(String(value || '').replace(/[^0-9,.-]/g, '').replace(/,/g, ''));
   return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
@@ -591,6 +625,7 @@ function watchCard(p) {
     <div class="meta">${escapeHtml(p.sku || p.slug)}${p.variantId ? '' : ' · Any variant'}</div>
     <div class="price">${escapeHtml(p.price || 'Price unavailable')}</div>
     <div class="detail">${escapeHtml(productDetail(p))}${changedRecently ? ' · changed recently' : ''}</div>
+    ${freshnessMarkup(p)}
     ${alertSummaryMarkup(p)}
     <div class="rule-chips">${(p.collections || []).map((id) => app.collections.find((collection) => collection.id === id)).filter(Boolean).map((collection) => `<span class="rule-chip">Collection: ${escapeHtml(collection.name)}</span>`).join('')}</div>
     <div class="card-actions">
@@ -623,6 +658,7 @@ function storeCard(p, info) {
       <div class="store-sku">${escapeHtml(info.sku)}</div>
       <div class="store-product-meta"><span>${escapeHtml(p.category)}</span>${info.variantCount > 1 ? `<button type="button" data-product-detail="${escapeHtml(p.slug)}">${info.variantCount} variants</button>` : ''}</div>
       <div class="store-price-row"><strong>${escapeHtml(info.price)}</strong><span class="stock-label ${statusClass}">${status}</span></div>
+      ${freshnessMarkup(p)}
       <button class="store-watch ${info.watching ? 'watching' : ''}" data-add-watch="${escapeHtml(p.slug)}" aria-label="Add ${escapeHtml(p.name)} to Watchlist or a collection">${info.watching ? 'Add to collection' : '+ Add to Watchlist or collection'}</button>
     </div>
   </article>`;
@@ -1014,6 +1050,22 @@ async function changeInsightWindow(days) {
   } catch (err) { toast(err.message, 'error'); }
 }
 
+function alertDeliveryFields(policy = {}) {
+  const configured = app.status?.notifications || {};
+  const available = { ntfy:configured.ntfyConfigured, discord:configured.discordConfigured, gotify:configured.gotifyConfigured, webhook:configured.webhookConfigured, email:configured.smtpConfigured };
+  return `<fieldset class="alert-delivery-fields"><legend>Server delivery</legend>
+    <label class="field"><span>Notification channels</span><select name="deliveryMode" data-delivery-mode><option value="defaults" ${policy.channels == null ? 'selected' : ''}>Use defaults</option><option value="custom" ${policy.channels != null ? 'selected' : ''}>Choose channels</option></select></label>
+    <div class="delivery-channel-choices ${policy.channels == null ? 'hidden' : ''}" data-delivery-choices>${Object.keys(available).map(channel => `<label><input type="checkbox" name="deliveryChannel" value="${channel}" ${(policy.channels ?? Object.keys(available).filter(name=>available[name])).includes(channel) ? 'checked' : ''} ${policy.channels == null ? 'disabled' : ''}/> ${channelLabel(channel)}${available[channel] ? '' : ' (not configured or disabled)'}</label>`).join('')}</div>
+    <p class="rule-help">Defaults use every enabled, configured server channel. Choose no channels to stop server delivery for this alert. Browser popups are separate. Route changes cancel pending deliveries to removed channels; adding channels does not resend past events.</p>
+    <label class="field"><span>Expire time-sensitive alerts after (minutes)</span><input name="maxAlertAgeMinutes" type="number" min="1" max="10080" step="1" value="${policy.maxAlertAgeMinutes ?? ''}" placeholder="Never expire" /></label>
+    <p class="rule-help">Applies to restocks, price opportunities, and collection readiness, including quiet hours, digests, and retries. Leave blank for no expiry. Longer limits apply to new alerts; queued alerts keep their earlier deadline. Activity history is retained.</p>
+  </fieldset>`;
+}
+function readAlertDelivery(container) {
+  return { channels:container.querySelector('[name="deliveryMode"]').value === 'defaults' ? null : [...container.querySelectorAll('[name="deliveryChannel"]:checked')].map(input=>input.value),
+    maxAlertAgeMinutes:container.querySelector('[name="maxAlertAgeMinutes"]').value === '' ? null : Number(container.querySelector('[name="maxAlertAgeMinutes"]').value) };
+}
+
 function ruleSelect(name, label, value) {
   const selected = value === null || value === undefined ? 'inherit' : String(Boolean(value));
   return `<label class="field"><span>${label}</span><select name="${name}"><option value="inherit" ${selected === 'inherit' ? 'selected' : ''}>Use global setting</option><option value="true" ${selected === 'true' ? 'selected' : ''}>Enabled</option><option value="false" ${selected === 'false' ? 'selected' : ''}>Disabled</option></select></label>`;
@@ -1035,6 +1087,7 @@ function renderProductDialog(details) {
     <div class="inline-checks"><label><input name="priceDropOnly" type="checkbox" ${rule.priceDropOnly ? 'checked' : ''}/> Only alert when price drops</label><label><input name="immediateRestock" type="checkbox" ${rule.immediateRestock ? 'checked' : ''}/> Deliver restocks immediately</label></div>
     <div class="inline-checks"><label><input name="availableUnderTarget" type="checkbox" ${rule.availableUnderTarget ? 'checked' : ''} /> Alert when available at or below the target price</label></div>
     <p class="rule-help">This condition alerts on a qualifying restock or a confirmed price reaching the target while available. It replaces the separate restock and price-change choices. Prices use this Store region's currency and exclude checkout costs.</p>
+    ${alertDeliveryFields(rule)}
     ${collectionFields}
     ${collectionAlertSources(p, details.collections).length ? `<p class="rule-help">Individual alerts are suppressed by: ${escapeHtml(collectionAlertSources(p, details.collections).map(item=>item.name).join(", "))}. They use Collection alerts only. Your item rules stay saved and resume when no collection suppresses them.</p>` : ""}
     <div class="settings-actions wrap"><button class="primary" type="submit">Save alert rules</button><button type="button" data-preview-rule>Preview rule & notification</button><button type="button" data-purchased="${escapeHtml(p.slug)}">${rule.purchasedAt ? 'Still wanted' : 'Mark purchased'}</button><button type="button" data-watch="${escapeHtml(p.slug)}">Remove from watchlist</button></div>
@@ -1042,7 +1095,7 @@ function renderProductDialog(details) {
     <div class="settings-result hidden" data-rule-result role="status" aria-live="polite"></div>
   </form>` : `<div class="product-watch-prompt"><p>Add this product to your watchlist to configure its alert rules.</p><button class="primary button-link" data-add-watch="${escapeHtml(p.slug)}">Add to Watchlist or collection</button></div>`;
   const changes = details.history.slice(0, 12).map((item) => `<div class="product-change"><span class="connection-dot ${item.inStock ? 'enabled' : ''}"></span><div><strong>${escapeHtml(item.changeType.replaceAll('-', ' '))}</strong><small>${escapeHtml(item.status || 'Unknown')}${item.price ? ` · ${escapeHtml(item.price)}` : ''}</small></div><time>${escapeHtml(relativeTime(item.observedAt))}</time></div>`).join('');
-  $('productDialogBody').innerHTML = `<div class="product-hero"><div class="product-hero-image media-shell">${imageMarkup(p, 'product-image')}</div><div><div class="product-status-row"><span class="badge ${p.inStock ? 'in' : p.comingSoon ? 'soon' : 'out'}">${p.unlisted ? 'Unlisted' : p.inStock ? 'In stock' : p.comingSoon ? 'Coming soon' : 'Sold out'}</span><strong>${escapeHtml(p.price || 'Price unavailable')}</strong></div><div class="product-sku-row"><p>${escapeHtml(p.sku || p.slug)}</p><button class="copy-button" type="button" data-copy-text="${escapeHtml(p.sku || p.slug)}" data-copy-label="SKU">Copy SKU</button></div><dl class="settings-details"><div><dt>Store region</dt><dd>${escapeHtml(String(p.region || app.currentRegion || '').toUpperCase())}</dd></div><div><dt>First observed</dt><dd>${escapeHtml(relativeTime(details.firstObservedAt))}</dd></div><div><dt>Last checked</dt><dd>${escapeHtml(relativeTime(p.lastSeenAt))}</dd></div><div><dt>Last changed</dt><dd>${escapeHtml(relativeTime(details.lastChangedAt))}</dd></div><div><dt>History retention</dt><dd>${details.historyRetentionDays} days</dd></div></dl><div class="product-link-actions"><a class="button-link" href="${escapeHtml(p.url)}" target="_blank" rel="noopener">Open UniFi Store ↗</a><button class="copy-button" type="button" data-copy-text="${escapeHtml(p.url)}" data-copy-label="Store link">Copy link</button></div></div></div>
+  $('productDialogBody').innerHTML = `<div class="product-hero"><div class="product-hero-image media-shell">${imageMarkup(p, 'product-image')}</div><div><div class="product-status-row"><span class="badge ${p.inStock ? 'in' : p.comingSoon ? 'soon' : 'out'}">${p.unlisted ? 'Unlisted' : p.inStock ? 'In stock' : p.comingSoon ? 'Coming soon' : 'Sold out'}</span><strong>${escapeHtml(p.price || 'Price unavailable')}</strong></div>${freshnessMarkup(p)}<div class="product-sku-row"><p>${escapeHtml(p.sku || p.slug)}</p><button class="copy-button" type="button" data-copy-text="${escapeHtml(p.sku || p.slug)}" data-copy-label="SKU">Copy SKU</button></div><dl class="settings-details"><div><dt>Store region</dt><dd>${escapeHtml(String(p.region || app.currentRegion || '').toUpperCase())}</dd></div><div><dt>First observed</dt><dd>${escapeHtml(relativeTime(details.firstObservedAt))}</dd></div><div><dt>Last checked</dt><dd>${escapeHtml(relativeTime(p.lastSeenAt))}</dd></div><div><dt>Last changed</dt><dd>${escapeHtml(relativeTime(details.lastChangedAt))}</dd></div><div><dt>History retention</dt><dd>${details.historyRetentionDays} days</dd></div></dl><div class="product-link-actions"><a class="button-link" href="${escapeHtml(p.url)}" target="_blank" rel="noopener">Open UniFi Store ↗</a><button class="copy-button" type="button" data-copy-text="${escapeHtml(p.url)}" data-copy-label="Store link">Copy link</button></div></div></div>
     ${variantSelector}${p.watched ? `<div class="product-watch-prompt"><button class="button-link" type="button" data-add-watch="${escapeHtml(p.slug)}">Add to collection</button></div>` : ''}${ruleForm}<section class="product-history" data-product-insights>${renderInsights(details.insights)}</section><section class="product-history"><h3>Recent changes</h3><div class="product-change-list">${changes || '<div class="history-empty">No changes recorded yet.</div>'}</div></section>`;
   wireProductImages($('productDialogBody'));
 }
@@ -1074,7 +1127,7 @@ function readProductRule(form) {
   const readOverride = (name) => { const value = form.elements[name].value; return value === 'inherit' ? null : value === 'true'; };
   const pause = form.elements.pause.value;
   const pausedUntil = pause === 'active' ? null : pause === 'indefinite' ? 'indefinite' : pause.startsWith('existing:') ? pause.slice(9) : new Date(Date.now() + Number(pause) * 60000).toISOString();
-  return { restock:readOverride('restock'), soldOut:readOverride('soldOut'), priceChange:readOverride('priceChange'), statusChange:readOverride('statusChange'), targetPrice:form.elements.targetPrice.value || null, priceDropOnly:form.elements.priceDropOnly.checked, immediateRestock:form.elements.immediateRestock.checked, availableUnderTarget:form.elements.availableUnderTarget.checked, pausedUntil };
+  return { ...readAlertDelivery(form), restock:readOverride('restock'), soldOut:readOverride('soldOut'), priceChange:readOverride('priceChange'), statusChange:readOverride('statusChange'), targetPrice:form.elements.targetPrice.value || null, priceDropOnly:form.elements.priceDropOnly.checked, immediateRestock:form.elements.immediateRestock.checked, availableUnderTarget:form.elements.availableUnderTarget.checked, pausedUntil };
 }
 
 async function previewProductRule(form) {
@@ -1092,6 +1145,7 @@ async function saveProductRule(form) {
   const button = form.querySelector('button[type="submit"]');
   button.disabled = true; button.textContent = 'Saving…';
   try {
+    if (!app.currentProductDetails?.capabilities?.alertDelivery) throw new Error('Update and restart GearBeacon before saving these alert settings.');
     const result = await api(`/api/watch/${encodeURIComponent(form.dataset.ruleSlug)}/rules`, { method:'PUT', body:JSON.stringify({ rule }) });
     const membership = await api(`/api/watch/${encodeURIComponent(form.dataset.ruleSlug)}/collections`, { method:'PUT', body:JSON.stringify({ collections:[...form.querySelectorAll('[name="collection"]:checked')].map((input) => input.value) }) });
     app.collections = membership.collections; updateWatchAlertSummaries(membership); app.watchOverview=membership.overview || app.watchOverview;
@@ -2045,6 +2099,7 @@ async function performRefresh(background) {
     renderStatus();
     if (!background || ['watchlist','browse'].includes(app.activeTab) || !$('collectionDialog').classList.contains('hidden')) renderProducts();
     if (!background || app.activeTab === 'settings') { renderSettings(false); renderEmailPreviewProducts(); }
+    updateProductFreshness();
     renderAttentionBanner();
     if (wasDisconnected) toast('Connection restored', 'success');
     if (app.activeTab === 'activity') await refreshActivity(app.activity.page || 1, { background:true });
@@ -2578,10 +2633,12 @@ function returnFromCollectionAlerts() {
 function renderCollectionAlerts() {
   const collection = app.collections.find((item) => item.id === app.collectionAlertId);
   if (!collection || $('collectionAlerts').classList.contains('hidden') || $('collectionDialog').classList.contains('hidden')) return;
+  const deliveryForm = $('collectionAlerts').querySelector('[data-collection-delivery]');
+  const deliveryDraft = deliveryForm?.dataset.collectionDelivery === collection.id ? readAlertDelivery(deliveryForm) : null;
   const returnView = app.collectionAlertReturn?.view;
   const budgetStatus = $('collectionAlerts').querySelector('[data-collection-budget-status]');
   if (budgetStatus) budgetStatus.textContent = collection.budgetRequired ? collection.readiness?.budget?.reason || 'Waiting for confirmed costs.' : '';
-  const key = JSON.stringify([collection.id,collection.name,collection.notifyReady,collection.alertsOnly,collection.archived,collection.budgetRequired,collection.budget,returnView]);
+  const key = JSON.stringify([collection.id,collection.name,collection.notifyReady,collection.alertsOnly,collection.archived,collection.budgetRequired,collection.budget,collection.channels,collection.maxAlertAgeMinutes,returnView]);
   if (app.collectionNotificationBusy === collection.id) return;
   if (key === app.collectionAlertsKey) return;
   app.collectionAlertsKey = key;
@@ -2599,9 +2656,10 @@ function renderCollectionAlerts() {
     <label class="readiness-alert"><input type="checkbox" data-collection-budget="${escapeHtml(collection.id)}" aria-describedby="collectionBudgetCondition" ${collection.budgetRequired ? 'checked' : ''}/> Only notify when this collection is within budget</label>
     <p id="collectionBudgetCondition">${collection.budget == null ? 'Set a project budget in Edit collection. Until then, this condition cannot qualify.' : `Project budget: ${escapeHtml(insightMoney(collection.budget,collection.pricing.currency))}.`} Includes recorded spending and the confirmed cost of remaining units. Missing or unconfirmed costs block this alert. For Any variant, uses the lowest-priced available variant meeting its target. Shipping and additional checkout costs are excluded.</p>
     <p data-collection-budget-status role="status">${collection.budgetRequired ? escapeHtml(collection.readiness?.budget?.reason || 'Waiting for confirmed costs.') : ''}</p>
+    <form data-collection-delivery="${escapeHtml(collection.id)}">${alertDeliveryFields(deliveryDraft || collection)}<button type="submit" class="primary">Save delivery options</button><p data-delivery-result role="status"></p></form>
     <label class="field"><span>Individual item alerts</span><select data-collection-alert-mode="${escapeHtml(collection.id)}" aria-describedby="collectionAlertInteraction"><option value="both" ${!collection.alertsOnly ? 'selected' : ''}>Collection and item alerts</option><option value="only" ${collection.alertsOnly ? 'selected' : ''}>Collection alerts only</option></select></label>
     <p id="collectionAlertInteraction">${!collection.archived && collection.notifyReady && collection.alertsOnly ? 'Individual item alerts are suppressed while this collection alert is enabled. Their rules stay saved.' : 'Individual item alerts continue using their own rules unless another collection suppresses them.'} If any collection containing an item uses Collection alerts only with alerts enabled, it suppresses that item's notifications, including All activity and immediate restocks. Turning off the last override restores item alerts. Pausing an item does not pause collection alerts.</p>
-    <p id="collectionAlertDelivery">Saves automatically. Uses the channels and delivery settings in Settings &gt; Notifications. If the collection already qualifies, enabling this waits until it stops qualifying and becomes ready again.</p>
+    <p id="collectionAlertDelivery">Readiness and item-alert switches save automatically. Use Save delivery options for channels and expiry. Scheduling follows Settings &gt; Notifications. If the collection already qualifies, enabling this waits until it stops qualifying and becomes ready again.</p>
     ${returnView === 'edit' ? '<p>Your name and item selections stay in the editor. Alerts apply to saved items; choose Save changes after returning to apply your collection edits.</p>' : ''}
     </section><div class="collection-form-actions"><button type="button" data-close-collection-alerts>${returnView === 'edit' ? 'Back to editing' : returnView === 'details' ? 'Back to collection' : returnView === 'list' ? 'Back to collections' : 'Done'}</button></div>`;
   if (app.collectionNotificationBusy) $('collectionAlerts').querySelectorAll('input,select').forEach(control=>control.disabled=true);
@@ -2673,6 +2731,45 @@ async function setCollectionNotification(input) {
     if (app.collectionAlertId === id && !$('collectionDialog').classList.contains('hidden')) $('collectionAlerts').querySelector(selector)?.focus();
   }
 }
+
+async function saveCollectionDelivery(form) {
+  if (app.collectionNotificationBusy) return;
+  const id = form.dataset.collectionDelivery, region = app.currentRegion;
+  const policy = readAlertDelivery(form);
+  const resultBox = form.querySelector('[data-delivery-result]');
+  const controls = [...$('collectionAlerts').querySelectorAll('input,select,button')];
+  app.collectionNotificationBusy = id; controls.forEach(control=>control.disabled=true);
+  try {
+    const server = await api('/api/collections');
+    if (!server.capabilities?.alertDelivery) throw new Error('Update and restart GearBeacon before saving delivery options.');
+    if (app.currentRegion !== region) return;
+    const result = await api(`/api/collections/${encodeURIComponent(id)}`, { method:'PUT', body:JSON.stringify(policy) });
+    const saved = result.collections?.find(item=>item.id===id);
+    if (!saved || JSON.stringify(saved.channels) !== JSON.stringify(policy.channels) || saved.maxAlertAgeMinutes !== policy.maxAlertAgeMinutes) throw new Error('The server did not confirm the delivery options.');
+    if (app.currentRegion !== region) return;
+    app.collections=result.collections; updateWatchAlertSummaries(result); app.watchOverview=result.overview || app.watchOverview;
+    app.collectionAlertsKey=null; app.collectionNotificationBusy=false; renderProducts(true); renderCollectionAlerts(); toast('Collection delivery options saved');
+    if (app.collectionAlertId === id) $('collectionAlerts').querySelector('[data-collection-delivery] button[type="submit"]')?.focus();
+  } catch (err) { resultBox.textContent=err.message; }
+  finally {
+    app.collectionNotificationBusy=false; controls.forEach(control=>control.disabled=false);
+    form.querySelectorAll('[name="deliveryChannel"]').forEach(control=>control.disabled=form.querySelector('[name="deliveryMode"]').value==='defaults');
+    if (app.collectionAlertId !== id || app.currentRegion !== region) { app.collectionAlertsKey=null; renderCollectionAlerts(); }
+  }
+}
+
+document.addEventListener('change', event => {
+  const mode = event.target.closest('[data-delivery-mode]');
+  if (!mode) return;
+  const choices = mode.closest('fieldset').querySelector('[data-delivery-choices]');
+  choices.classList.toggle('hidden', mode.value === 'defaults');
+  choices.querySelectorAll('input').forEach(input=>input.disabled=mode.value==='defaults');
+});
+document.addEventListener('submit', event => {
+  const form = event.target.closest('[data-collection-delivery]');
+  if (!form) return;
+  event.preventDefault(); saveCollectionDelivery(form);
+});
 
 async function openCollection(id, region) {
   if (region && region !== app.currentRegion) {
@@ -3136,5 +3233,6 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden && !$('appShell').classList.contains('hidden')) refresh();
 });
 setInterval(() => {
+  if (!document.hidden) updateProductFreshness();
   if (!$('appShell').classList.contains('hidden')) refresh({ background:true });
 }, 10000);

@@ -13,7 +13,7 @@ const { URL } = require('node:url');
 const { DatabaseSync } = require('node:sqlite');
 const { renderEmail, buildMimeEmail, numericPrice } = require('./email');
 const APP_VERSION = '1.2.0';
-const DATABASE_SCHEMA_VERSION = 12;
+const DATABASE_SCHEMA_VERSION = 13;
 const STORE_BASE = 'https://store.ui.com';
 const REGIONS = {
     us: { label: 'United States', path: 'us/en', currency: 'USD', origin: STORE_BASE },
@@ -319,13 +319,60 @@ const DEFAULT_WATCH_RULE = Object.freeze({
     pausedUntil: null,
     availableUnderTarget: false,
     purchasedAt: null,
+    channels: null,
+    maxAlertAgeMinutes: null,
 });
+function normalizeAlertDelivery(input = {}, base = { channels: null, maxAlertAgeMinutes: null }) {
+    const result = { channels: base.channels ?? null, maxAlertAgeMinutes: base.maxAlertAgeMinutes ?? null };
+    if (input.channels !== undefined) {
+        if (input.channels !== null && (!Array.isArray(input.channels) || input.channels.length > CHANNEL_NAMES.length || input.channels.some(channel => !CHANNEL_NAMES.includes(channel))))
+            throw new Error('Choose valid notification channels or use defaults.');
+        result.channels = input.channels === null ? null : CHANNEL_NAMES.filter(channel => input.channels.includes(channel));
+    }
+    if (input.maxAlertAgeMinutes !== undefined) {
+        const age = input.maxAlertAgeMinutes;
+        if (age !== null && (!Number.isInteger(age) || age < 1 || age > 10080))
+            throw new Error('Alert expiry must be a whole number from 1 to 10,080 minutes, or empty.');
+        result.maxAlertAgeMinutes = age;
+    }
+    return result;
+}
+function collectionAlertDelivery(id, region = currentRegion()) {
+    const row = db.prepare('SELECT delivery_json FROM watch_collections WHERE region=? AND id=?').get(region, id);
+    return normalizeAlertDelivery(safeJsonParse(row?.delivery_json, {}));
+}
+function eventAlertDelivery(event, override = null) {
+    if (['test', 'operational'].includes(event.type))
+        return normalizeAlertDelivery();
+    if (event.type === 'collection_ready')
+        return collectionAlertDelivery(event.collectionId, event.region || currentRegion());
+    return normalizeAlertDelivery(override || (event.watchedAtDetection ? watchRule(event.slug, event.region || currentRegion()) : {}));
+}
+function deliveryChannels(policy) {
+    return (policy.channels ?? CHANNEL_NAMES).filter(channelConfigured);
+}
+function cancelDeliveryJob(row, reason) {
+    db.prepare("UPDATE notification_queue SET status='cancelled',last_error=?,updated_at=? WHERE id=? AND status IN ('pending','failed','processing')").run(reason, isoNow(), row.id);
+    logNotification(row.event_id, row.channel, 'cancelled', reason);
+}
+function reconcileAlertDelivery(region, identity, collection = false) {
+    const key = collection ? 'collectionId' : 'slug';
+    const rows = db.prepare(`SELECT * FROM notification_queue WHERE region=? AND status IN ('pending','failed') AND json_extract(payload_json,'$.${key}')=?`).all(region, identity);
+    for (const row of rows) {
+        const event = safeJsonParse(row.payload_json, {});
+        const policy = eventAlertDelivery(event);
+        if (policy.channels !== null && !policy.channels.includes(row.channel))
+            cancelDeliveryJob(row, 'Channel removed from this alert route.');
+        else if (alertExpired(event, policy))
+            cancelDeliveryJob(row, 'Alert expired before delivery.');
+    }
+}
 function priceValue(value) {
     return numericPrice(value);
 }
 function normalizeWatchRule(input, base = DEFAULT_WATCH_RULE) {
     const value = input && typeof input === 'object' ? input : {};
-    const normalized = { ...base };
+    const normalized = { ...base, ...normalizeAlertDelivery(value, base) };
     if (typeof value.enabled === 'boolean')
         normalized.enabled = value.enabled;
     for (const key of ['restock', 'soldOut', 'priceChange', 'statusChange']) {
@@ -393,6 +440,8 @@ function saveWatchRule(slug, input, region = currentRegion()) {
     if (next.targetPrice !== previous.targetPrice || next.purchasedAt !== previous.purchasedAt) {
         baselineCollections(region, db.prepare('SELECT collection_id FROM watch_collection_members WHERE region=? AND slug=?').all(region, slug).map((row) => row.collection_id));
     }
+    if (JSON.stringify(next.channels) !== JSON.stringify(previous.channels) || next.maxAlertAgeMinutes !== previous.maxAlertAgeMinutes)
+        reconcileAlertDelivery(region, slug);
     return next;
 }
 function rulePaused(rule, at = Date.now()) {
@@ -851,6 +900,9 @@ MIGRATIONS.push({ version: 11, name: 'archived-collections', sql: `
 ` });
 MIGRATIONS.push({ version: 12, name: 'collection-budget-alerts', sql: `
   ALTER TABLE watch_collections ADD COLUMN budget_required INTEGER NOT NULL DEFAULT 0 CHECK(budget_required IN (0,1));
+` });
+MIGRATIONS.push({ version: 13, name: 'alert-routing-and-expiry', sql: `
+  ALTER TABLE watch_collections ADD COLUMN delivery_json TEXT NOT NULL DEFAULT '{}';
 ` });
 function runMigrations() {
     // Bootstrap the migration ledger before querying it on a brand-new database.
@@ -1993,6 +2045,23 @@ async function postJson(url, body, headers = {}) {
     return { res, data: parsed, text };
 }
 function notificationCopy(event) {
+    const copy = originalNotificationCopy(event);
+    if (event.deliveryContext)
+        return { ...copy, title: `Delayed alert: ${event.name}`, body: `${copy.body.replace(' · detected now', '')}\n${event.deliveryContext.message}` };
+    return copy;
+}
+function digestNotificationBody(event, region) {
+    const lines = [];
+    for (const item of event.events || []) {
+        const line = `${item.name}: ${item.status || item.type}${item.deliveryContext ? ` (${item.deliveryContext.message})` : ''}`;
+        if (lines.length >= 8 || lines.join(' · ').length + line.length > 1500)
+            break;
+        lines.push(line);
+    }
+    const remaining = (event.events?.length || 0) - lines.length;
+    return `${lines.join(' · ')}${remaining ? ` · ${remaining} more updates in GearBeacon` : ''} · ${region}`;
+}
+function originalNotificationCopy(event) {
     const regionKey = event.region || currentRegion();
     const region = REGIONS[regionKey]?.label || String(regionKey).toUpperCase();
     if (event.type === 'collection_ready')
@@ -2000,7 +2069,7 @@ function notificationCopy(event) {
     if (event.type === 'digest')
         return {
             title: `${event.events?.length || 0} GearBeacon stock updates`,
-            body: `${(event.events || []).slice(0, 8).map((item) => `${item.name}: ${item.status || item.type}`).join(' · ')}${event.events?.length > 8 ? ' · more…' : ''} · ${region}`,
+            body: digestNotificationBody(event, region),
             ntfyTags: 'package,bell',
         };
     if (event.type === 'sold_out')
@@ -2099,9 +2168,10 @@ function shouldNotifyEvent(event, prefs = notificationPreferences()) {
     return notificationDecision(event, prefs).allowed;
 }
 function alertConfiguration(product = null, collection = null) {
-    const channels = CHANNEL_NAMES.filter(channelConfigured);
     const region = currentRegion();
     const rule = product ? watchRule(product.slug, region) : { ...DEFAULT_WATCH_RULE };
+    const policy = normalizeAlertDelivery(collection || rule);
+    const channels = deliveryChannels(policy);
     const prefs = notificationPreferences();
     const reasons = [];
     let state = 'active', label = '', events = [];
@@ -2177,15 +2247,18 @@ function alertConfiguration(product = null, collection = null) {
             reasons.push('Unset event choices inherit Settings > Notifications.');
         }
     }
+    reasons.push(policy.channels === null ? 'Delivery uses all enabled, configured server channels.' : `Selected server channels: ${policy.channels.join(', ') || 'none'}. Disabled or unconfigured channels cannot deliver. Adding a channel does not resend earlier events.`);
+    if (policy.maxAlertAgeMinutes !== null)
+        reasons.push(`Restock, price-opportunity, and collection-ready alerts expire after ${policy.maxAlertAgeMinutes} minutes from detection. Activity history is retained.`);
     if (state === 'active' && !channels.length) {
         state = 'no-channel';
         reasons.unshift(label + '.');
-        label = 'No server notification channel enabled';
+        label = 'No server notification channel selected or enabled';
     }
     if (!channels.length)
-        reasons.push('Configure and enable a server channel in Settings > Notifications. Browser popups require an open page and browser permission.');
+        reasons.push('Select a configured channel for this alert or use defaults. Configure channels in Settings > Notifications. Browser popups use separate browser permissions.');
     reasons.push('This describes saved rules, not a promise of stock or a queued notification. Actual jobs are shown separately.');
-    return { state, label, channels, events, reasons, pausedUntil: rule.pausedUntil, immediateRestock: rule.immediateRestock, timeZone: NOTIFICATION_TIME_ZONE };
+    return { state, label, channels, selectedChannels: policy.channels, maxAlertAgeMinutes: policy.maxAlertAgeMinutes, events, reasons, pausedUntil: rule.pausedUntil, immediateRestock: rule.immediateRestock, timeZone: NOTIFICATION_TIME_ZONE };
 }
 function alertExplanation(product = null, collection = null) {
     const configuration = alertConfiguration(product, collection);
@@ -2630,7 +2703,8 @@ function enqueueAlert(event, options = {}) {
         return 0;
     }
     const excluded = new Set(options.excludeChannels || []);
-    const channels = CHANNEL_NAMES.filter((channel) => channelConfigured(channel) && !excluded.has(channel));
+    const policy = eventAlertDelivery(event);
+    const channels = deliveryChannels(policy).filter(channel => !excluded.has(channel));
     const now = isoNow();
     const plan = deliveryPlan(event, rule);
     if (!channels.length) {
@@ -2640,7 +2714,7 @@ function enqueueAlert(event, options = {}) {
     const insert = db.prepare(`INSERT INTO notification_queue(event_id,region,channel,payload_json,attempts,max_attempts,next_attempt_at,status,last_error,created_at,updated_at)
     VALUES(?,?,?,?,0,?,?,'pending',NULL,?,?) ON CONFLICT(event_id,channel) DO NOTHING`);
     for (const channel of channels)
-        insert.run(event.id, event.region || currentRegion(), channel, JSON.stringify(event), NOTIFICATION_MAX_ATTEMPTS, plan.deliverAt, now, now);
+        insert.run(event.id, event.region || currentRegion(), channel, JSON.stringify({ ...event, deliveryPolicy: policy }), NOTIFICATION_MAX_ATTEMPTS, plan.deliverAt, now, now);
     if (channels.length) {
         rememberPlan({ state: 'queued', reason: 'enabled', mode: plan.mode, deliverAt: plan.deliverAt, channels });
         markCooldown(event);
@@ -2693,8 +2767,11 @@ function eventServerAlertSummary(event, decision, queueRows = [], logRows = []) 
     }
     if (sentChannels.length || statuses.has('sent'))
         return { state: 'sent', label: 'Sent', detail: `Server alert sent${channelText ? ` through ${channelText}` : ''}.`, channels, mode: event.serverAlert?.mode || null, deliverAt: event.serverAlert?.deliverAt || null };
-    if (statuses.has('cancelled'))
-        return { state: 'muted', label: 'Cancelled', detail: decision.reason === 'purchased' ? 'Pending delivery was cancelled when this watch was marked purchased.' : 'Server delivery was cancelled by a watch or channel change.', channels, mode: event.serverAlert?.mode || null, deliverAt: event.serverAlert?.deliverAt || null };
+    if (statuses.has('cancelled')) {
+        const expired = currentRows.some(row => (row.last_error || row.detail) === 'Alert expired before delivery.');
+        const removed = currentRows.some(row => (row.last_error || row.detail) === 'Channel removed from this alert route.');
+        return { state: 'muted', label: expired ? 'Expired' : 'Cancelled', detail: expired ? 'The alert expired before delivery; its original observation remains in Activity.' : removed ? 'Pending delivery was cancelled because this channel was removed from the alert route.' : decision.reason === 'purchased' ? 'Pending delivery was cancelled when this watch was marked purchased.' : 'Server delivery was cancelled by a watch or channel change.', channels, mode: event.serverAlert?.mode || null, deliverAt: event.serverAlert?.deliverAt || null };
+    }
     const snapshot = event.serverAlert;
     if (snapshot?.state === 'no-channel')
         return { state: 'no-channel', label: 'No channel', detail: 'This event matched your alert rules, but no server notification channel was configured.', channels: [], mode: snapshot.mode || null, deliverAt: snapshot.deliverAt || null };
@@ -2720,6 +2797,38 @@ function eventServerAlertSummary(event, decision, queueRows = [], logRows = []) 
 function retryDelaySeconds(attempts) {
     return Math.min(30 * 60, 30 * (2 ** Math.max(0, attempts - 1)));
 }
+function alertExpired(event, currentPolicy = eventAlertDelivery(event), now = Date.now()) {
+    if (!['restock', 'collection_ready'].includes(event.type) && !['target_price', 'price_drop'].includes(event.alertKind))
+        return false;
+    const limits = [event.deliveryPolicy?.maxAlertAgeMinutes, currentPolicy.maxAlertAgeMinutes].filter(value => Number.isInteger(value) && value > 0);
+    return Boolean(limits.length && now - new Date(event.detectedAt).getTime() >= Math.min(...limits) * 60000);
+}
+function delayedAlertContext(event, now = Date.now()) {
+    const ageSeconds = Math.floor((now - new Date(event.detectedAt).getTime()) / 1000);
+    if (!Number.isFinite(ageSeconds) || ageSeconds < 60 || ['test', 'operational'].includes(event.type))
+        return event;
+    const region = event.region || currentRegion();
+    const product = states[region]?.products[event.sourceSlug || event.slug];
+    let freshness = productFreshness(product, region), status = null, price = null;
+    if (event.type === 'collection_ready') {
+        const collection = watchCollections(region).find(item => item.id === event.collectionId);
+        if (collection) {
+            const ready = collection.readiness;
+            freshness = { state: coverageFresh(region) && !ready.unknown && !(collection.budgetRequired && ready.budget.state === 'unknown') ? 'confirmed' : 'unknown', checkedAt: ready.checkedAt };
+            status = collection.archived ? 'Archived' : ready.ready ? 'Ready' : ready.unknown ? 'Unknown' : 'Not ready';
+        }
+    }
+    else if (product) {
+        status = product.unlisted ? 'Unlisted' : product.inStock ? 'In stock' : product.comingSoon ? 'Coming soon' : 'Sold out';
+        price = product.price || null;
+    }
+    const timeZone = event.notificationTimeZone || NOTIFICATION_TIME_ZONE;
+    const format = value => new Date(value).toLocaleString('en-US', { timeZone, timeZoneName: 'short' });
+    const current = freshness.state === 'confirmed' && status ? `Latest confirmed status: ${status}${price ? `; ${price}` : ''} (checked ${format(freshness.checkedAt)}).`
+        : `Current status is unconfirmed${freshness.state === 'pending' ? ': a change is awaiting confirmation' : ': waiting for a complete, recent check'}.${status ? ` Last known status: ${status}${price ? `; ${price}` : ''}.` : ''}`;
+    const deliveryContext = { asOf: new Date(now).toISOString(), ageSeconds, freshness, status, price, message: `Detected ${format(event.detectedAt)}. ${current}` };
+    return { ...event, deliveryContext };
+}
 let notificationWorkerRunning = false;
 async function processNotificationQueue() {
     if (notificationWorkerRunning)
@@ -2741,6 +2850,15 @@ async function processNotificationQueue() {
                 if (db.prepare('SELECT status FROM notification_queue WHERE id=?').get(row.id)?.status !== 'pending')
                     return false;
                 const event = safeJsonParse(row.payload_json, {});
+                const policy = eventAlertDelivery(event);
+                if (policy.channels !== null && !policy.channels.includes(row.channel)) {
+                    cancelDeliveryJob(row, 'Channel removed from this alert route.');
+                    return false;
+                }
+                if (alertExpired(event, policy)) {
+                    cancelDeliveryJob(row, 'Alert expired before delivery.');
+                    return false;
+                }
                 if ((event.type === 'collection_ready' && !collectionAlertActive(event.collectionId, row.region)) || (event.slug && !['test', 'operational', 'collection_ready'].includes(event.type) && collectionAlertSuppressors(event.slug, row.region).length)) {
                     db.prepare("UPDATE notification_queue SET status='cancelled',last_error='Alert disabled by collection settings.',updated_at=? WHERE id=?").run(isoNow(), row.id);
                     return false;
@@ -2756,13 +2874,13 @@ async function processNotificationQueue() {
                 continue;
             }
             db.prepare(`UPDATE notification_queue SET status='processing',updated_at=? WHERE id IN (${marks})`).run(isoNow(), ...ids);
-            const events = rows.map((row) => safeJsonParse(row.payload_json, {}));
+            const events = rows.map((row) => delayedAlertContext(safeJsonParse(row.payload_json, {})));
             const event = events.length > 1 ? { id: `digest-${rows[0].id}`, type: 'digest', alertKind: 'digest', events, region: rows[0].region, detectedAt: isoNow(), notificationTimeZone: NOTIFICATION_TIME_ZONE, url: PUBLIC_BASE_URL || null, dashboardUrl: PUBLIC_BASE_URL || null } : events[0];
             try {
                 await regionContext.run(rows[0].region, () => sendChannel(rows[0].channel, event));
                 db.prepare(`UPDATE notification_queue SET status='sent',attempts=attempts+1,last_error=NULL,updated_at=? WHERE id IN (${marks})`).run(isoNow(), ...ids);
-                for (const row of rows)
-                    logNotification(row.event_id, row.channel, 'sent', `attempt ${row.attempts + 1}${events.length > 1 ? `; grouped ${events.length}` : ''}`);
+                for (const [index, row] of rows.entries())
+                    logNotification(row.event_id, row.channel, 'sent', `attempt ${row.attempts + 1}${events.length > 1 ? `; grouped ${events.length}` : ''}${events[index].deliveryContext ? `; delayed alert context: ${events[index].deliveryContext.message}` : ''}`);
                 if (monitors[rows[0].region])
                     monitors[rows[0].region].lastAlertAt = isoNow();
             }
@@ -3312,13 +3430,24 @@ function scheduleMonitor() {
     monitorTimers.set(region, timer);
     timer.unref();
 }
+function productFreshness(product, region = currentRegion()) {
+    if (!product)
+        return { state: 'unknown', checkedAt: null, expiresAt: null, pendingKinds: [] };
+    const identities = [product.slug, ...(!product.variantId && Array.isArray(product.variantKeys) ? product.variantKeys : [])];
+    const pending = db.prepare(`SELECT DISTINCT kind FROM pending_transitions WHERE region=? AND slug IN (${identities.map(() => '?').join(',')})`).all(region, ...identities);
+    const checkedAt = db.prepare('SELECT ended_at FROM inventory_history WHERE region=? AND slug=? ORDER BY ended_at DESC,id DESC LIMIT 1').get(region, product.slug)?.ended_at || null;
+    const fresh = coverageFresh(region);
+    return { state: !fresh ? checkedAt ? 'stale' : 'unknown' : pending.length ? 'pending' : checkedAt ? 'confirmed' : 'unknown', checkedAt,
+        expiresAt: checkedAt ? new Date(new Date(coverageSessions.get(region)?.at || checkedAt).getTime() + coverageToleranceMs()).toISOString() : null,
+        pendingKinds: pending.map(row => row.kind) };
+}
 function productForApi(product) {
     if (!product)
         return null;
     const watched = state.watchlist.includes(product.slug);
     const watch = watched ? db.prepare('SELECT created_at FROM watchlist WHERE region=? AND slug=?').get(currentRegion(), product.slug) : null;
     const collections = watched ? db.prepare('SELECT collection_id FROM watch_collection_members WHERE region=? AND slug=?').all(currentRegion(), product.slug).map((row) => row.collection_id) : [];
-    return { ...product, watched, watchedAt: watch?.created_at || null, watchRule: watched ? watchRule(product.slug) : null, collections, alertSummary: watched ? alertConfiguration(product) : null };
+    return { ...product, freshness: productFreshness(product), watched, watchedAt: watch?.created_at || null, watchRule: watched ? watchRule(product.slug) : null, collections, alertSummary: watched ? alertConfiguration(product) : null };
 }
 function collectionAlertActive(id, region = currentRegion()) {
     const value = db.prepare('SELECT notify_ready,archived FROM watch_collections WHERE region=? AND id=?').get(region, id);
@@ -3373,10 +3502,11 @@ function collectionItemRows(id, region = currentRegion()) {
     return db.prepare('SELECT slug,quantity,purchased_quantity AS purchasedQuantity,paid_total AS paidTotal FROM watch_collection_members WHERE region=? AND collection_id=? ORDER BY slug').all(region, id);
 }
 function watchCollections(region = currentRegion()) {
-    return db.prepare('SELECT id,name,created_at AS createdAt,notify_ready AS notifyReady,ready_state AS readyState,budget,alerts_only AS alertsOnly,archived,budget_required AS budgetRequired FROM watch_collections WHERE region=? ORDER BY name COLLATE NOCASE').all(region)
+    return db.prepare('SELECT id,name,created_at AS createdAt,notify_ready AS notifyReady,ready_state AS readyState,budget,alerts_only AS alertsOnly,archived,budget_required AS budgetRequired,delivery_json AS deliveryJson FROM watch_collections WHERE region=? ORDER BY name COLLATE NOCASE').all(region)
         .map((collection) => {
         const items = collectionItemRows(collection.id, region);
-        const value = { ...collection, notifyReady: Boolean(collection.notifyReady), alertsOnly: Boolean(collection.alertsOnly), archived: Boolean(collection.archived), budgetRequired: Boolean(collection.budgetRequired), items, slugs: items.map((item) => item.slug) };
+        const { deliveryJson, ...saved } = collection;
+        const value = { ...saved, ...normalizeAlertDelivery(safeJsonParse(deliveryJson, {})), notifyReady: Boolean(collection.notifyReady), alertsOnly: Boolean(collection.alertsOnly), archived: Boolean(collection.archived), budgetRequired: Boolean(collection.budgetRequired), items, slugs: items.map((item) => item.slug) };
         let spentCents = 0, remainingCents = 0, missingPaid = 0, missingPrices = 0, missing = 0;
         for (const item of items) {
             const unitPrice = priceValue(states[region]?.products[item.slug]?.price);
@@ -3667,6 +3797,7 @@ function productDetailsForApi(slug, days = 30) {
         history,
         insights: productInsights(slug, days),
         historyRetentionDays: HISTORY_RETENTION_DAYS,
+        capabilities: { alertDelivery: true },
         firstObservedAt: history.length ? history[history.length - 1].observedAt : product.firstDiscoveredAt || product.lastSeenAt || null,
         lastChangedAt: product.lastChangedAt || history[0]?.observedAt || null,
         notificationDecision: state.watchlist.includes(slug) ? notificationDecision({ type: 'restock', slug, region: currentRegion(), watchedAtDetection: true }) : null,
@@ -4078,6 +4209,7 @@ function scrubSupportValue(value, key = '') {
         return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, scrubSupportValue(item, name)]));
     if (typeof value === 'string')
         return value
+            .replace(/; delayed alert context: [\s\S]*/, '; delayed alert context: [redacted]')
             .replace(/(bearer\s+)[^\s,;]+/ig, '$1[redacted]')
             .replace(/(password|secret|token|authorization)(["'=:\s]+)[^\s,"'}]+/ig, '$1$2[redacted]')
             .replace(/\b(?:https?|wss?):\/\/[^\s"'<>]+/ig, '[url redacted]')
@@ -4169,7 +4301,7 @@ function exportSnapshot() {
     }
     return {
         format: 'GearBeaconBackup',
-        formatVersion: 8,
+        formatVersion: 9,
         exportedAt: isoNow(),
         appVersion: APP_VERSION,
         schemaVersion: schemaVersion(),
@@ -4224,7 +4356,7 @@ function normalizeImportedSnapshot(snapshot) {
     const isLegacy = !snapshot.format && (Array.isArray(snapshot.watchlist) || snapshot.products || Array.isArray(snapshot.events));
     if (!isBackup && !isLegacy)
         throw new Error('This file is not a GearBeacon backup or legacy GearBeacon state file.');
-    if (isBackup && Number(snapshot.formatVersion || 0) > 8)
+    if (isBackup && Number(snapshot.formatVersion || 0) > 9)
         throw new Error(`This backup format (${snapshot.formatVersion}) is newer than GearBeacon ${APP_VERSION} supports.`);
     const normalizeRegion = (value) => ({
         watchlist: Array.isArray(value?.watchlist) ? value.watchlist.map(String).filter(Boolean) : [],
@@ -4279,6 +4411,7 @@ function validateSnapshotCollections(regions) {
                 throw new Error('Backup contains invalid collection alert state.');
             if (collection.archived !== undefined && typeof collection.archived !== 'boolean')
                 throw new Error('Backup contains an invalid collection archive setting.');
+            Object.assign(collection, normalizeAlertDelivery(collection));
             collection.budget = collectionMoney(collection.budget === undefined ? null : collection.budget, 'Collection budget');
             if (collection.alertsOnly !== undefined && typeof collection.alertsOnly !== 'boolean')
                 throw new Error('Backup contains an invalid collection alert mode.');
@@ -4351,7 +4484,7 @@ function importSnapshot(snapshot) {
         db.prepare('DELETE FROM watch_collections WHERE region=?').run(region);
         for (const collection of regionState.collections) {
             const createdAt = collection.createdAt && !Number.isNaN(new Date(collection.createdAt).valueOf()) ? new Date(collection.createdAt).toISOString() : isoNow();
-            db.prepare('INSERT INTO watch_collections(region,id,name,created_at,notify_ready,ready_state,budget,alerts_only,archived,budget_required) VALUES(?,?,?,?,?,?,?,?,?,?)').run(region, collection.id, collection.name, createdAt, collection.notifyReady ? 1 : 0, collection.readyState ?? null, collection.budget, collection.alertsOnly ? 1 : 0, collection.archived ? 1 : 0, collection.budgetRequired ? 1 : 0);
+            db.prepare('INSERT INTO watch_collections(region,id,name,created_at,notify_ready,ready_state,budget,alerts_only,archived,budget_required,delivery_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(region, collection.id, collection.name, createdAt, collection.notifyReady ? 1 : 0, collection.readyState ?? null, collection.budget, collection.alertsOnly ? 1 : 0, collection.archived ? 1 : 0, collection.budgetRequired ? 1 : 0, JSON.stringify(normalizeAlertDelivery(collection)));
             for (const item of collection.items)
                 db.prepare('INSERT INTO watch_collection_members(region,collection_id,slug,quantity,purchased_quantity,paid_total) VALUES(?,?,?,?,?,?)').run(region, collection.id, item.slug, item.quantity, item.purchasedQuantity, item.paidTotal);
         }
@@ -5365,7 +5498,7 @@ async function handleRegionApi(req, res, url) {
         return sendJson(res, 200, { products, count: products.length, ...watchWorkspace() });
     }
     if (url.pathname === '/api/collections' && req.method === 'GET')
-        return sendJson(res, 200, { ...watchWorkspace(), capabilities: { memberEditing: true, purchasePlanning: true, watchWorkflow: true, budgetAlerts: true } });
+        return sendJson(res, 200, { ...watchWorkspace(), capabilities: { memberEditing: true, purchasePlanning: true, watchWorkflow: true, budgetAlerts: true, alertDelivery: true } });
     if (url.pathname === '/api/collections' && req.method === 'POST') {
         const body = await readJsonBody(req);
         let name, slugs, budget;
@@ -5478,9 +5611,10 @@ async function handleRegionApi(req, res, url) {
         }
         else {
             const body = await readJsonBody(req);
-            let name, slugs, budget;
-            const existing = db.prepare('SELECT name,notify_ready,budget,alerts_only,archived,budget_required FROM watch_collections WHERE region=? AND id=?').get(currentRegion(), id);
+            let name, slugs, budget, delivery;
+            const existing = db.prepare('SELECT name,notify_ready,budget,alerts_only,archived,budget_required,delivery_json FROM watch_collections WHERE region=? AND id=?').get(currentRegion(), id);
             try {
+                delivery = normalizeAlertDelivery(body, normalizeAlertDelivery(safeJsonParse(existing.delivery_json, {})));
                 name = collectionName(body?.name ?? existing.name);
                 budget = collectionMoney(body?.budget === undefined ? existing.budget : body.budget, 'Budget');
                 if (body?.archived !== undefined && typeof body.archived !== 'boolean')
@@ -5506,6 +5640,8 @@ async function handleRegionApi(req, res, url) {
             db.exec('BEGIN IMMEDIATE');
             try {
                 db.prepare('UPDATE watch_collections SET name=?,budget=?,alerts_only=?,budget_required=? WHERE region=? AND id=?').run(name, budget, body?.alertsOnly === undefined ? existing.alerts_only : body.alertsOnly ? 1 : 0, body?.budgetRequired === undefined ? existing.budget_required : body.budgetRequired ? 1 : 0, currentRegion(), id);
+                db.prepare('UPDATE watch_collections SET delivery_json=? WHERE region=? AND id=?').run(JSON.stringify(delivery), currentRegion(), id);
+                reconcileAlertDelivery(currentRegion(), id, true);
                 if (budget !== existing.budget || (body?.budgetRequired !== undefined && body.budgetRequired !== Boolean(existing.budget_required)))
                     baselineCollections(currentRegion(), [id]);
                 if (slugs !== undefined)
@@ -5559,7 +5695,7 @@ async function handleRegionApi(req, res, url) {
         const description = rule.purchasedAt ? 'Purchased: alerts are stopped until you mark this watch as still wanted.' : rule.availableUnderTarget
             ? `Alert when ${product.name} becomes available at or below ${rule.targetPrice} ${REGIONS[currentRegion()].currency}, or its price reaches that target while available.`
             : `Watch ${product.name} using the selected event settings${rule.targetPrice !== null ? ` and a price-change target of ${rule.targetPrice} ${REGIONS[currentRegion()].currency}` : ''}.`;
-        return sendJson(res, 200, { description, decision, delivery: deliveryPlan(event, rule), copy: notificationCopy(event), configuredChannels: CHANNEL_NAMES.filter(channelConfigured), allActivity: notificationPreferences().allActivity });
+        return sendJson(res, 200, { description, decision, delivery: deliveryPlan(event, rule), copy: notificationCopy(event), configuredChannels: deliveryChannels(normalizeAlertDelivery(rule)), alertDelivery: normalizeAlertDelivery(rule), allActivity: notificationPreferences().allActivity });
     }
     if (req.method === 'GET' && url.pathname === '/api/watchlist') {
         const items = state.watchlist.map((slug) => productForApi(state.products[slug]) || {

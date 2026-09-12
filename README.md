@@ -17,14 +17,14 @@ One installation serves one owner. Monitoring and external notification delivery
 
 **Current version: 1.2.0** · [Downloads](https://github.com/alexphillips-dev/GearBeacon/releases) · [Release notes](docs/RELEASE_NOTES.md) · [Wiki](https://github.com/alexphillips-dev/GearBeacon/wiki)
 
-The current `dev` checkout also includes named views, a compact Watchlist, budget-aware collection alerts, alert explanations, smoother background refreshes, and update startup verification. It uses schema v12 and recovery export format v8, with a validated backup before migration. These additions are not included in the published v1.2.0 downloads; see the [changelog](docs/CHANGELOG.md) and [Wiki](https://github.com/alexphillips-dev/GearBeacon/wiki).
+The current `dev` checkout also includes named views, a compact Watchlist, budget-aware collection alerts, alert explanations, smoother background refreshes, update startup verification, per-watch/collection delivery channels, delayed-alert context and expiry, and product freshness indicators. It uses schema v13 and recovery export format v9, with a validated backup before migration. These additions are not included in the published v1.2.0 downloads; see the [changelog](docs/CHANGELOG.md) and [Wiki](https://github.com/alexphillips-dev/GearBeacon/wiki).
 
 ## What it does
 
 - **Regional monitoring:** United States, Canada, Europe, and United Kingdom Stores, with separate watches, prices, activity, and health.
 - **Precise watches:** Any variant or an exact SKU, color, length, or pack size; import Store links and TXT/CSV/JSON lists with a review before saving.
 - **Purchase planning:** Collections with product previews, quantities, recorded spending, budgets, archive/undo, and optional grouping without duplicate item cards.
-- **Flexible alerts:** Restocks, price drops, available-at-target conditions, and collection readiness; per-item rules, pauses, quiet hours, digests, and collection-only overrides.
+- **Flexible alerts:** Restocks, price drops, available-at-target conditions, and collection readiness; per-item rules, pauses, quiet hours, digests, and collection-only overrides. The current dev checkout adds [delivery routes, optional expiry, and freshness indicators](docs/ALERT_DELIVERY.md).
 - **Multiple channels:** ntfy, Discord, Gotify, SMTP email, and signed webhooks, with durable delivery and bounded retries. Browser popups are also available while the page is running.
 - **Useful evidence:** Observed stock timelines, 7/30/90-day price insights, and searchable, paginated Activity with delivery outcomes and exports.
 - **Recovery and oversight:** Validated SQLite backups, encrypted exports, secondary recovery copies, restore tests, diagnostics, and owner-controlled updates.

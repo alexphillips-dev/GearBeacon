@@ -676,7 +676,7 @@ try {
   assert(await evaluate("app.collections[0].readiness.waiting === 1 && document.querySelector('.readiness-status').textContent.includes('0 of 1')"), 'Collection did not show its confirmed blocking item');
   assert(await evaluate("document.querySelector('.collection-card .card-actions [data-collection-alerts]').textContent === 'Alerts'"), 'Collection cards did not provide a clearly labeled Alerts action');
   await evaluate("window.collectionAlertWatchRules=JSON.stringify(app.products.filter(item=>item.watched).map(item=>[item.slug,item.watchRule])); document.querySelector('.collection-card .card-actions [data-collection-alerts]').focus(); document.activeElement.click()");
-  assert(await evaluate("document.getElementById('collectionAlertHeading').textContent === 'Collection alerts' && document.querySelector('[data-notify-collection]').getAttribute('aria-describedby').includes('collectionAlertInteraction') && document.getElementById('collectionAlertInteraction').offsetHeight > 0 && document.getElementById('collectionAlertInteraction').textContent.includes('unless another collection suppresses') && document.getElementById('collectionAlertDelivery').textContent.includes('Saves automatically')"), 'Collection alerts did not visibly explain saving, delivery, or their interaction with item rules');
+  assert(await evaluate("document.getElementById('collectionAlertHeading').textContent === 'Collection alerts' && document.querySelector('[data-notify-collection]').getAttribute('aria-describedby').includes('collectionAlertInteraction') && document.getElementById('collectionAlertInteraction').offsetHeight > 0 && document.getElementById('collectionAlertInteraction').textContent.includes('unless another collection suppresses') && document.getElementById('collectionAlertDelivery').textContent.includes('switches save automatically') && document.getElementById('collectionAlertDelivery').textContent.includes('Save delivery options')"), 'Collection alerts did not visibly explain saving, delivery, or their interaction with item rules');
   await evaluate("document.querySelector('[data-notify-collection]').click()");
   await waitForBrowser("app.collections[0].notifyReady && document.activeElement.matches('[data-notify-collection]')", 'Collection notification opt-in failed or lost focus');
   assert(await evaluate("window.collectionAlertWatchRules === JSON.stringify(app.products.filter(item=>item.watched).map(item=>[item.slug,item.watchRule]))"), 'Enabling collection alerts changed individual item rules');
@@ -1265,6 +1265,99 @@ try {
   })()`);
   assert(scale.unchanged && scale.retained===499 && scale.retainedProjects===49 && scale.optionsPreserved && scale.focusPreserved && scale.changedFocus && scale.selected, `Large-list refresh lost state: ${JSON.stringify(scale)}`);
   console.log(`BROWSER SCALE: 500 watches · full ${scale.fullMs.toFixed(1)}ms · unchanged ${scale.unchangedMs.toFixed(1)}ms · one price ${scale.singleMs.toFixed(1)}ms · ${scale.retained}/500 cards retained`);
+
+  // Delivery preferences persist without background refreshes discarding drafts or focus.
+  await evaluate("activateTab('watchlist'); closeProductDialog(); closeCollectionManager(); resetWatchFilters(); window.deliverySlug=app.products.find(product=>product.watched).slug; openProductDialog(window.deliverySlug)");
+  await waitForBrowser("Boolean(document.querySelector('#productRuleForm [name=deliveryMode]'))", 'Delivery controls did not render');
+  await evaluate(`(() => {
+    const form=document.getElementById('productRuleForm'); window.deliveryForm=form;
+    form.elements.deliveryMode.value='custom'; form.elements.deliveryMode.dispatchEvent(new Event('change',{bubbles:true}));
+    form.querySelectorAll('[name=deliveryChannel]').forEach(input=>input.checked=['ntfy','webhook'].includes(input.value));
+    form.elements.maxAlertAgeMinutes.value='30'; form.elements.maxAlertAgeMinutes.focus();
+  })()`);
+  await evaluate("refresh({background:true})");
+  assert(await evaluate("window.deliveryForm===document.getElementById('productRuleForm') && document.activeElement===window.deliveryForm.elements.maxAlertAgeMinutes && window.deliveryForm.elements.maxAlertAgeMinutes.value==='30'"), 'Refresh replaced the delivery draft or focus');
+  await evaluate("previewProductRule(document.getElementById('productRuleForm'))");
+  assert(await evaluate("document.querySelector('[data-rule-result]').textContent.includes('Channels:')"), 'Delivery preview did not explain channels');
+  await evaluate("document.getElementById('productRuleForm').requestSubmit()");
+  await waitForBrowser("app.currentProductDetails?.product.watchRule.maxAlertAgeMinutes===30 && JSON.stringify(app.currentProductDetails.product.watchRule.channels)===JSON.stringify(['ntfy','webhook'])", 'Watch delivery settings were not saved');
+  await evaluate("closeProductDialog(); openProductDialog(window.deliverySlug)");
+  await waitForBrowser("document.querySelector('#productRuleForm [name=maxAlertAgeMinutes]')?.value==='30'", 'Watch delivery settings did not survive reopening');
+  for (const theme of ['dark','light']) {
+    await evaluate(`applyTheme('${theme}')`); await delay(250);
+    await cdp.send('Emulation.setDeviceMetricsOverride',{width:390,height:844,screenWidth:390,screenHeight:844,deviceScaleFactor:1,mobile:true});
+    await assertAccessible(`Watch delivery controls ${theme} mobile`);
+    assert(await evaluate("document.documentElement.scrollWidth<=window.innerWidth+1 && document.querySelector('.product-dialog-panel').scrollWidth<=document.querySelector('.product-dialog-panel').clientWidth+1"), 'Delivery options overflow the mobile product dialog');
+  }
+  await evaluate("const form=document.getElementById('productRuleForm'); form.elements.deliveryMode.value='defaults'; form.elements.deliveryMode.dispatchEvent(new Event('change',{bubbles:true})); form.elements.maxAlertAgeMinutes.value=''; form.requestSubmit()");
+  await waitForBrowser("app.currentProductDetails?.product.watchRule.channels===null && app.currentProductDetails?.product.watchRule.maxAlertAgeMinutes===null", 'Use defaults did not restore inherited delivery');
+  await evaluate(`(async () => {
+    closeProductDialog(); const created=await api('/api/collections',{method:'POST',body:JSON.stringify({name:'Delivery browser test',slugs:[window.deliverySlug]})});
+    window.deliveryCollectionId=created.id; await refresh(); openCollectionAlerts(created.id);
+  })()`);
+  await waitForBrowser("Boolean(document.querySelector('[data-collection-delivery]'))", 'Collection delivery form did not open');
+  await evaluate(`(() => {
+    const form=document.querySelector('[data-collection-delivery]');
+    form.elements.deliveryMode.value='custom'; form.elements.deliveryMode.dispatchEvent(new Event('change',{bubbles:true}));
+    form.querySelectorAll('[name=deliveryChannel]').forEach(input=>input.checked=input.value==='webhook');
+    form.elements.maxAlertAgeMinutes.value='15'; form.requestSubmit();
+  })()`);
+  await waitForBrowser("!app.collectionNotificationBusy && app.collections.find(item=>item.id===window.deliveryCollectionId).maxAlertAgeMinutes===15", 'Collection delivery preferences did not save');
+  assert(await evaluate("JSON.stringify(app.collections.find(item=>item.id===window.deliveryCollectionId).channels)===JSON.stringify(['webhook'])"), 'Collection route did not persist');
+  await evaluate("window.collectionDeliveryForm=document.querySelector('[data-collection-delivery]'); window.collectionDeliveryForm.elements.maxAlertAgeMinutes.value='45'; window.collectionDeliveryForm.elements.maxAlertAgeMinutes.focus(); refresh({background:true})");
+  assert(await evaluate("document.querySelector('[data-collection-delivery]')===window.collectionDeliveryForm && document.activeElement===window.collectionDeliveryForm.elements.maxAlertAgeMinutes && window.collectionDeliveryForm.elements.maxAlertAgeMinutes.value==='45'"), 'Collection refresh lost a delivery draft');
+  await evaluate("document.querySelector('[data-notify-collection]').click()");
+  await waitForBrowser("!app.collectionNotificationBusy && app.collections.find(item=>item.id===window.deliveryCollectionId).notifyReady", 'Collection toggle did not save');
+  assert(await evaluate("document.querySelector('[data-collection-delivery] [name=maxAlertAgeMinutes]').value==='45' && app.collections.find(item=>item.id===window.deliveryCollectionId).maxAlertAgeMinutes===15"), 'Readiness autosave discarded or saved unrelated delivery edits');
+
+  // Changing regions during capability verification must not submit the old collection to the new region.
+  const routeRace=await evaluate(`(async () => {
+    const originalApi=api, region=app.currentRegion; let writes=0;
+    api=async (path,options={})=>{
+      if (path==='/api/collections' && !options.method) { app.currentRegion='ca'; return {capabilities:{alertDelivery:true}}; }
+      writes++; return originalApi(path,options);
+    };
+    try { await saveCollectionDelivery(document.querySelector('[data-collection-delivery]')); return writes; }
+    finally { api=originalApi; app.currentRegion=region; app.collectionAlertsKey=null; renderCollectionAlerts(); }
+  })()`);
+  assert(routeRace===0,'A region change submitted delivery preferences to the wrong region');
+  for (const theme of ['dark','light']) {
+    await evaluate(`applyTheme('${theme}')`); await delay(250);
+    await assertAccessible(`Collection delivery controls ${theme} mobile`);
+    if (screenshotRoot) {
+      const capture=await cdp.send('Page.captureScreenshot',{format:'png'});
+      await writeFile(join(screenshotRoot,`delivery-${theme}-390.png`),Buffer.from(capture.data,'base64'));
+    }
+    assert(await evaluate("document.documentElement.scrollWidth<=window.innerWidth+1 && document.querySelector('.collection-panel').scrollWidth<=document.querySelector('.collection-panel').clientWidth+1"), 'Collection delivery controls overflow on mobile');
+  }
+  await cdp.send('Emulation.setDeviceMetricsOverride',{width:640,height:450,screenWidth:640,screenHeight:450,deviceScaleFactor:1,mobile:false});
+  assert(await evaluate("document.documentElement.scrollWidth<=window.innerWidth+1"), 'Delivery controls do not reflow at 200% equivalent zoom');
+  await evaluate("closeCollectionManager(); api('/api/collections/'+encodeURIComponent(window.deliveryCollectionId),{method:'DELETE'}).then(()=>refresh())");
+  await waitForBrowser("!app.collections.some(item=>item.id===window.deliveryCollectionId)", 'Test collection cleanup failed');
+  await cdp.send('Emulation.setDeviceMetricsOverride',{width:1280,height:900,screenWidth:1280,screenHeight:900,deviceScaleFactor:1,mobile:false});
+  // Freshness changes update labels in place, including an open dialog with unsaved rules.
+  await evaluate("activateTab('watchlist'); resetWatchFilters(); document.getElementById('groupCollectedWatches').checked=false; renderProducts(true); openProductDialog(window.deliverySlug)");
+  await waitForBrowser("Boolean(document.querySelector('#productRuleForm'))", 'Freshness product did not open');
+  const freshnessResult=await evaluate(`(() => {
+    const product=app.products.find(item=>item.slug===window.deliverySlug), original={freshness:product.freshness,price:product.price,inStock:product.inStock,unlisted:product.unlisted,comingSoon:product.comingSoon};
+    const node=[...document.querySelectorAll('#watchGrid [data-product-card]')].find(node=>node.dataset.productCard===window.deliverySlug);
+    const form=document.getElementById('productRuleForm'); form.elements.targetPrice.focus();
+    try {
+      product.freshness={state:'confirmed',checkedAt:new Date().toISOString(),expiresAt:new Date(Date.now()+60000).toISOString(),pendingKinds:[]}; updateProductFreshness();
+      product.price='$123.45'; product.inStock=false; product.unlisted=false; product.comingSoon=false; updateProductFreshness();
+      const liveFacts=document.querySelector('#productDialog .product-status-row strong').textContent==='$123.45' && document.querySelector('#productDialog .product-status-row .badge').textContent==='Sold out';
+      const confirmed=node.querySelector('[data-product-freshness]').textContent.includes('Confirmed');
+      product.freshness={...product.freshness,state:'pending'}; updateProductFreshness();
+      const pending=node.querySelector('[data-product-freshness]').textContent.includes('awaiting confirmation');
+      product.freshness={...product.freshness,state:'confirmed',expiresAt:new Date(Date.now()-1000).toISOString()}; updateProductFreshness();
+      const stale=node.querySelector('[data-product-freshness]').textContent.includes('checks delayed');
+      const dialogStale=document.querySelector('#productDialog [data-product-freshness]').textContent.includes('checks delayed');
+      return {confirmed,pending,stale,dialogStale,liveFacts,retained:node.isConnected && form===document.getElementById('productRuleForm') && document.activeElement===form.elements.targetPrice};
+    } finally { Object.assign(product,original); updateProductFreshness(); }
+  })()`);
+  assert(Object.values(freshnessResult).every(Boolean), `Freshness labels did not preserve observations or focus: ${JSON.stringify(freshnessResult)}`);
+  await evaluate("closeProductDialog(); activateTab('browse'); renderProducts(true)");
+  assert(await evaluate("document.querySelectorAll('#browseGrid .store-card').length>0 && [...document.querySelectorAll('#browseGrid .store-card')].every(card=>card.querySelector('[data-product-freshness]'))"), 'Browse cards lack freshness evidence');
   console.log(`BROWSER SMOKE PASSED: ${process.platform} · setup/auth · WCAG axe scans · keyboard/focus/reduced-motion · persistent navigation/filters · resettable empty states · offline recovery · copy actions · unclipped navigation · dark/light · images · watch/rules/bulk/import · exact variants/combined preview/collections/purchased · stock insights/windows/collection readiness/budget alerts/deep-links · compact searchable activity/evidence/stable pages · serialized refresh/hidden tabs/drafts/large lists · email settings/preview/deep-link · backup/import · diagnostics/operations · responsive`);
 } catch (error) {
   if (serverOutput.length) process.stderr.write(`\nGearBeacon server output:\n${serverOutput.join('').slice(-12000)}\n`);

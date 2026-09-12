@@ -154,7 +154,7 @@ try {
   assert.equal((await collection(any)).readiness.ready,true);
   assert.equal((await collection(any)).readiness.items[0].matchingSlug,white);
   assert.equal((await request('/api/collections?region=ca')).collections.length,0);
-  const snapshot=await request('/api/data/export'); assert.equal(snapshot.formatVersion,8);
+  const snapshot=await request('/api/data/export'); assert.equal(snapshot.formatVersion,9);
   const encrypted=await request('/api/data/export/encrypted',{passphrase:'budget alert fixture recovery phrase'});
   await edit({budgetRequired:false});
   await request('/api/data/import',{backup:snapshot});
@@ -190,10 +190,10 @@ try {
   // Recreate exactly the shipped v11 layout in this disposable database.
   await stop();
   const migrationDb=new DatabaseSync(join(dataDir,'gearbeacon.mock.sqlite3'));
-  migrationDb.exec('DELETE FROM schema_migrations WHERE version=12; ALTER TABLE watch_collections DROP COLUMN budget_required;');
+  migrationDb.exec('DELETE FROM schema_migrations WHERE version>=12; ALTER TABLE watch_collections DROP COLUMN delivery_json; ALTER TABLE watch_collections DROP COLUMN budget_required;');
   const backupCount=migrationDb.prepare('SELECT COUNT(*) AS count FROM backup_log').get().count;
   migrationDb.close(); await start();
-  assert.equal((await request('/api/status')).storage.schemaVersion,12);
+  assert.equal((await request('/api/status')).storage.schemaVersion,13);
   assert.equal((await collection(project)).budgetRequired,false);
   assert.equal((await collection(project)).items[0].paidTotal,740);
   assert.ok(query('SELECT COUNT(*) AS count FROM backup_log')[0].count>backupCount);

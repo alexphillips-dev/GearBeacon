@@ -188,6 +188,10 @@ function shell(content, event, options) {
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark light"><title>${htmlEscape(details.subject(event))}</title><style>html,body{margin:0!important;padding:0!important;width:100%!important}${lightCss}${autoCss}@media(max-width:620px){.email-wrap{width:100%!important}.email-pad{padding:22px 16px!important}.product-columns,.product-columns tbody,.product-columns tr,.product-columns td{display:block!important;width:100%!important}.product-visual{padding:0 0 18px!important}}</style></head><body style="margin:0;padding:0;background:#0d1012"><table class="email-bg" role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%;background:#0d1012"><tr><td align="center" style="padding:26px 10px"><table class="email-wrap" role="presentation" width="620" cellspacing="0" cellpadding="0" style="width:620px;max-width:100%;border-collapse:separate"><tr><td style="padding:0 4px 16px"><table role="presentation" cellspacing="0" cellpadding="0"><tr><td style="padding-right:11px">${logo}</td><td><div class="email-title" style="color:#ffffff;font:700 18px Arial,sans-serif">GearBeacon</div><div class="email-copy" style="margin-top:3px;color:#aab3bd;font:400 11px Arial,sans-serif">Know the second it&apos;s back.</div></td></tr></table></td></tr><tr><td class="email-card" style="overflow:hidden;border:1px solid #30363c;border-radius:15px;background:#171b1e"><div style="height:4px;background:${details.color}"></div>${content}</td></tr><tr><td class="email-copy" style="padding:16px 7px 0;color:#77818c;font:400 10px/1.55 Arial,sans-serif;text-align:center">Sent by your private GearBeacon installation. No tracking pixels, remote scripts, or analytics are included.</td></tr></table></td></tr></table></body></html>`;
 }
 
+function deliveryContextMarkup(event) {
+  return event.deliveryContext ? `<div class="email-copy" style="margin-top:12px;padding:12px;border:1px solid #697581;border-radius:8px;color:#c7cfd7;font:400 12px/1.55 Arial,sans-serif"><strong>Delayed alert</strong><br>${htmlEscape(event.deliveryContext.message)}</div>` : '';
+}
+
 function singleEmail(event, options) {
   const details = kindDetails(event);
   const kind = emailKind(event);
@@ -200,7 +204,7 @@ function singleEmail(event, options) {
   const actions = `${button(event.url, 'Open UniFi Store', details.color)}${button(event.dashboardUrl, 'Open in GearBeacon', details.color, true)}`;
   const explanation = options.explainReason ? `<div style="margin-top:20px;padding:13px 14px;border:1px solid #30363c;border-radius:10px;background:#111416"><div style="margin-bottom:4px;color:#8e98a4;font:700 9px Arial,sans-serif;letter-spacing:.1em;text-transform:uppercase">Why you received this</div><div class="email-copy" style="color:#c7cfd7;font:400 12px/1.55 Arial,sans-serif">${htmlEscape(reasonText(event))}</div></div>` : '';
   const product = isProduct ? `<table class="product-columns" role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td class="product-visual" width="205" valign="top" style="width:205px;padding:0 24px 0 0">${productImage(event, options)}</td><td valign="top"><h1 class="email-title" style="margin:0;color:#fff;font:700 26px/1.15 Arial,sans-serif;letter-spacing:-.5px">${htmlEscape(event.name || 'Product update')}</h1><div class="email-copy" style="margin-top:8px;color:#b5bec8;font:500 13px/1.5 Arial,sans-serif">${htmlEscape(statusLine)}</div>${productPriceMarkup(event, options)}${detailRows(event, options)}</td></tr></table>` : `<h1 class="email-title" style="margin:0;color:#fff;font:700 27px/1.2 Arial,sans-serif">${htmlEscape(details.label)}</h1><p class="email-copy" style="margin:12px 0 0;color:#c7cfd7;font:400 14px/1.65 Arial,sans-serif">${htmlEscape(statusLine)}</p>${options.detailLevel === 'detailed' ? `<p class="email-copy" style="color:#8e98a4;font:400 11px Arial,sans-serif">${htmlEscape(formatDetectedAt(event, options.timeZone))}</p>` : ''}`;
-  return shell(`<div class="email-pad" style="padding:30px"><div style="margin-bottom:17px;color:${details.color};font:700 10px Arial,sans-serif;letter-spacing:.13em">${htmlEscape(details.eyebrow)}</div>${product}<div style="margin-top:23px">${actions}</div>${explanation}</div>`, event, options);
+  return shell(`<div class="email-pad" style="padding:30px"><div style="margin-bottom:17px;color:${details.color};font:700 10px Arial,sans-serif;letter-spacing:.13em">${htmlEscape(details.eyebrow)}</div>${product}${deliveryContextMarkup(event)}<div style="margin-top:23px">${actions}</div>${explanation}</div>`, event, options);
 }
 
 function digestEmail(event, options) {
@@ -228,7 +232,7 @@ function digestEmail(event, options) {
       const destination = store || dashboard;
       const image = item.type === 'collection_ready' ? '<span style="color:#36d17c;font:700 12px Arial,sans-serif">READY</span>' : productImage(item, options, 82);
       const price = item.price ? `<div style="margin-top:6px;color:#fff;font:700 13px Arial,sans-serif">${htmlEscape(item.price)}${options.priceCalculations && moneyDelta(item) ? ` <span style="color:${details.color};font-size:10px">${htmlEscape(moneyDelta(item))}</span>` : ''}</div>` : '';
-      return `<tr><td style="padding:12px 0;border-top:1px solid #30363c"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td width="96" valign="middle" style="width:96px">${image}</td><td valign="middle"><div class="email-title" style="color:#f5f7fa;font:700 14px Arial,sans-serif">${htmlEscape(item.name || 'Product update')}</div><div class="email-copy" style="margin-top:4px;color:#8e98a4;font:400 10px Arial,sans-serif">${htmlEscape(item.category || item.slug || regionLabel(item, options.regions))}</div>${price}</td>${destination ? `<td width="82" align="right" valign="middle"><a href="${htmlEscape(destination)}" style="color:${details.color};font:700 11px Arial,sans-serif;text-decoration:none">View →</a></td>` : ''}</tr></table></td></tr>`;
+      return `<tr><td style="padding:12px 0;border-top:1px solid #30363c"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td width="96" valign="middle" style="width:96px">${image}</td><td valign="middle"><div class="email-title" style="color:#f5f7fa;font:700 14px Arial,sans-serif">${htmlEscape(item.name || 'Product update')}</div><div class="email-copy" style="margin-top:4px;color:#8e98a4;font:400 10px Arial,sans-serif">${htmlEscape(item.category || item.slug || regionLabel(item, options.regions))}</div>${price}${deliveryContextMarkup(item)}</td>${destination ? `<td width="82" align="right" valign="middle"><a href="${htmlEscape(destination)}" style="color:${details.color};font:700 11px Arial,sans-serif;text-decoration:none">View →</a></td>` : ''}</tr></table></td></tr>`;
     }).join('');
     return `<div style="margin-top:24px"><div style="padding-bottom:8px;color:${details.color};font:700 10px Arial,sans-serif;letter-spacing:.11em">${htmlEscape(details.eyebrow)} · ${items.length}</div><table role="presentation" width="100%" cellspacing="0" cellpadding="0">${cards}</table></div>`;
   }).join('');
@@ -246,7 +250,7 @@ function textForEvent(event, options) {
       if (seen.has(key)) continue;
       seen.add(key);
       if (lines.length >= options.digestMaxItems) continue;
-      lines.push(`- ${kindDetails(item).label}: ${item.name || 'Product'}${item.price ? ` — ${item.price}` : ''}${item.previousPrice ? ` (was ${item.previousPrice})` : ''}${item.url ? `\n  ${item.url}` : ''}`);
+      lines.push(`- ${kindDetails(item).label}: ${item.name || 'Product'}${item.price ? ` — ${item.price}` : ''}${item.previousPrice ? ` (was ${item.previousPrice})` : ''}${item.deliveryContext ? `\n  Delayed alert: ${item.deliveryContext.message}` : ''}${item.url ? `\n  ${item.url}` : ''}`);
     }
     const remaining = Math.max(0, seen.size - lines.length);
     return [`GearBeacon digest`, `${seen.size} product update${seen.size === 1 ? '' : 's'} in ${regionLabel(event, options.regions)}`, '', ...lines, remaining ? `\nAnd ${remaining} more update${remaining === 1 ? '' : 's'} not shown.` : '', event.dashboardUrl || event.url ? `\nOpen GearBeacon: ${event.dashboardUrl || event.url}` : '', '', 'Sent by your private GearBeacon installation.'].filter(Boolean).join('\n');
@@ -260,6 +264,7 @@ function textForEvent(event, options) {
   if (event.category) lines.push(`Category: ${event.category}`);
   lines.push(`Store: ${regionLabel(event, options.regions)}`);
   if (options.detailLevel !== 'compact') lines.push(`Detected: ${formatDetectedAt(event, options.timeZone)}`);
+  if (event.deliveryContext) lines.push('', `Delayed alert: ${event.deliveryContext.message}`);
   if (event.detail) lines.push('', event.detail);
   if (options.explainReason) lines.push('', 'Why you received this:', reasonText(event));
   if (event.url) lines.push('', `Open UniFi Store: ${event.url}`);
@@ -283,7 +288,7 @@ function renderEmail(event, inputOptions = {}) {
     logoSource: inputOptions.logoSource || null,
   };
   const details = kindDetails(event);
-  const subject = `${options.subjectPrefix ? `${options.subjectPrefix} ` : ''}${details.subject(event)}`.trim().slice(0, 240);
+  const subject = `${options.subjectPrefix ? `${options.subjectPrefix} ` : ''}${event.deliveryContext ? `Delayed alert: ${event.name}` : details.subject(event)}`.trim().slice(0, 240);
   return {
     subject,
     text: textForEvent(event, options).replace(/\r?\n/g, '\r\n'),
