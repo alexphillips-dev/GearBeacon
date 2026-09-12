@@ -1202,7 +1202,11 @@ function renderEvents() {
     const metadataText = metadata.map((part) => `${part.text}${part.extra ? ` ${part.extra}` : ''}`).join(' · ');
     const metadataHtml = metadata.map((part) => {
       const text = escapeHtml(part.text);
-      const content = e.type === 'sold_out' && part.className === 'event-meta-transition' ? text.replace(/Sold out$/, '<span class="event-meta-sold-out">Sold out</span>') : text;
+      let content = text;
+      if (part.className === 'event-meta-transition') {
+        if (e.type === 'sold_out') content = text.replace(/Sold out$/, '<span class="event-meta-sold-out">Sold out</span>');
+        else if (e.type === 'restock') content = text.replace(/In stock$/, '<span class="event-meta-in-stock">In stock</span>');
+      }
       return `<span class="event-meta-part ${escapeHtml(part.className)}">${content}${part.extra ? ` <span class="event-delta-percent">${escapeHtml(part.extra)}</span>` : ''}</span>`;
     }).join('');
     const alert = e.serverAlert || { state:'no-channel', label:'No channel' };

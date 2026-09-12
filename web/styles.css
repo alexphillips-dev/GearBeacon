@@ -14,6 +14,7 @@
   --accent: #d1c3ae;
   --accent-soft: #2c2924;
   --good: #2ee581;
+  --restock: var(--good);
   --bad: #ef6a72;
   --warn: #d8b76d;
   --price-drop: #79b6ff;
@@ -51,6 +52,7 @@
   --accent: #6c6255;
   --accent-soft: #eeeae3;
   --good: #17884c;
+  --restock: #147d45;
   --bad: #a6474f;
   --warn: #92701e;
   --price-drop: #005bbb;
@@ -486,7 +488,7 @@ html.activity-active { overflow-anchor:none; }
 .event-button:hover { border-color:color-mix(in srgb, var(--border) 55%, var(--text)); background:var(--panel2); transform:none !important; }
 .event-button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 .event-icon { width:36px; height:36px; border-radius:10px; display:grid; place-items:center; background:var(--panel3); color:var(--text); font-weight:700; }
-.event.restock .event-icon { color:var(--good); background:color-mix(in srgb, var(--good) 9%, var(--panel)); }
+.event.restock .event-icon { color:var(--restock); background:color-mix(in srgb, var(--restock) 9%, var(--panel)); }
 .event.sold_out .event-icon { color:var(--bad); background:color-mix(in srgb, var(--bad) 9%, var(--panel)); }
 .event.price_change .event-icon { color:var(--warn); background:color-mix(in srgb, var(--warn) 9%, var(--panel)); }
 .event.price_change.price-decrease .event-icon { color:var(--price-drop); background:color-mix(in srgb, var(--price-drop) 9%, var(--panel)); }
@@ -497,6 +499,7 @@ html.activity-active { overflow-anchor:none; }
 .event-meta-delta { color:var(--warn); }
 .event.price-decrease .event-meta-delta { color:var(--price-drop); }
 .event-meta-sold-out { color:var(--bad); }
+.event-meta-in-stock { color:var(--restock); }
 .event-meta-target { color:var(--good); }
 .event-side { display:flex; align-items:center; gap:10px; min-width:0; white-space:nowrap; }
 .event time { color:var(--muted); font-size:12px; }
