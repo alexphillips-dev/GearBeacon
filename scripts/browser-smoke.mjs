@@ -525,6 +525,54 @@ try {
   assert(compactActivity?.height === 64 && compactActivity.overflow && compactActivity.alertLabel === 'none' && compactActivity.timeColumn < 32 && compactActivity.filterColumns === 1, `Mobile activity feed or filters did not remain compact: ${JSON.stringify(compactActivity)}`);
   await cdp.send('Emulation.clearDeviceMetricsOverride');
 
+  // Distinguish savings from increases on historical and newly arriving Activity cards.
+  await waitForBrowser("!app.activityController", 'Activity refresh did not settle before price colors');
+  await evaluate(`(() => {
+    window.priceActivityFetch=window.fetch;
+    const base={type:'price_change',region:'us',detectedAt:new Date().toISOString(),serverAlert:{state:'no-channel',label:'No channel'},previousStateDurationSeconds:3600};
+    window.priceActivityFixture={...app.activity, count:2,page:1,pages:1,newCount:0,arrivals:[],events:[
+      {...base,id:'price-drop-color',name:'Price decrease fixture',previousPrice:'$65.00',price:'$59.00',previousPriceValue:65,priceValue:59,priceDifference:-6,priceDifferencePercent:-9.2},
+      {...base,id:'price-rise-color',name:'Price increase fixture',previousPrice:'$59.00',price:'$65.00',previousPriceValue:59,priceValue:65,priceDifference:6,priceDifferencePercent:10.2}
+    ]};
+    window.fetch=(...args)=>String(args[0]).includes('/api/activity?') ? Promise.resolve(new Response(JSON.stringify(window.priceActivityFixture),{status:200,headers:{'Content-Type':'application/json'}})) : window.priceActivityFetch(...args);
+  })()`);
+  try {
+    await evaluate("refreshActivity(1,{reset:true})");
+    for (const theme of ['dark','light']) {
+      await evaluate(`applyTheme(${JSON.stringify(theme)})`); await delay(250);
+      for (const width of [1280,390]) {
+        await cdp.send('Emulation.setDeviceMetricsOverride',{width,height:844,screenWidth:width,screenHeight:844,deviceScaleFactor:1,mobile:false});
+        const colors=await evaluate(`(() => {
+          const [drop,rise]=document.querySelectorAll('#activityList .event');
+          const color=(row,selector)=>getComputedStyle(row.querySelector(selector)).color;
+          return {drop:color(drop,'.event-icon'),rise:color(rise,'.event-icon'),dropDelta:color(drop,'.event-meta-delta'),riseDelta:color(rise,'.event-meta-delta'),dropText:drop.getAttribute('aria-label'),riseText:rise.getAttribute('aria-label'),heights:[drop,rise].map(row=>row.getBoundingClientRect().height),overflow:document.documentElement.scrollWidth>innerWidth+1};
+        })()`);
+        const dropRgb=colors.drop.match(/\d+/g).map(Number), riseRgb=colors.rise.match(/\d+/g).map(Number);
+        assert(dropRgb[2]>dropRgb[0] && riseRgb[0]>riseRgb[2] && colors.drop===colors.dropDelta && colors.rise===colors.riseDelta, `Price decrease is not blue or price increase lost its amber accent: ${JSON.stringify(colors)}`);
+        assert(colors.dropText.includes('↓ $6.00') && colors.riseText.includes('↑ $6.00') && colors.heights.every(height=>height===64) && !colors.overflow, 'Price colors hid the direction or changed compact Activity layout');
+        await assertAccessible(`Activity price colors ${theme} at ${width}px`);
+        if (screenshotRoot) {
+          await evaluate("document.getElementById('activityResultCount').scrollIntoView({block:'start'}); window.scrollBy(0,-12)");
+          const capture=await cdp.send('Page.captureScreenshot',{format:'png'});
+          await writeFile(join(screenshotRoot,`activity-price-${theme}-${width}.png`),Buffer.from(capture.data,'base64'));
+        }
+      }
+    }
+    const legacyColors=await evaluate(`(() => {
+      const legacy={...window.priceActivityFixture.events[0],id:'legacy-price-drop',priceValue:null,previousPriceValue:null,priceDifference:null,priceDifferencePercent:null};
+      app.activity.arrivals=[legacy]; renderEvents();
+      const arrival=document.querySelector('#activityLiveList .event'); arrival.focus({preventScroll:true});
+      const blue=getComputedStyle(arrival.querySelector('.event-icon')).color;
+      app.activity.arrivals=[{...legacy,price:'$70.00'}]; renderEvents();
+      const amber=getComputedStyle(arrival.querySelector('.event-icon')).color;
+      return {blue,amber,retained:document.querySelector('#activityLiveList .event')===arrival && document.activeElement===arrival,up:arrival.getAttribute('aria-label').includes('↑ $5.00')};
+    })()`);
+    assert(legacyColors.blue!==legacyColors.amber && legacyColors.retained && legacyColors.up, 'A legacy/live price card did not change accent in place with its direction');
+  } finally {
+    await evaluate("window.fetch=window.priceActivityFetch; refreshActivity(1,{reset:true})");
+    await cdp.send('Emulation.clearDeviceMetricsOverride');
+  }
+
   await evaluate("document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabNotifications').click()");
   await waitForBrowser("!document.getElementById('settingsPanelNotifications').hidden && document.getElementById('settingsPanelData').hidden", 'Notification settings tab failed');
   await assertAccessible('Notification settings');

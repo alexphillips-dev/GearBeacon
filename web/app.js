@@ -279,7 +279,7 @@ function activityMeta(event) {
     const difference = event.priceDifference ?? (current !== null && previous !== null ? current - previous : null);
     const percent = event.priceDifferencePercent ?? (difference !== null && previous ? (difference / previous) * 100 : null);
     if (difference !== null && Number.isFinite(Number(difference)) && Number(difference) !== 0) {
-      parts.push({ text:`${Number(difference) < 0 ? '↓' : '↑'} ${activityMoney(event, Number(difference))}`, extra:Number.isFinite(Number(percent)) ? `(${Math.abs(Number(percent)).toFixed(1)}%)` : '', className:'event-meta-delta' });
+      parts.push({ text:`${Number(difference) < 0 ? '↓' : '↑'} ${activityMoney(event, Number(difference))}`, extra:Number.isFinite(Number(percent)) ? `(${Math.abs(Number(percent)).toFixed(1)}%)` : '', className:'event-meta-delta', priceDecrease:Number(difference) < 0 });
     }
     if (event.alertKind === 'target_price') parts.push({ text:'Target reached', className:'event-meta-target' });
   }
@@ -1198,12 +1198,13 @@ function renderEvents() {
   const arrivals = app.activity.arrivals || [];
   const renderEvent = (e) => {
     const metadata = activityMeta(e);
+    const priceClass = metadata.some(part => part.priceDecrease) ? ' price-decrease' : '';
     const metadataText = metadata.map((part) => `${part.text}${part.extra ? ` ${part.extra}` : ''}`).join(' · ');
     const metadataHtml = metadata.map((part) => `<span class="event-meta-part ${escapeHtml(part.className)}">${escapeHtml(part.text)}${part.extra ? ` <span class="event-delta-percent">${escapeHtml(part.extra)}</span>` : ''}</span>`).join('');
     const alert = e.serverAlert || { state:'no-channel', label:'No channel' };
     const exactTime = exactEventTime(e);
     const activityLabel = `Open ${e.name} activity details. ${metadataText}. Server alert: ${alert.label}. Detected ${exactTime}.`;
-    return `<button class="event event-button ${escapeHtml(e.type)}" type="button" data-activity-event="${escapeHtml(e.id)}" aria-label="${escapeHtml(activityLabel)}">
+    return `<button class="event event-button ${escapeHtml(e.type)}${priceClass}" type="button" data-activity-event="${escapeHtml(e.id)}" aria-label="${escapeHtml(activityLabel)}">
       <span class="event-icon" aria-hidden="true">${icon[e.type] || '•'}</span>
       <span class="event-main"><strong>${escapeHtml(e.name)}</strong><span class="event-meta" title="${escapeHtml(metadataText)}">${metadataHtml}</span></span>
       <span class="event-side"><span class="event-alert ${escapeHtml(alert.state)}" title="${escapeHtml(serverAlertTitle(e))}"><span class="event-alert-dot" aria-hidden="true"></span><span class="event-alert-label">${escapeHtml(alert.label)}</span></span><time datetime="${escapeHtml(e.detectedAt)}" title="${escapeHtml(exactTime)}">${escapeHtml(relativeTime(e.detectedAt))}</time></span>

@@ -6,6 +6,8 @@ The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. 
 
 ### Unreleased development updates
 
+- Activity price decreases now use a blue icon and savings amount/percentage, with theme-specific shades for dark and light mode. Price increases retain their amber accent; arrows and before/after values continue to show the direction.
+
 - Added per-watch and per-collection server delivery channels with Use defaults, explicit channel choices, disabled/unconfigured channel explanations, effective rule previews, and cancellation of pending/failed jobs when a channel is removed. Collection-only overrides and browser-popup preferences retain their existing behavior.
 - Added optional expiry for restock, target-price, price-drop, and collection-ready alerts, enforced before delivery and retries. Queued jobs retain their original expiry ceiling; shorter current settings apply immediately. Expired alerts remain in Activity with an Expired outcome and cannot be revived through Retry failed.
 - Delayed alerts (at least one minute old) now show the original detection time plus separately labeled current confirmed or last-known status. Exact-variant evidence stays scoped to the triggering variant. ntfy, Discord, Gotify, webhooks, email, and grouped/digest messages include this context; original events remain unchanged. Grouped text stays bounded and diagnostics redact product context.

@@ -16,6 +16,7 @@
   --good: #2ee581;
   --bad: #ef6a72;
   --warn: #d8b76d;
+  --price-drop: #79b6ff;
   --shadow: 0 18px 60px rgba(0,0,0,.34);
   --image-bg: #1d1f20;
   --input-bg: #1b1d1e;
@@ -52,6 +53,7 @@
   --good: #17884c;
   --bad: #a6474f;
   --warn: #92701e;
+  --price-drop: #005bbb;
   --shadow: 0 18px 55px rgba(25,26,25,.10);
   --image-bg: #f3f4f2;
   --input-bg: #fafaf8;
@@ -487,11 +489,13 @@ html.activity-active { overflow-anchor:none; }
 .event.restock .event-icon { color:var(--good); background:color-mix(in srgb, var(--good) 9%, var(--panel)); }
 .event.sold_out .event-icon { color:var(--bad); background:color-mix(in srgb, var(--bad) 9%, var(--panel)); }
 .event.price_change .event-icon { color:var(--warn); background:color-mix(in srgb, var(--warn) 9%, var(--panel)); }
+.event.price_change.price-decrease .event-icon { color:var(--price-drop); background:color-mix(in srgb, var(--price-drop) 9%, var(--panel)); }
 .event-main { display:block; min-width:0; overflow:hidden; }
 .event-main strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .event .event-meta { display:block; overflow:hidden; color:var(--muted); font-size:12px; text-overflow:ellipsis; white-space:nowrap; }
 .event-meta-part:not(:last-child)::after { content:" \00b7 "; color:var(--muted2); }
 .event-meta-delta { color:var(--warn); }
+.event.price-decrease .event-meta-delta { color:var(--price-drop); }
 .event-meta-target { color:var(--good); }
 .event-side { display:flex; align-items:center; gap:10px; min-width:0; white-space:nowrap; }
 .event time { color:var(--muted); font-size:12px; }
