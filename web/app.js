@@ -1200,7 +1200,11 @@ function renderEvents() {
     const metadata = activityMeta(e);
     const priceClass = metadata.some(part => part.priceDecrease) ? ' price-decrease' : '';
     const metadataText = metadata.map((part) => `${part.text}${part.extra ? ` ${part.extra}` : ''}`).join(' · ');
-    const metadataHtml = metadata.map((part) => `<span class="event-meta-part ${escapeHtml(part.className)}">${escapeHtml(part.text)}${part.extra ? ` <span class="event-delta-percent">${escapeHtml(part.extra)}</span>` : ''}</span>`).join('');
+    const metadataHtml = metadata.map((part) => {
+      const text = escapeHtml(part.text);
+      const content = e.type === 'sold_out' && part.className === 'event-meta-transition' ? text.replace(/Sold out$/, '<span class="event-meta-sold-out">Sold out</span>') : text;
+      return `<span class="event-meta-part ${escapeHtml(part.className)}">${content}${part.extra ? ` <span class="event-delta-percent">${escapeHtml(part.extra)}</span>` : ''}</span>`;
+    }).join('');
     const alert = e.serverAlert || { state:'no-channel', label:'No channel' };
     const exactTime = exactEventTime(e);
     const activityLabel = `Open ${e.name} activity details. ${metadataText}. Server alert: ${alert.label}. Detected ${exactTime}.`;

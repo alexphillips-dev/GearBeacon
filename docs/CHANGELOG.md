@@ -6,6 +6,7 @@ The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. 
 
 ### Unreleased development updates
 
+- Activity sellout rows now show the “Sold out” status in the same red as the sellout icon, with readable shades in both themes.
 - Activity price decreases now use a blue icon and savings amount/percentage, with theme-specific shades for dark and light mode. Price increases retain their amber accent; arrows and before/after values continue to show the direction.
 
 - Added per-watch and per-collection server delivery channels with Use defaults, explicit channel choices, disabled/unconfigured channel explanations, effective rule previews, and cancellation of pending/failed jobs when a channel is removed. Collection-only overrides and browser-popup preferences retain their existing behavior.

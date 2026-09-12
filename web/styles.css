@@ -496,6 +496,7 @@ html.activity-active { overflow-anchor:none; }
 .event-meta-part:not(:last-child)::after { content:" \00b7 "; color:var(--muted2); }
 .event-meta-delta { color:var(--warn); }
 .event.price-decrease .event-meta-delta { color:var(--price-drop); }
+.event-meta-sold-out { color:var(--bad); }
 .event-meta-target { color:var(--good); }
 .event-side { display:flex; align-items:center; gap:10px; min-width:0; white-space:nowrap; }
 .event time { color:var(--muted); font-size:12px; }
