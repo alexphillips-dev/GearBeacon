@@ -1,3 +1,4 @@
+import { testSettingsNavigation } from './settings-navigation-smoke.mjs';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -607,6 +608,7 @@ try {
   assert(await evaluate("Boolean(document.getElementById('notifyAllActivity')) && !document.getElementById('notifyAllActivity').checked"), 'All-activity notification setting is missing or not safely disabled by default');
   await evaluate("document.getElementById('notifyAllActivity').click(); document.getElementById('saveNotificationPrefs').click()");
   await waitForBrowser("app.notificationPreferences?.allActivity === true && document.getElementById('notifyAllActivity').checked", 'All-activity notification setting did not save');
+  await evaluate("document.querySelector('[data-settings-subtab=\"notifications/email\"]').click()");
   await waitForBrowser("document.getElementById('emailPreviewProduct').options.length >= 5", 'Email preview products did not load');
   await evaluate(`(() => {
     document.getElementById('emailDetailLevel').value='detailed';
@@ -643,13 +645,13 @@ try {
   })()`);
   assert(browserBackup?.format === 'GearBeaconEncryptedBackup' && browserBackup.watchCount === 2 && browserBackup.historyCount >= 1, 'Browser backup preview/import flow failed.');
   await waitForBrowser("!document.getElementById('testPrimaryBackup').disabled", 'Primary restore test did not become available after the safety backup');
-  await evaluate("document.getElementById('testPrimaryBackup').click()");
+  await evaluate("document.querySelector('[data-settings-subtab=\"data/backups\"]').click(); document.getElementById('testPrimaryBackup').click()");
   await waitForBrowser("!document.getElementById('testPrimaryBackup').disabled && /Restore test passed/.test(document.getElementById('backupTestResult').textContent)", 'Non-destructive browser restore test did not pass');
 
   await evaluate("document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabOperations').click()");
   await waitForBrowser("document.getElementById('settings').classList.contains('active') && !document.getElementById('settingsPanelOperations').hidden && app.operations?.summary?.state && document.getElementById('operationsSummary').textContent.trim().length > 0", 'Settings Operations summary did not render');
   await assertAccessible('Operations dashboard');
-  await evaluate("document.getElementById('runDiagnostics').click()");
+  await evaluate("document.querySelector('[data-settings-subtab=\"operations/diagnostics\"]').click(); document.getElementById('runDiagnostics').click()");
   await waitForBrowser("!document.getElementById('runDiagnostics').disabled && document.querySelectorAll('#diagnosticsPanel .diagnostic-item').length >= 7", 'Installation diagnostics did not render');
   const diagnostics = await evaluate("({ heading:document.querySelector('#diagnosticsPanel h3')?.textContent, text:document.getElementById('diagnosticsPanel').textContent, hidden:document.getElementById('diagnosticsPanel').classList.contains('hidden') })");
   assert(!diagnostics.hidden && /Diagnostics/.test(diagnostics.heading) && /Database integrity/.test(diagnostics.text) && /United States store/.test(diagnostics.text), `Installation diagnostics are incomplete: ${JSON.stringify(diagnostics)}`);
@@ -675,11 +677,13 @@ try {
   await evaluate("(() => { document.getElementById('authPassword').value='V1.2.0 browser owner password'; document.getElementById('authForm').requestSubmit(); })()");
   await waitForBrowser("!document.getElementById('appShell').classList.contains('hidden') && app.auth.authenticated", 'Browser login after logout failed');
   await evaluate("document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabSecurity').click()");
+  await evaluate("document.querySelector('[data-settings-subtab=\"security/sessions\"]').click()");
   await waitForBrowser("document.querySelectorAll('#sessionList [data-revoke-session]').length >= 1", 'Authenticated session management did not render');
 
   await evaluate("history.replaceState(null, '', location.pathname + '#settings')");
   await reloadBrowserPage();
-  await waitForBrowser("!document.getElementById('appShell').classList.contains('hidden') && document.getElementById('settings').classList.contains('active') && !document.getElementById('settingsPanelSecurity').hidden", 'Selected tab and Settings subsection did not survive refresh');
+  await waitForBrowser("!document.getElementById('appShell').classList.contains('hidden') && document.getElementById('settings').classList.contains('active') && !document.getElementById('settingsPanelSecurity').hidden && !document.getElementById('settingsSecuritySessionsPanel').hidden", 'Selected tab and Settings subsection did not survive refresh');
+  await testSettingsNavigation({ evaluate, waitForBrowser, reloadBrowserPage, assertAccessible, assert, cdp, screenshotRoot });
   await evaluate(`(() => {
     document.querySelector('[data-tab="browse"]').click();
     document.querySelector('[data-category="WiFi"]').click();
@@ -1380,7 +1384,7 @@ try {
   assert(await evaluate("window.hiddenRequests.every(path=>path.includes('/api/events?'))"), 'Hidden tab fetched the catalog or rendered settings');
   await evaluate("delete document.hidden; document.dispatchEvent(new Event('visibilitychange'))");
   await waitForBrowser("window.hiddenRequests.some(path=>path.includes('/api/products?')) && !refreshTask", 'Returning to the tab did not refresh the catalog');
-  await evaluate("window.fetch=window.hiddenOriginalFetch; activateTab('settings'); activateSettingsTab('notifications')");
+  await evaluate("window.fetch=window.hiddenOriginalFetch; activateTab('settings'); activateSettingsTab('notifications'); activateSettingsSection('notifications', 'alerts')");
   await waitForBrowser("!refreshTask", 'Settings refresh did not settle');
   await delay(200);
   await evaluate("window.preferenceDraft=!document.getElementById('notifyRestock').checked; document.getElementById('notifyRestock').checked=window.preferenceDraft; refresh({background:true})");
@@ -1513,7 +1517,7 @@ try {
   assert(Object.values(freshnessResult).every(Boolean), `Freshness labels did not preserve observations or focus: ${JSON.stringify(freshnessResult)}`);
   await evaluate("closeProductDialog(); activateTab('browse'); renderProducts(true)");
   assert(await evaluate("document.querySelectorAll('#browseGrid .store-card').length>0 && [...document.querySelectorAll('#browseGrid .store-card')].every(card=>card.querySelector('[data-product-freshness]'))"), 'Browse cards lack freshness evidence');
-  console.log(`BROWSER SMOKE PASSED: ${process.platform} · setup/auth · WCAG axe scans · keyboard/focus/reduced-motion · persistent navigation/filters · resettable empty states · offline recovery · copy actions · unclipped navigation · dark/light · images · watch/rules/bulk/import · exact variants/combined preview/collections/purchased · stock insights/windows/collection readiness/budget alerts/deep-links · compact searchable activity/evidence/live arrivals/anchored scrolling/stable pages · serialized refresh/hidden tabs/drafts/large lists · email settings/preview/deep-link · backup/import · diagnostics/operations · responsive`);
+  console.log(`BROWSER SMOKE PASSED: ${process.platform} · setup/auth · WCAG axe scans · keyboard/focus/reduced-motion · persistent navigation/filters · resettable empty states · offline recovery · copy actions · unclipped navigation · dark/light · images · watch/rules/bulk/import · exact variants/combined preview/collections/purchased · stock insights/windows/collection readiness/budget alerts/deep-links · compact searchable activity/evidence/live arrivals/anchored scrolling/stable pages · serialized refresh/hidden tabs/drafts/large lists · Settings sections/keyboard/drafts/persistence · email settings/preview/deep-link · backup/import · diagnostics/operations · responsive`);
 } catch (error) {
   if (serverOutput.length) process.stderr.write(`\nGearBeacon server output:\n${serverOutput.join('').slice(-12000)}\n`);
   throw error;

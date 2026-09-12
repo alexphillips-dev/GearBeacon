@@ -6,6 +6,8 @@ The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. 
 
 ### Unreleased development updates
 
+- Split each Settings category into compact section tabs, including separate notification, recovery, security, privacy, and Operations pages. Each category remembers its last section in this browser; switching sections preserves unsaved inputs. Added scoped keyboard navigation, mobile wrapping, and links that reveal the relevant settings section. See the [Settings navigation guide](SETTINGS.md).
+
 - Activity restock rows now show “In stock” in green to match the restock icon, including a darker light-theme shade that keeps the text readable on hover.
 - Activity sellout rows now show the “Sold out” status in the same red as the sellout icon, with readable shades in both themes.
 - Activity price decreases now use a blue icon and savings amount/percentage, with theme-specific shades for dark and light mode. Price increases retain their amber accent; arrows and before/after values continue to show the direction.
