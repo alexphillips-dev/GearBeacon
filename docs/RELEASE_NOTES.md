@@ -56,6 +56,8 @@ GearBeacon remains a private, single-owner, self-hosted UniFi Store monitor. Mon
 - Removed local agent instructions from tracked files and expanded ignore rules for editor state, environment overrides, credentials, databases, exports, logs, and generated packages. Delayed-delivery product context stays redacted from support diagnostics.
 - Added deterministic coverage for saved views, routing, expiry, freshness, collection budgets, migration/recovery, Activity evidence, timezone boundaries, refresh races, large lists, update channels, and updater success/failure behavior. Browser coverage includes mobile, both themes, keyboard/focus, Settings drafts, dialogs, and live Activity anchoring.
 - Corrected the notification restart test to retain alerts sent during startup and explicitly verify that due jobs resume with their original delayed context.
+- Updated source-package rehearsal to validate the full installed version, including prerelease suffixes, and confirm that disabled update checks remain unverified.
+- Made the imported-history duration test account for the API's actual rolling window, preserving exact duration assertions on slower runners.
 - Candidate packages and releases retain required automated platform, security, checksum, SBOM, and attestation checks. Real-host installation, rollback, manual accessibility, and soak testing are documented as recommended additional validation, without weakening automated release requirements.
 
 ## Upgrading from 1.2.0

@@ -7,6 +7,8 @@ The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. 
 Released September 14, 2026. Includes every development change since v1.2.0. See the [complete release notes](RELEASE_NOTES.md).
 
 - Release validation now runs Activity context and update-channel tests across the CI platform matrix. Corrected the delayed-delivery restart fixture to capture startup deliveries and assert that a due job resumes with its original context.
+- Source-package rehearsal now accepts the full installed prerelease version and verifies that disabled online checks do not claim a verified update result.
+- Corrected imported-history duration assertions to account for elapsed request time at the rolling-window boundary, with deterministic boundary clipping on every run.
 
 - Added a compact blue `update available · vX.Y.Z` button below the main header on every tab. It opens matching release notes in a new tab, or Settings > General > Application when no notes link is available, and preserves Activity reading position and keyboard focus when it appears.
 - Update checks now run on server startup and daily, with shared results across browsers and retry/rate-limit handling. Main installations follow published stable releases; dev installations compare the running commit with dev, including newer commits with the same version. Source, packaged, and container builds retain channel/commit identity. Downloads and installation remain owner-initiated. See [update checks and channels](UPDATES.md).

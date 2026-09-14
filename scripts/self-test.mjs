@@ -552,7 +552,8 @@ try {
   migratedDb.close();
   if (migratedPushTable) throw new Error('Obsolete push storage returned during the V0.1.5 to V1.3.0 migration.');
   const updates = await request('/api/update/check?region=us');
-  if (updates.currentVersion !== '1.3.0' || updates.latestVersion !== '1.3.0' || updates.updateAvailable) throw new Error('Bundled update check failed.');
+  const installedVersion = (await request('/healthz')).packageVersion;
+  if (updates.currentVersion !== installedVersion || updates.latestVersion !== installedVersion || updates.updateAvailable || updates.verified) throw new Error('Disabled update checks did not preserve the installed package version and unverified state.');
   await stopServer();
 
   for (const historical of [{ version:'0.1.6', schema:5 }, { version:'0.1.7', schema:6 }, { version:'1.0.0', schema:7 }, { version:'1.0.1', schema:7 }, { version:'1.1.0', schema:8 }, { version:'1.2.0', schema:9 }, { version:'1.2.0', schema:10 }, { version:'1.2.0', schema:11 }]) {
