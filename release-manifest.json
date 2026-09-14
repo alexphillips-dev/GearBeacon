@@ -1,11 +1,11 @@
 {
   "name": "GearBeacon",
-  "latestVersion": "1.2.0",
-  "publishedAt": "2026-09-09T00:00:00Z",
-  "downloadUrl": "https://github.com/alexphillips-dev/GearBeacon/releases",
-  "releasePageUrl": "https://github.com/alexphillips-dev/GearBeacon/releases",
+  "latestVersion": "1.3.0",
+  "publishedAt": "2026-09-14T00:00:00Z",
+  "downloadUrl": "https://github.com/alexphillips-dev/GearBeacon/releases/tag/v1.3.0",
+  "releasePageUrl": "https://github.com/alexphillips-dev/GearBeacon/releases/tag/v1.3.0",
   "minimumSchemaVersion": 4,
-  "maximumSchemaVersion": 11,
+  "maximumSchemaVersion": 13,
   "minimumNodeVersion": "22.13.0",
-  "releaseNotes": "Features: exact variant watches, combined availability and price targets, stock and price insights, actionable Watchlist summaries, collection purchase plans, budgets, direct collection adding, archiving and Undo. UI/UX: Store-inspired Browse, collection preview cards, clearer alert settings, and Activity pagination. Fixes: verified collection saves, preserved purchase records and dialog focus, accurate variant prices, and current-schema standalone validation. Security: stronger password hashing, strict host validation, restricted service identities, and hardened Docker isolation. Upgrade: validated safety backup before schema v11; format-v7 recovery exports. See docs/RELEASE_NOTES.md for all changes since 1.0.0."
+  "releaseNotes": "GearBeacon 1.3.0 includes all changes since 1.2.0: automatic live Activity with reading-position preservation and richer price, stock, watch, and delivery context; saved views and compact Watchlist controls; per-watch and collection delivery channels, optional expiry and delayed-alert context; product freshness and budget-aware collection alerts; focused Settings sections and accessible alert explanations; branch-aware update notices and verified owner-initiated updates. Repository and documentation organization, packaging identity, and automated coverage are also improved. Startup validates a safety backup before migrating schema v11 to v13; recovery exports use format v9. Existing alerts retain default channels, no expiry, and no budget condition. See the complete release notes for upgrade and rollback guidance."
 }

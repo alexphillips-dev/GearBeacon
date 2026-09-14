@@ -1,3 +1,6 @@
+import { testActivityDisplay } from './activity-display-smoke.mjs';
+import { testUpdateNotice } from './update-notice-smoke.mjs';
+import { testSettingsNavigation } from './settings-navigation-smoke.mjs';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -123,6 +126,22 @@ function assert(value, message) {
   if (!value) throw new Error(message);
 }
 
+async function assertOwnerDialogLayout(label) {
+  const layout = await evaluate(`(() => {
+    const dialog=document.getElementById('ownerDialog'), body=document.getElementById('ownerDialogBody');
+    const bounds=dialog.getBoundingClientRect(), header=dialog.querySelector('.product-dialog-head').getBoundingClientRect();
+    const title=document.getElementById('ownerDialogTitle').getBoundingClientRect(), close=document.getElementById('closeOwnerDialog').getBoundingClientRect();
+    const content=body.firstElementChild.getBoundingClientRect(), bodyBounds=body.getBoundingClientRect();
+    return {overflow:dialog.scrollWidth>dialog.clientWidth+1 || body.scrollWidth>body.clientWidth+1,
+      contained:bounds.left>=10 && bounds.right<=innerWidth-10 && bounds.top>=10 && bounds.bottom<=innerHeight-10,
+      contentInset:content.left-bounds.left,contentRightInset:bounds.right-content.right,contentTopInset:content.top-bodyBounds.top,
+      headerInset:title.left-bounds.left,closeInset:bounds.right-close.right,titleGap:close.left-title.right,
+      headerVisible:header.top>=bounds.top-1 && close.bottom<=bounds.bottom,
+      emptyResultHeight:document.getElementById('ownerDialogResult').getBoundingClientRect().height};
+  })()`);
+  assert(!layout.overflow && layout.contained && layout.contentInset>=17 && layout.contentRightInset>=17 && layout.contentTopInset>=18 && layout.headerInset>=17 && layout.closeInset>=17 && layout.titleGap>=10 && layout.headerVisible && layout.emptyResultHeight===0, `${label} has cramped or overflowing dialog content: ${JSON.stringify(layout)}`);
+}
+
 async function stopProcess(child) {
   if (!child || child.exitCode !== null || child.signalCode !== null) return;
   child.kill('SIGINT');
@@ -170,8 +189,8 @@ try {
   await assertAccessible('Owner setup screen');
   await evaluate(`(() => {
     document.getElementById('setupToken').value = 'v19-browser-setup-token';
-    document.getElementById('authPassword').value = 'V1.2.0 browser owner password';
-    document.getElementById('authPasswordConfirm').value = 'V1.2.0 browser owner password';
+    document.getElementById('authPassword').value = 'V1.3.0 browser owner password';
+    document.getElementById('authPasswordConfirm').value = 'V1.3.0 browser owner password';
     document.getElementById('authForm').requestSubmit();
   })()`);
   await waitForBrowser("!document.getElementById('appShell').classList.contains('hidden') && app.products.length >= 5", 'Authenticated dashboard did not load');
@@ -201,8 +220,8 @@ try {
   assert(zoomReflow.viewport === 640 && zoomReflow.overflow, `Dashboard does not reflow at a 200% equivalent viewport: ${JSON.stringify(zoomReflow)}`);
   await cdp.send('Emulation.clearDeviceMetricsOverride');
 
-  const watchImportPlacement = await evaluate("(() => { const heading=document.querySelector('#watchlist .section-heading').getBoundingClientRect(); const button=document.getElementById('openWatchImport').getBoundingClientRect(); return { headingRight:heading.right, buttonRight:button.right, buttonLeft:button.left, headingMid:heading.left + heading.width / 2, visible:button.width > 0 && button.height > 0 }; })()");
-  assert(watchImportPlacement.visible && Math.abs(watchImportPlacement.headingRight - watchImportPlacement.buttonRight) <= 3 && watchImportPlacement.buttonLeft > watchImportPlacement.headingMid, `Watchlist import action is not positioned at the top right: ${JSON.stringify(watchImportPlacement)}`);
+  const watchManagePlacement = await evaluate("(() => { const heading=document.querySelector('#watchlist .section-heading').getBoundingClientRect(); const button=document.getElementById('watchManageToggle').getBoundingClientRect(); return { headingRight:heading.right, buttonRight:button.right, buttonLeft:button.left, headingMid:heading.left + heading.width / 2, visible:button.width > 0 && button.height > 0 }; })()");
+  assert(watchManagePlacement.visible && Math.abs(watchManagePlacement.headingRight - watchManagePlacement.buttonRight) <= 3 && watchManagePlacement.buttonLeft > watchManagePlacement.headingMid, `Watchlist Manage control is not positioned at the top right: ${JSON.stringify(watchManagePlacement)}`);
 
   const navigationTheme = await evaluate("document.documentElement.dataset.theme");
   const documentNode = await cdp.send('DOM.getDocument');
@@ -343,6 +362,13 @@ try {
         assert(await evaluate("document.getElementById('browseFilterPanel').open && document.querySelector('#browseFilters input').getBoundingClientRect().height > 0"), 'Mobile Browse filters did not open');
       }
       await assertAccessible(`Browse ${theme} at ${width}px`);
+      await evaluate("document.getElementById('browseViewToggle').click()");
+      const browseViews=await evaluate("(() => { const panel=document.getElementById('browseViewOptions'),rect=panel.getBoundingClientRect(),style=getComputedStyle(document.getElementById('browseSavedView')); return {open:!document.getElementById('browseViewOptions').classList.contains('hidden'),left:rect.left,right:rect.right,viewport:window.innerWidth,scroll:panel.scrollWidth,client:panel.clientWidth,radius:style.borderRadius,height:style.minHeight}; })()");
+      assert(browseViews.open && browseViews.left>=0 && browseViews.right<=browseViews.viewport+1 && browseViews.scroll<=browseViews.client+1 && browseViews.radius==='9px' && parseFloat(browseViews.height)>=42, `Browse views were clipped or retained unstyled dropdowns: ${JSON.stringify(browseViews)}`);
+      await assertAccessible(`Browse view options ${theme} ${width}px`);
+      await evaluate("document.getElementById('search').click()");
+      assert(await evaluate("document.getElementById('browseViewOptions').classList.contains('hidden')"), 'Outside click did not close Browse views');
+
       if (screenshotRoot) {
         if (width === 390) await evaluate("document.querySelector('#browseFilterPanel summary').click()");
         await evaluate("document.getElementById('browse').scrollIntoView()");
@@ -382,6 +408,48 @@ try {
 
   await evaluate("document.querySelector('[data-tab=\"watchlist\"]').click()");
   await waitForBrowser("document.querySelectorAll('#watchGrid .watch-card').length === 2", 'Watchlist did not render watched products');
+  // Secondary controls use themed, keyboard-accessible panels instead of extra rows.
+  assert(await evaluate("document.getElementById('watchManageMenu').classList.contains('hidden') && document.getElementById('watchViewOptions').classList.contains('hidden') && document.querySelectorAll('.watch-toolbar > select').length===3 && !document.querySelector('.collection-toolbar')"), 'Watchlist secondary controls were not consolidated');
+  for (const theme of ['dark','light']) {
+    await evaluate(`applyTheme('${theme}')`); await delay(250);
+    for (const width of [1280,390,640]) {
+      await cdp.send('Emulation.setDeviceMetricsOverride',{width,height:900,screenWidth:width===640?1280:width,screenHeight:900,deviceScaleFactor:width===640?2:1,mobile:false});
+      await evaluate("document.getElementById('watchlist').scrollIntoView(); document.getElementById('watchViewToggle').focus()");
+      const toolbarFocus=await evaluate("({active:document.activeElement.outerHTML,inert:document.querySelector('main').inert,open:!document.getElementById('watchViewOptions').classList.contains('hidden')})");
+      await cdp.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,text:'\r'});
+      await cdp.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
+      assert(await evaluate("!document.getElementById('watchViewOptions').classList.contains('hidden')"), `Keyboard activation did not open View options (${width}px): ${JSON.stringify(toolbarFocus)}; after: ${await evaluate('document.activeElement.outerHTML')}`);
+      assert(await evaluate("(() => { const base=getComputedStyle(document.getElementById('watchStatus')); return ['watchLayout','watchSavedView','watchCategory'].every(id=>{const style=getComputedStyle(document.getElementById(id));return ['backgroundColor','color','borderRadius','padding','fontSize','minHeight'].every(key=>style[key]===base[key]);}); })()"), 'Saved view or layout selects do not match the existing dropdown styling');
+      assert(await evaluate("(() => { const panel=document.getElementById('watchViewOptions'), rect=panel.getBoundingClientRect(); return rect.left>=0 && rect.right<=window.innerWidth+1 && panel.scrollWidth<=panel.clientWidth+1 && document.documentElement.scrollWidth<=window.innerWidth+1; })()"), `View options overflow at ${width}px in ${theme}`);
+      await assertAccessible(`Watchlist view options ${theme} ${width}px`);
+      if (screenshotRoot) {
+        const capture=await cdp.send('Page.captureScreenshot',{format:'png'});
+        await writeFile(join(screenshotRoot,`watch-options-${theme}-${width}.png`),Buffer.from(capture.data,'base64'));
+      }
+      await cdp.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
+      await cdp.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
+      assert(await evaluate("document.activeElement.id==='watchCategory'"), 'Tab did not enter View options');
+      await evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
+      assert(await evaluate("document.getElementById('watchViewOptions').classList.contains('hidden') && document.activeElement.matches('#watchViewToggle')"), 'Escape did not close View options and restore focus');
+      await evaluate("document.getElementById('watchManageToggle').click()");
+      assert(await evaluate("!document.getElementById('watchManageMenu').classList.contains('hidden') && document.getElementById('watchViewOptions').classList.contains('hidden')"), 'Manage actions were not discoverable');
+      await assertAccessible(`Manage watchlist ${theme} ${width}px`);
+      await evaluate("document.getElementById('watchSearch').focus()");
+      assert(await evaluate("document.getElementById('watchManageMenu').classList.contains('hidden')"), 'Leaving the panel did not dismiss it');
+      if (screenshotRoot) {
+        await evaluate("document.getElementById('watchlist').scrollIntoView()");
+        const capture=await cdp.send('Page.captureScreenshot',{format:'png'});
+        await writeFile(join(screenshotRoot,`watch-toolbar-${theme}-${width}.png`),Buffer.from(capture.data,'base64'));
+      }
+    }
+  }
+  await evaluate("document.getElementById('watchViewToggle').click(); const category=document.getElementById('watchCategory'); category.value=category.options[1].value; category.dispatchEvent(new Event('change')); document.getElementById('watchSearch').focus()");
+  assert(await evaluate("document.getElementById('watchViewOptions').classList.contains('hidden') && document.getElementById('watchViewContext').textContent.includes(document.getElementById('watchCategory').value) && !document.getElementById('watchViewContext').classList.contains('hidden')"), 'A hidden category filter was not explained outside View options');
+  await evaluate("document.getElementById('resetWatchFilters').click(); document.getElementById('watchManageToggle').click(); document.getElementById('selectVisibleWatches').click()");
+  assert(await evaluate("document.getElementById('watchManageMenu').classList.contains('hidden') && !document.getElementById('bulkActions').classList.contains('hidden') && app.selectedWatch.size===2"), 'Manage > Select visible watches did not reveal bulk actions');
+  await evaluate("document.getElementById('bulkClear').click()");
+  await cdp.send('Emulation.clearDeviceMetricsOverride');
+
   await evaluate(`(() => { const input=document.getElementById('watchSearch'); input.value='no watched product'; input.dispatchEvent(new Event('input',{bubbles:true})); })()`);
   await waitForBrowser("!document.getElementById('watchEmpty').classList.contains('hidden') && !document.getElementById('resetWatchEmpty').classList.contains('hidden')", 'Filtered Watchlist empty state did not offer a reset action');
   await evaluate("document.getElementById('resetWatchEmpty').click()");
@@ -473,15 +541,93 @@ try {
   await waitForBrowser("app.activity.loaded && app.activity.count > 0 && document.getElementById('activitySearch').value === ''", 'Activity reset action did not restore retained events');
   await cdp.send('Emulation.setDeviceMetricsOverride', { width:390, height:844, screenWidth:390, screenHeight:844, deviceScaleFactor:1, mobile:false });
   const compactActivity = await evaluate("(() => { const row=document.querySelector('#activityList .event'); return { height:row.getBoundingClientRect().height, overflow:document.documentElement.scrollWidth <= window.innerWidth + 1, alertLabel:getComputedStyle(row.querySelector('.event-alert-label')).display, timeColumn:row.querySelector('time').getBoundingClientRect().top - row.getBoundingClientRect().top, filterColumns:getComputedStyle(document.getElementById('activityFilters')).gridTemplateColumns.split(' ').length }; })()");
-  assert(compactActivity?.height === 64 && compactActivity.overflow && compactActivity.alertLabel === 'none' && compactActivity.timeColumn < 32 && compactActivity.filterColumns === 1, `Mobile activity feed or filters did not remain compact: ${JSON.stringify(compactActivity)}`);
+  assert(compactActivity?.height === 64 && compactActivity.overflow && compactActivity.alertLabel !== 'none' && compactActivity.timeColumn < 32 && compactActivity.filterColumns === 1, `Mobile activity feed or filters did not remain compact: ${JSON.stringify(compactActivity)}`);
   await cdp.send('Emulation.clearDeviceMetricsOverride');
 
+  // Distinguish price directions and stock statuses in the Activity feed.
+  await waitForBrowser("!app.activityController", 'Activity refresh did not settle before price colors');
+  await evaluate(`(() => {
+    window.priceActivityFetch=window.fetch;
+    const base={type:'price_change',region:'us',detectedAt:new Date().toISOString(),serverAlert:{state:'no-channel',label:'No channel'},previousStateDurationSeconds:3600};
+    window.priceActivityFixture={...app.activity, count:4,page:1,pages:1,newCount:0,arrivals:[],events:[
+      {...base,id:'price-drop-color',name:'Price decrease fixture',previousPrice:'$65.00',price:'$59.00',previousPriceValue:65,priceValue:59,priceDifference:-6,priceDifferencePercent:-9.2},
+      {...base,id:'price-rise-color',name:'Price increase fixture',previousPrice:'$59.00',price:'$65.00',previousPriceValue:59,priceValue:65,priceDifference:6,priceDifferencePercent:10.2},
+      {...base,id:'sold-out-color',type:'sold_out',name:'Sellout fixture',previousStatus:'Available',status:'SoldOut',price:'$99.00'},
+      {...base,id:'in-stock-color',type:'restock',name:'Restock fixture',previousStatus:'SoldOut',status:'Available',price:'$99.00'}
+    ]};
+    window.fetch=(...args)=>String(args[0]).includes('/api/activity?') ? Promise.resolve(new Response(JSON.stringify(window.priceActivityFixture),{status:200,headers:{'Content-Type':'application/json'}})) : window.priceActivityFetch(...args);
+  })()`);
+  try {
+    await evaluate("refreshActivity(1,{reset:true})");
+    for (const theme of ['dark','light']) {
+      await evaluate(`applyTheme(${JSON.stringify(theme)})`); await delay(250);
+      for (const width of [1280,390]) {
+        await cdp.send('Emulation.setDeviceMetricsOverride',{width,height:844,screenWidth:width,screenHeight:844,deviceScaleFactor:1,mobile:false});
+        const colors=await evaluate(`(() => {
+          const [drop,rise,soldOut,restock]=document.querySelectorAll('#activityList .event');
+          const color=(row,selector)=>getComputedStyle(row.querySelector(selector)).color;
+          const statuses=[soldOut,restock].map(row=>{
+            const status=row.querySelector('.event-meta-sold-out, .event-meta-in-stock');
+            return {color:getComputedStyle(status).color,icon:color(row,'.event-icon'),transitionColor:color(row,'.event-meta-transition'),priceColor:color(row,'.event-meta-price'),status:status.textContent,transition:row.querySelector('.event-meta-transition').textContent,label:row.getAttribute('aria-label')};
+          });
+          return {drop:color(drop,'.event-icon'),rise:color(rise,'.event-icon'),dropDelta:color(drop,'.event-meta-delta'),riseDelta:color(rise,'.event-meta-delta'),dropText:drop.getAttribute('aria-label'),riseText:rise.getAttribute('aria-label'),statuses,heights:[drop,rise,soldOut,restock].map(row=>row.getBoundingClientRect().height),overflow:document.documentElement.scrollWidth>innerWidth+1};
+        })()`);
+        const dropRgb=colors.drop.match(/\d+/g).map(Number), riseRgb=colors.rise.match(/\d+/g).map(Number);
+        assert(dropRgb[2]>dropRgb[0] && riseRgb[0]>riseRgb[2] && colors.drop===colors.dropDelta && colors.rise===colors.riseDelta, `Price decrease is not blue or price increase lost its amber accent: ${JSON.stringify(colors)}`);
+        assert(colors.dropText.includes('↓ $6.00') && colors.riseText.includes('↑ $6.00') && colors.heights.every(height=>height===64) && !colors.overflow, 'Price colors hid the direction or changed compact Activity layout');
+        for (const [index,status] of colors.statuses.entries()) {
+          const expected=index===0 ? {status:'Sold out',transition:'Available → Sold out'} : {status:'In stock',transition:'Sold out → In stock'};
+          assert(status.color===status.icon && status.color!==status.transitionColor && status.color!==status.priceColor && status.status===expected.status && status.transition===expected.transition && status.label.includes(expected.transition), `Activity stock status did not match its icon or changed surrounding text: ${JSON.stringify(status)}`);
+        }
+        const green=colors.statuses[1].color.match(/\d+/g).map(Number);
+        assert(green[1]>green[0] && green[1]>green[2], 'In stock text is not green');
+        await assertAccessible(`Activity price and stock colors ${theme} at ${width}px`);
+        if (width===1280) {
+          const hover=await evaluate("(() => { const row=document.querySelector('#activityList .restock'); row.scrollIntoView({block:'center'}); const rect=row.getBoundingClientRect(); return {x:rect.x+rect.width/2,y:rect.y+rect.height/2}; })()");
+          await cdp.send('Input.dispatchMouseEvent',{type:'mouseMoved',...hover});
+          assert(await evaluate("document.querySelector('#activityList .restock').matches(':hover')"), 'Restock hover fixture did not activate');
+          await assertAccessible(`Hovered Activity restock ${theme}`);
+          await cdp.send('Input.dispatchMouseEvent',{type:'mouseMoved',x:0,y:0});
+        }
+        if (screenshotRoot) {
+          await evaluate("document.getElementById('activityResultCount').scrollIntoView({block:'start'}); window.scrollBy(0,-12)");
+          const capture=await cdp.send('Page.captureScreenshot',{format:'png'});
+          await writeFile(join(screenshotRoot,`activity-price-${theme}-${width}.png`),Buffer.from(capture.data,'base64'));
+        }
+      }
+    }
+    const legacyColors=await evaluate(`(() => {
+      const legacy={...window.priceActivityFixture.events[0],id:'legacy-price-drop',priceValue:null,previousPriceValue:null,priceDifference:null,priceDifferencePercent:null};
+      app.activity.arrivals=[legacy]; renderEvents();
+      const arrival=document.querySelector('#activityLiveList .event'); arrival.focus({preventScroll:true});
+      const blue=getComputedStyle(arrival.querySelector('.event-icon')).color;
+      app.activity.arrivals=[{...legacy,price:'$70.00'}]; renderEvents();
+      const amber=getComputedStyle(arrival.querySelector('.event-icon')).color;
+      return {blue,amber,retained:document.querySelector('#activityLiveList .event')===arrival && document.activeElement===arrival,up:arrival.getAttribute('aria-label').includes('↑ $5.00')};
+    })()`);
+    assert(legacyColors.blue!==legacyColors.amber && legacyColors.retained && legacyColors.up, 'A legacy/live price card did not change accent in place with its direction');
+    for (const index of [2,3]) {
+      const liveStatus=await evaluate(`(() => {
+        app.activity.arrivals=[{...window.priceActivityFixture.events[${index}],id:'live-stock-color'}]; renderEvents();
+        const row=document.querySelector('#activityLiveList .event'); row.focus({preventScroll:true});
+        app.activity.arrivals[0].serverAlert={state:'retrying',label:'Retrying'}; renderEvents();
+        return document.activeElement===row && document.querySelector('#activityLiveList .event')===row && getComputedStyle(row.querySelector('.event-meta-sold-out, .event-meta-in-stock')).color===getComputedStyle(row.querySelector('.event-icon')).color;
+      })()`);
+      assert(liveStatus, 'A live stock status lost its matching icon color or focus after an update');
+    }
+  } finally {
+    await evaluate("window.fetch=window.priceActivityFetch; refreshActivity(1,{reset:true})");
+    await cdp.send('Emulation.clearDeviceMetricsOverride');
+  }
+
+  await testActivityDisplay({ evaluate, waitForBrowser, assertAccessible, assert, cdp, screenshotRoot });
   await evaluate("document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabNotifications').click()");
   await waitForBrowser("!document.getElementById('settingsPanelNotifications').hidden && document.getElementById('settingsPanelData').hidden", 'Notification settings tab failed');
   await assertAccessible('Notification settings');
   assert(await evaluate("Boolean(document.getElementById('notifyAllActivity')) && !document.getElementById('notifyAllActivity').checked"), 'All-activity notification setting is missing or not safely disabled by default');
   await evaluate("document.getElementById('notifyAllActivity').click(); document.getElementById('saveNotificationPrefs').click()");
   await waitForBrowser("app.notificationPreferences?.allActivity === true && document.getElementById('notifyAllActivity').checked", 'All-activity notification setting did not save');
+  await evaluate("document.querySelector('[data-settings-subtab=\"notifications/email\"]').click()");
   await waitForBrowser("document.getElementById('emailPreviewProduct').options.length >= 5", 'Email preview products did not load');
   await evaluate(`(() => {
     document.getElementById('emailDetailLevel').value='detailed';
@@ -508,7 +654,7 @@ try {
   await evaluate("document.getElementById('closeProductDialog').click(); document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabData').click()");
   await waitForBrowser("!document.getElementById('settingsPanelData').hidden && document.getElementById('settingsPanelNotifications').hidden", 'Data settings tab failed');
   const recoverySettings = await evaluate("({ activityRetention:document.getElementById('configEventRetention').value, secondaryDirectory:document.getElementById('configSecondaryBackupDir').value, encrypted:document.getElementById('configSecondaryEncrypted').checked, hasPrimaryTest:Boolean(document.getElementById('testPrimaryBackup')), hasSecondaryTest:Boolean(document.getElementById('testSecondaryBackup')) })");
-  assert(recoverySettings.activityRetention === '365' && recoverySettings.secondaryDirectory === '' && !recoverySettings.encrypted && recoverySettings.hasPrimaryTest && recoverySettings.hasSecondaryTest, `V1.2.0 recovery settings are incomplete: ${JSON.stringify(recoverySettings)}`);
+  assert(recoverySettings.activityRetention === '365' && recoverySettings.secondaryDirectory === '' && !recoverySettings.encrypted && recoverySettings.hasPrimaryTest && recoverySettings.hasSecondaryTest, `V1.3.0 recovery settings are incomplete: ${JSON.stringify(recoverySettings)}`);
   const browserBackup = await evaluate(`(async () => {
     const backup = await api('/api/data/export/encrypted', { method:'POST', body:JSON.stringify({ passphrase:'browser backup passphrase' }) });
     const preview = await api('/api/data/preview', { method:'POST', body:JSON.stringify({ backup, passphrase:'browser backup passphrase' }) });
@@ -518,13 +664,13 @@ try {
   })()`);
   assert(browserBackup?.format === 'GearBeaconEncryptedBackup' && browserBackup.watchCount === 2 && browserBackup.historyCount >= 1, 'Browser backup preview/import flow failed.');
   await waitForBrowser("!document.getElementById('testPrimaryBackup').disabled", 'Primary restore test did not become available after the safety backup');
-  await evaluate("document.getElementById('testPrimaryBackup').click()");
+  await evaluate("document.querySelector('[data-settings-subtab=\"data/backups\"]').click(); document.getElementById('testPrimaryBackup').click()");
   await waitForBrowser("!document.getElementById('testPrimaryBackup').disabled && /Restore test passed/.test(document.getElementById('backupTestResult').textContent)", 'Non-destructive browser restore test did not pass');
 
   await evaluate("document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabOperations').click()");
   await waitForBrowser("document.getElementById('settings').classList.contains('active') && !document.getElementById('settingsPanelOperations').hidden && app.operations?.summary?.state && document.getElementById('operationsSummary').textContent.trim().length > 0", 'Settings Operations summary did not render');
   await assertAccessible('Operations dashboard');
-  await evaluate("document.getElementById('runDiagnostics').click()");
+  await evaluate("document.querySelector('[data-settings-subtab=\"operations/diagnostics\"]').click(); document.getElementById('runDiagnostics').click()");
   await waitForBrowser("!document.getElementById('runDiagnostics').disabled && document.querySelectorAll('#diagnosticsPanel .diagnostic-item').length >= 7", 'Installation diagnostics did not render');
   const diagnostics = await evaluate("({ heading:document.querySelector('#diagnosticsPanel h3')?.textContent, text:document.getElementById('diagnosticsPanel').textContent, hidden:document.getElementById('diagnosticsPanel').classList.contains('hidden') })");
   assert(!diagnostics.hidden && /Diagnostics/.test(diagnostics.heading) && /Database integrity/.test(diagnostics.text) && /United States store/.test(diagnostics.text), `Installation diagnostics are incomplete: ${JSON.stringify(diagnostics)}`);
@@ -547,14 +693,16 @@ try {
 
   await evaluate("document.getElementById('logoutBtn').click()");
   await waitForBrowser("!document.getElementById('authGate').classList.contains('hidden')", 'Browser logout did not return to the owner gate');
-  await evaluate("(() => { document.getElementById('authPassword').value='V1.2.0 browser owner password'; document.getElementById('authForm').requestSubmit(); })()");
+  await evaluate("(() => { document.getElementById('authPassword').value='V1.3.0 browser owner password'; document.getElementById('authForm').requestSubmit(); })()");
   await waitForBrowser("!document.getElementById('appShell').classList.contains('hidden') && app.auth.authenticated", 'Browser login after logout failed');
   await evaluate("document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabSecurity').click()");
+  await evaluate("document.querySelector('[data-settings-subtab=\"security/sessions\"]').click()");
   await waitForBrowser("document.querySelectorAll('#sessionList [data-revoke-session]').length >= 1", 'Authenticated session management did not render');
 
   await evaluate("history.replaceState(null, '', location.pathname + '#settings')");
   await reloadBrowserPage();
-  await waitForBrowser("!document.getElementById('appShell').classList.contains('hidden') && document.getElementById('settings').classList.contains('active') && !document.getElementById('settingsPanelSecurity').hidden", 'Selected tab and Settings subsection did not survive refresh');
+  await waitForBrowser("!document.getElementById('appShell').classList.contains('hidden') && document.getElementById('settings').classList.contains('active') && !document.getElementById('settingsPanelSecurity').hidden && !document.getElementById('settingsSecuritySessionsPanel').hidden", 'Selected tab and Settings subsection did not survive refresh');
+  await testSettingsNavigation({ evaluate, waitForBrowser, reloadBrowserPage, assertAccessible, assert, cdp, screenshotRoot });
   await evaluate(`(() => {
     document.querySelector('[data-tab="browse"]').click();
     document.querySelector('[data-category="WiFi"]').click();
@@ -580,7 +728,7 @@ try {
   await waitForBrowser("app.collections.some((item) => item.name === 'Camera project')", 'Collection creation failed');
   await assertAccessible('Collection manager');
   await evaluate("document.getElementById('closeCollectionManager').click()");
-  assert(await evaluate("document.activeElement.id === 'openCollectionManager' && !document.querySelector('main').inert"), 'Collection manager did not restore focus or release the page');
+  assert(await evaluate("document.activeElement.matches('#watchManageToggle') && !document.querySelector('main').inert"), 'Collection manager did not restore focus or release the page');
   await evaluate("activateTab('browse'); resetBrowseFilters(); document.getElementById('tabBrowse').focus(); openProductDialog('uvc-g5-ptz')");
   await waitForBrowser("document.querySelector('[data-variant-selector]')?.options.length === 3", 'Variant choices did not render');
   await evaluate("(() => { const picker=document.querySelector('[data-variant-selector]'); picker.value='uvc-g5-ptz::mock-black'; picker.dispatchEvent(new Event('change',{bubbles:true})); })()");
@@ -627,7 +775,7 @@ try {
   assert(await evaluate("app.collections[0].readiness.waiting === 1 && document.querySelector('.readiness-status').textContent.includes('0 of 1')"), 'Collection did not show its confirmed blocking item');
   assert(await evaluate("document.querySelector('.collection-card .card-actions [data-collection-alerts]').textContent === 'Alerts'"), 'Collection cards did not provide a clearly labeled Alerts action');
   await evaluate("window.collectionAlertWatchRules=JSON.stringify(app.products.filter(item=>item.watched).map(item=>[item.slug,item.watchRule])); document.querySelector('.collection-card .card-actions [data-collection-alerts]').focus(); document.activeElement.click()");
-  assert(await evaluate("document.getElementById('collectionAlertHeading').textContent === 'Collection alerts' && document.querySelector('[data-notify-collection]').getAttribute('aria-describedby').includes('collectionAlertInteraction') && document.getElementById('collectionAlertInteraction').offsetHeight > 0 && document.getElementById('collectionAlertInteraction').textContent.includes('unless another collection suppresses') && document.getElementById('collectionAlertDelivery').textContent.includes('Saves automatically')"), 'Collection alerts did not visibly explain saving, delivery, or their interaction with item rules');
+  assert(await evaluate("document.getElementById('collectionAlertHeading').textContent === 'Collection alerts' && document.querySelector('[data-notify-collection]').getAttribute('aria-describedby').includes('collectionAlertInteraction') && document.getElementById('collectionAlertInteraction').offsetHeight > 0 && document.getElementById('collectionAlertInteraction').textContent.includes('unless another collection suppresses') && document.getElementById('collectionAlertDelivery').textContent.includes('switches save automatically') && document.getElementById('collectionAlertDelivery').textContent.includes('Save delivery options')"), 'Collection alerts did not visibly explain saving, delivery, or their interaction with item rules');
   await evaluate("document.querySelector('[data-notify-collection]').click()");
   await waitForBrowser("app.collections[0].notifyReady && document.activeElement.matches('[data-notify-collection]')", 'Collection notification opt-in failed or lost focus');
   assert(await evaluate("window.collectionAlertWatchRules === JSON.stringify(app.products.filter(item=>item.watched).map(item=>[item.slug,item.watchRule]))"), 'Enabling collection alerts changed individual item rules');
@@ -671,7 +819,7 @@ try {
   await evaluate("document.getElementById('openCollectionManager').focus(); document.getElementById('openCollectionManager').click(); document.querySelector('[data-edit-collection]').click(); document.getElementById('askDeleteCollection').click(); document.getElementById('confirmDeleteCollection').click()");
   await waitForBrowser("app.collections.length === 0 && !app.collectionBusy", 'Collection deletion failed');
   assert(await evaluate("app.products.some((item) => item.slug === 'uvc-g5-ptz::mock-black' && item.watched)"), 'Collection deletion removed its watch');
-  assert(await evaluate("document.getElementById('collectionDialog').classList.contains('hidden') && !document.querySelector('main').inert && !document.getElementById('toTop').inert && !document.body.classList.contains('dialog-open') && document.activeElement.id === 'openCollectionManager'"), 'Deleting the last collection reopened its empty manager or failed to restore page focus');
+  assert(await evaluate("document.getElementById('collectionDialog').classList.contains('hidden') && !document.querySelector('main').inert && !document.getElementById('toTop').inert && !document.body.classList.contains('dialog-open') && document.activeElement.matches('#watchManageToggle')"), 'Deleting the last collection reopened its empty manager or failed to restore page focus');
 
   // Collection management keeps name/membership edits together and preserves drafts until saved.
   const collectionTestSlugs = await evaluate("app.products.filter((product) => product.watched).slice(0,2).map((product) => product.slug)");
@@ -762,7 +910,7 @@ try {
   await evaluate("document.getElementById('askDeleteCollection').click(); document.getElementById('confirmDeleteCollection').click()");
   await waitForBrowser("app.collections.length === 1 && !app.collectionBusy", 'Confirmed collection deletion failed');
   assert(await evaluate(`${JSON.stringify(collectionTestSlugs)}.every((slug) => app.products.some((product) => product.slug === slug && product.watched))`), 'Collection deletion removed watched products');
-  assert(await evaluate(`document.getElementById('collectionDialog').classList.contains('hidden') && !document.querySelector('main').inert && document.activeElement.id === 'openCollectionManager' && !document.querySelector('[data-collection-card="${cameraCollection}"]')`), 'Deleting from a collection card reopened the manager or left focus on the removed card');
+  assert(await evaluate(`document.getElementById('collectionDialog').classList.contains('hidden') && !document.querySelector('main').inert && document.activeElement.matches('#watchManageToggle') && !document.querySelector('[data-collection-card="${cameraCollection}"]')`), 'Deleting from a collection card reopened the manager or left focus on the removed card');
   await evaluate("app.selectedWatch.clear(); renderProducts(true)");
   // Collections share the product grid and keep large checklists out of the card.
   await evaluate(`(async () => {
@@ -824,7 +972,7 @@ try {
   await evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
   assert(await evaluate("document.activeElement.dataset.collectionAlerts === window.previewCollectionId && !document.getElementById('collectionOverview').classList.contains('hidden')"), 'Closing alerts did not return to Manage collections');
   await evaluate("document.getElementById('closeCollectionManager').click()");
-  assert(await evaluate("document.activeElement.id === 'openCollectionManager' && !document.querySelector('main').inert"), 'Closing Manage collections did not restore page focus');
+  assert(await evaluate("document.activeElement.matches('#watchManageToggle') && !document.querySelector('main').inert"), 'Closing Manage collections did not restore page focus');
   await evaluate("document.querySelector('[data-collection-card=\"'+window.previewCollectionId+'\"] [data-edit-collection]').click()");
   assert(await evaluate("app.collectionDraft.id === window.previewCollectionId && !document.getElementById('collectionForm').classList.contains('hidden')"), 'Edit did not open the selected collection from its card');
   await evaluate("document.getElementById('collectionName').value='Unsaved preview name'; document.querySelector('[data-collection-watch=\"'+window.previewSlugs[0]+'\"]').click(); document.getElementById('collectionWatchSearch').value=window.previewSlugs[0]; document.getElementById('collectionWatchSearch').dispatchEvent(new Event('input')); window.collectionEditorSnapshot=JSON.stringify([document.getElementById('collectionName').value,document.getElementById('collectionWatchSearch').value,[...app.collectionDraft.slugs]]); document.getElementById('editCollectionAlerts').click()");
@@ -916,12 +1064,40 @@ try {
   await waitForBrowser(`app.collections.find(item=>item.id==='${purchaseCollectionId}').notifyReady && !document.querySelector('[data-notify-collection]').disabled`, 'Purchase collection alerts did not enable');
   await evaluate("document.querySelector('[data-collection-alert-mode]').value='only'; document.querySelector('[data-collection-alert-mode]').dispatchEvent(new Event('change',{bubbles:true}))");
   await waitForBrowser(`app.collections.find(item=>item.id==='${purchaseCollectionId}').alertsOnly && document.activeElement.matches('[data-collection-alert-mode]')`, 'Collection-only alert mode did not save or retain focus');
+  await evaluate("document.querySelector('[data-collection-budget]').click()");
+  await waitForBrowser("!app.collectionNotificationBusy && app.collections.find(item=>item.id===app.collectionAlertId).budgetRequired && document.activeElement.matches('[data-collection-budget]')", 'Budget condition did not save or retain focus');
+  await evaluate("refresh()");
+  assert(await evaluate("document.querySelector('[data-collection-budget]').checked && document.activeElement.matches('[data-collection-budget]') && document.getElementById('collectionBudgetCondition').textContent.includes('recorded spending')"), 'Refresh lost the saved budget condition or focus');
+  await assertAccessible('Collection budget alert settings');
+  if (screenshotRoot) {
+    const capture=await cdp.send('Page.captureScreenshot',{format:'png'});
+    await writeFile(join(screenshotRoot,'collection-budget-alerts.png'),Buffer.from(capture.data,'base64'));
+  }
+  await evaluate(`(() => {
+    window.budgetOrigin=app.collectionAlertId;
+    window.budgetOther=app.collections.find(item=>item.id!==window.budgetOrigin).id;
+    window.budgetOriginalFetch=window.fetch;
+    window.fetch=async (...args)=>{
+      const response=await window.budgetOriginalFetch(...args);
+      if (args[1]?.method==='PUT' && String(args[0]).includes('/api/collections/')) await new Promise(resolve=>window.releaseBudgetSave=resolve);
+      return response;
+    };
+    document.querySelector('[data-collection-budget]').click();
+  })()`);
+  await waitForBrowser("Boolean(window.releaseBudgetSave)", 'Delayed collection save did not start');
+  await evaluate("document.getElementById('closeCollectionManager').click(); openCollectionAlerts(window.budgetOther)");
+  assert(await evaluate("document.getElementById('collectionDialogTitle').textContent===app.collections.find(item=>item.id===window.budgetOther).name && document.querySelector('[data-collection-budget]').dataset.collectionBudget===window.budgetOther && document.querySelector('[data-collection-budget]').disabled"), 'Opening another collection during a save displayed stale settings');
+  await evaluate("window.fetch=window.budgetOriginalFetch; window.releaseBudgetSave()");
+  await waitForBrowser("!app.collectionNotificationBusy && !document.querySelector('[data-collection-budget]').disabled && app.collectionAlertId===window.budgetOther", 'Completed save replaced or left the new collection disabled');
+  await evaluate("openCollectionAlerts(window.budgetOrigin); document.querySelector('[data-collection-budget]').click()");
+  await waitForBrowser("!app.collectionNotificationBusy && app.collections.find(item=>item.id===window.budgetOrigin).budgetRequired", 'Budget condition did not restore after delayed save');
+  await evaluate("openCollectionDetails(window.budgetOrigin); openCollectionAlerts(window.budgetOrigin)");
   await assertAccessible('Collection-only alert mode');
   await evaluate("document.querySelector('[data-close-collection-alerts]').click()");
-  assert(await evaluate("document.querySelector('#collectionDetails .collection-member-plan').textContent.includes('Item alerts suppressed by: Purchase test') && document.querySelector('#watchGrid [data-product-card=\"udm-se\"]').textContent.includes('Collection alerts only: Purchase test')"), 'The effective collection alert override was not visible on the item');
+  assert(await evaluate("document.querySelector('#collectionDetails .collection-member-plan').textContent.includes('Item alerts suppressed by: Purchase test') && document.querySelector('#watchGrid [data-product-card=\"udm-se\"]').textContent.includes('Individual alerts suppressed by Purchase test')"), 'The effective collection alert override was not visible on the item');
   await evaluate("document.querySelector('#collectionDetails [data-collection-item-remove=\"udm-se\"]').click()");
   await waitForBrowser(`!app.collectionBusy && app.collections.find(item=>item.id==='${purchaseCollectionId}').slugs.length===0`, 'Remove did not remove the item from its collection');
-  assert(await evaluate("app.products.find(item=>item.slug==='udm-se').watched && !document.getElementById('collectionDetails').classList.contains('hidden') && document.querySelector('#collectionDetails .collection-no-watches') && !document.querySelector('#watchGrid [data-product-card=\"udm-se\"]').textContent.includes('Collection alerts only: Purchase test')"), 'Removing a collection item lost its watch, left an override, or reopened the manager');
+  assert(await evaluate("app.products.find(item=>item.slug==='udm-se').watched && !document.getElementById('collectionDetails').classList.contains('hidden') && document.querySelector('#collectionDetails .collection-no-watches') && !document.querySelector('#watchGrid [data-product-card=\"udm-se\"]').textContent.includes('Individual alerts suppressed by Purchase test')"), 'Removing a collection item lost its watch, left an override, or reopened the manager');
   await evaluate("document.getElementById('closeCollectionManager').click()");
   // Add from Browse, preserve existing plans, filter by readiness, and archive/undo through real controls.
   await evaluate("activateTab('browse'); resetBrowseFilters(); document.querySelector('#browseGrid [data-add-watch=\"uvc-g5-ptz\"]').focus(); document.activeElement.click()");
@@ -977,6 +1153,82 @@ try {
   await waitForBrowser(`!app.collectionBusy && !app.collections.find(item=>item.id==='${workflowCollection}').archived`, 'Restore did not reactivate the archived collection');
   assert(await evaluate(`app.collections.find(item=>item.id==='${workflowCollection}').items[0].paidTotal===300 && collectionAlertSources(app.products.find(item=>item.slug==='uvc-g5-ptz::mock-white')).some(item=>item.id==='${workflowCollection}')`), 'Restore lost purchase records or saved alert mode');
   await evaluate("resetWatchFilters(); document.getElementById('groupCollectedWatches').checked=false; document.getElementById('collectionArchiveFilter').value='active'; renderProducts(true)");
+
+  // Named views are persisted by the server; layout and dialogs remain accessible.
+  await evaluate("resetWatchFilters(); document.getElementById('watchLayout').value='compact'; document.getElementById('watchLayout').dispatchEvent(new Event('change')); document.querySelector('[data-save-view=watchlist]').focus(); document.querySelector('[data-save-view=watchlist]').click()");
+  assert(await evaluate("document.getElementById('ownerDialog').open && document.activeElement.id==='savedViewName'"), 'Saved view dialog did not open with name focus');
+  await assertOwnerDialogLayout('Saved view');
+  await assertAccessible('Save named Watchlist view');
+  await evaluate("document.getElementById('savedViewName').value='Daily <view>'; document.getElementById('savedViewForm').requestSubmit()");
+  await waitForBrowser("app.savedViews.some(view=>view.name==='Daily <view>') && !document.getElementById('ownerDialog').open", 'View did not save');
+  assert(await evaluate("document.activeElement.matches('#watchViewToggle')"), 'Saving did not restore focus');
+  const savedView = await evaluate("app.savedViews.find(view=>view.name==='Daily <view>').id");
+  await evaluate(`document.getElementById('watchLayout').value='cards'; document.getElementById('watchLayout').dispatchEvent(new Event('change')); document.getElementById('watchSavedView').value='${savedView}'; document.getElementById('watchSavedView').dispatchEvent(new Event('change'))`);
+  assert(await evaluate("document.getElementById('watchLayout').value==='compact' && document.getElementById('watchlistCards').classList.contains('compact-list')"), 'Applying a saved view did not restore its layout');
+  await evaluate("document.querySelector('[data-manage-views=watchlist]').click(); document.querySelector('[data-view-edit]').click(); document.getElementById('savedViewName').value='Daily compact'; document.getElementById('savedViewForm').requestSubmit()");
+  await waitForBrowser("app.savedViews.some(view=>view.name==='Daily compact') && !document.getElementById('ownerDialog').open", 'Renaming a saved view failed');
+  await evaluate("window.originalViewApi=api; api=async(path,options)=>{ const result=await window.originalViewApi(path,options); if(path==='/api/views' && options?.method==='POST') await new Promise(resolve=>window.finishViewSave=resolve); return result; }; document.querySelector('[data-save-view=watchlist]').click(); document.getElementById('savedViewName').value='Z delayed save'; document.getElementById('savedViewForm').requestSubmit()");
+  await waitForBrowser("Boolean(window.finishViewSave)", 'Delayed save fixture did not reach the server');
+  await evaluate("document.getElementById('closeOwnerDialog').click()");
+  await waitForBrowser("app.viewDraft===null", 'Closing an in-progress view did not clear its draft');
+  await evaluate("document.querySelector('[data-save-view=watchlist]').click(); document.getElementById('savedViewName').value='Unsaved next view'; window.finishViewSave()");
+  await waitForBrowser("app.savedViews.some(view=>view.name==='Z delayed save')", 'Completed save was not reflected in the view list');
+  assert(await evaluate("document.getElementById('ownerDialog').open && document.getElementById('savedViewName').value==='Unsaved next view'"), 'An earlier save closed or overwrote a newer dialog');
+  await evaluate("api=window.originalViewApi; document.getElementById('closeOwnerDialog').click()");
+  for (const theme of ['dark','light']) {
+    await evaluate(`applyTheme('${theme}'); renderProducts(true)`); await delay(250);
+    for (const width of [1280,390,640]) {
+      await cdp.send('Emulation.setDeviceMetricsOverride',{width,height:844,deviceScaleFactor:width===640?2:1,mobile:false});
+      assert(await evaluate("document.documentElement.scrollWidth<=window.innerWidth+1"), `Compact layout overflowed at ${width}px`);
+      assert(await evaluate("[...document.querySelectorAll('.compact-list .watch-card')].every(card=>card.querySelector('.watch-image').getBoundingClientRect().width>=60 && card.querySelector('.price') && card.querySelectorAll('.card-actions button').length===3)"), 'Compact rows lost product previews, prices or actions');
+      if (screenshotRoot) {
+        await evaluate("document.getElementById('watchlistCards').scrollIntoView({block:'start'})");
+        const capture=await cdp.send('Page.captureScreenshot',{format:'png'});
+        await writeFile(join(screenshotRoot,`compact-${theme}-${width}.png`),Buffer.from(capture.data,'base64'));
+      }
+    }
+    await assertAccessible(`Compact Watchlist ${theme}`);
+    assert(await evaluate("[...document.querySelectorAll('[data-alert-explain]')].every(button=>button.textContent==='?' && button.getAttribute('aria-label').startsWith('Explain alerts for ') && button.getAttribute('aria-haspopup')==='dialog' && button.getAttribute('title')==='Explain alerts' && (!button.getClientRects().length || button.getBoundingClientRect().width===28 && button.getBoundingClientRect().height===28))"), 'Alert help controls lost their compact question mark or accessible explanation');
+    await evaluate("document.querySelector('[data-alert-explain=watch]').focus()");
+    await cdp.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,text:'\r'});
+    await cdp.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
+    await waitForBrowser("document.querySelector('.alert-explanation')", 'Alert explanation did not load');
+    assert(await evaluate("document.getElementById('ownerDialogBody').textContent.includes('Actual notification jobs') && document.getElementById('ownerDialogBody').textContent.includes('Saving a rule does not create a notification job')"), 'Explanation confused enabled rules with deliveries');
+    for (const width of [1280,390,640]) {
+      await cdp.send('Emulation.setDeviceMetricsOverride',{width,height:width===640?422:844,deviceScaleFactor:width===640?2:1,mobile:false});
+      await evaluate("document.getElementById('ownerDialog').scrollTop=0");
+      await assertOwnerDialogLayout(`Alert explanation ${theme} ${width}px`);
+      await assertAccessible(`Alert explanation ${theme} ${width}px`);
+      if (screenshotRoot && width!==640) {
+        const capture=await cdp.send('Page.captureScreenshot',{format:'png'});
+        await writeFile(join(screenshotRoot,`alert-explanation-${theme}-${width}.png`),Buffer.from(capture.data,'base64'));
+      }
+      await evaluate("(() => { window.originalExplanationTitle=document.getElementById('ownerDialogTitle').textContent; document.getElementById('ownerDialogTitle').textContent='Alerts · Example doorbell kit · '+ 'ExactVariantIdentifier'.repeat(6); const reason=document.createElement('li'); reason.id='longExplanationFixture'; reason.textContent='Variant: '+ 'LongVariantIdentifier'.repeat(12); document.querySelector('.alert-explanation ul').append(reason); })()");
+      await assertOwnerDialogLayout(`Long alert explanation ${theme} ${width}px`);
+      await evaluate("document.getElementById('ownerDialog').scrollTop=document.getElementById('ownerDialog').scrollHeight");
+      await assertOwnerDialogLayout(`Scrolled alert explanation ${theme} ${width}px`);
+      await evaluate("document.getElementById('ownerDialogTitle').textContent=window.originalExplanationTitle; document.getElementById('longExplanationFixture').remove(); document.getElementById('ownerDialog').scrollTop=0");
+    }
+    await cdp.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+    await cdp.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+    await waitForBrowser("!document.getElementById('ownerDialog').open", 'Escape did not dismiss alert explanation');
+    assert(await evaluate("document.activeElement.matches('[data-alert-explain=watch]')"), 'Alert explanation did not restore focus');
+    await cdp.send('Emulation.clearDeviceMetricsOverride');
+  }
+  await evaluate("document.querySelector('#watchGrid [data-product-detail]').click()");
+  await waitForBrowser("!document.getElementById('productDialog').classList.contains('hidden') && document.querySelector('#productRuleForm [data-alert-explain]')", 'Product alert rules did not open');
+  await evaluate("document.querySelector('#productRuleForm [data-alert-explain]').focus(); document.activeElement.click()");
+  await waitForBrowser("document.querySelector('.alert-explanation')", 'Nested alert explanation did not load');
+  await assertAccessible('Alert explanation over product rules');
+  await evaluate("document.getElementById('closeOwnerDialog').click()");
+  await waitForBrowser("!document.getElementById('ownerDialog').open && document.activeElement.matches('#productRuleForm [data-alert-explain]')", 'Nested explanation lost focus in product rules');
+  await evaluate("document.getElementById('closeProductDialog').click(); document.querySelector('[data-manage-views=watchlist]').click(); document.querySelector('[data-view-delete]').click()");
+  await waitForBrowser("!app.savedViews.some(view=>view.name==='Daily compact')", 'Deleting a saved view failed');
+  await evaluate("document.getElementById('closeOwnerDialog').click(); document.getElementById('watchLayout').value='cards'; document.getElementById('watchLayout').dispatchEvent(new Event('change')); activateTab('browse'); document.getElementById('search').value='G5'; document.getElementById('search').dispatchEvent(new Event('input')); document.querySelector('[data-save-view=browse]').click(); document.getElementById('savedViewName').value='Browse cameras'; document.getElementById('savedViewForm').requestSubmit()");
+  await waitForBrowser("app.savedViews.some(view=>view.scope==='browse') && !document.getElementById('ownerDialog').open", 'Browse view did not save');
+  await evaluate("document.getElementById('search').value=''; document.getElementById('search').dispatchEvent(new Event('input')); document.getElementById('browseSavedView').value=app.savedViews.find(view=>view.scope==='browse').id; document.getElementById('browseSavedView').dispatchEvent(new Event('change'))");
+  assert(await evaluate("document.getElementById('search').value==='G5'"), 'Browse view did not restore search');
+  await evaluate("document.getElementById('search').value=''; document.getElementById('search').dispatchEvent(new Event('input')); activateTab('watchlist')");
   // Paginate more than 100 real API entries in the isolated browser fixture.
   await evaluate(`(async () => {
     const backup = await api('/api/data/export');
@@ -1038,7 +1290,273 @@ try {
   }
   await cdp.send('Emulation.setDeviceMetricsOverride', { width:640,height:450,screenWidth:1280,screenHeight:900,deviceScaleFactor:2,mobile:false });
   assert(await evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), 'Activity page-size controls overflowed at 200% equivalent zoom');
-  console.log(`BROWSER SMOKE PASSED: ${process.platform} · setup/auth · WCAG axe scans · keyboard/focus/reduced-motion · persistent navigation/filters · resettable empty states · offline recovery · copy actions · unclipped navigation · dark/light · images · watch/rules/bulk/import · exact variants/combined preview/collections/purchased · stock insights/windows/collection readiness/alerts/deep-links · compact searchable activity/evidence · email settings/preview/deep-link · backup/import · diagnostics/operations · responsive`);
+  // Real arrivals appear through the one-second Activity timer, including on older pages.
+  await evaluate("refreshActivity(2)");
+  await evaluate(`(() => {
+    window.heldActivityIds=app.activity.events.map(event=>event.id);
+    window.heldActivityFocus=document.querySelectorAll('#activityList .event')[6];
+    window.heldActivityFocus.scrollIntoView({block:'start'}); window.scrollBy(0,17);
+    window.heldActivityFocus.focus({preventScroll:true});
+    window.heldActivityTop=window.heldActivityFocus.getBoundingClientRect().top;
+  })()`);
+  await evaluate(`(async () => {
+    window.activityToggleSlug=app.products.find(product=>!product.variantId && !product.comingSoon).slug;
+    await api('/api/mock/toggle/'+encodeURIComponent(window.activityToggleSlug),{method:'POST'});
+    await api('/api/check',{method:'POST'}); await api('/api/check',{method:'POST'});
+  })()`);
+  await waitForBrowser("app.activity.arrivals?.length>0 && document.querySelector('#activityLiveList .event')", 'New Activity cards did not appear automatically within four seconds',40);
+  const arrivalPosition=await evaluate("({page:app.activity.page, sameIds:JSON.stringify(app.activity.events.map(event=>event.id))===JSON.stringify(window.heldActivityIds), sameFocus:document.activeElement===window.heldActivityFocus, focusedId:document.activeElement.dataset.activityEvent, heldId:window.heldActivityFocus.dataset.activityEvent, connected:window.heldActivityFocus.isConnected, top:window.heldActivityFocus.getBoundingClientRect().top, expectedTop:window.heldActivityTop, scroll:window.scrollY})");
+  assert(arrivalPosition.page===2 && arrivalPosition.sameIds && arrivalPosition.sameFocus && Math.abs(arrivalPosition.top-arrivalPosition.expectedTop)<2, `Automatic arrivals moved the card being read, replaced the older page, or lost keyboard focus: ${JSON.stringify(arrivalPosition)}`);
+  assert(await evaluate("!document.getElementById('activityNew') && !document.getElementById('activityLiveHeading').classList.contains('hidden') && document.getElementById('activityEarlierHeading').textContent.includes('Page 2')"), 'Live arrivals require a click or are not distinguished from the older page');
+  for (const theme of ['dark','light']) {
+    await evaluate(`applyTheme(${JSON.stringify(theme)}); window.scrollTo(0,0)`); await delay(250);
+    await cdp.send('Emulation.setDeviceMetricsOverride',{width:390,height:844,screenWidth:390,screenHeight:844,deviceScaleFactor:1,mobile:false});
+    assert(await evaluate("document.documentElement.scrollWidth<=innerWidth+1 && [...document.querySelectorAll('#activityFeed .event')].every(row=>Math.round(row.getBoundingClientRect().height)===64)"), 'Live Activity changed row height or overflowed');
+    await assertAccessible(`Live Activity ${theme}`);
+    if (screenshotRoot) {
+      await evaluate("document.getElementById('activityResultCount').scrollIntoView({block:'start'}); window.scrollBy(0,-12)");
+      const capture=await cdp.send('Page.captureScreenshot',{format:'png'});
+      await writeFile(join(screenshotRoot,`activity-live-${theme}.png`),Buffer.from(capture.data,'base64'));
+    }
+  }
+  await cdp.send('Emulation.setDeviceMetricsOverride',{width:640,height:450,screenWidth:1280,screenHeight:900,deviceScaleFactor:2,mobile:false});
+  assert(await evaluate("document.documentElement.scrollWidth<=innerWidth+1"), 'Live Activity overflowed at 200% equivalent zoom');
+  // Stay at the top to follow automatically; a later burst cannot evict a card being read.
+  await evaluate("refreshActivity(1,{reset:true})");
+  await evaluate("window.scrollTo(0,0); window.activityAtTopIds=app.activity.events.map(event=>event.id)");
+  await evaluate(`(async () => {
+    await api('/api/mock/toggle/'+encodeURIComponent(window.activityToggleSlug),{method:'POST'});
+    await api('/api/check',{method:'POST'}); await api('/api/check',{method:'POST'});
+  })()`);
+  await waitForBrowser("app.activity.arrivals?.length>0", 'First-page arrivals did not appear automatically',40);
+  assert(await evaluate("window.scrollY===0 && JSON.stringify(app.activity.events.map(event=>event.id))===JSON.stringify(window.activityAtTopIds) && document.getElementById('activityLiveHeading').classList.contains('hidden')"), 'Following the top moved the viewport or evicted the oldest page row');
+  await evaluate(`(() => {
+    window.heldActivityFocus=document.querySelector('#activityLiveList .event');
+    window.heldActivityFocus.scrollIntoView({block:'start'}); window.scrollBy(0,11);
+    window.heldActivityFocus.focus({preventScroll:true}); window.heldActivityTop=window.heldActivityFocus.getBoundingClientRect().top;
+  })()`);
+  await evaluate(`(async () => {
+    await api('/api/mock/fault',{method:'POST',body:JSON.stringify({catalogSize:150})});
+    await api('/api/check',{method:'POST'}); await api('/api/check',{method:'POST'});
+  })()`);
+  await waitForBrowser("app.activity.arrivals?.length>100 && !app.activityController", 'A burst spanning multiple Activity responses was not loaded automatically',50);
+  assert(await evaluate("document.activeElement===window.heldActivityFocus && Math.abs(window.heldActivityFocus.getBoundingClientRect().top-window.heldActivityTop)<2 && new Set([...document.querySelectorAll('#activityFeed .event')].map(row=>row.dataset.activityEvent)).size===app.activity.events.length+app.activity.arrivals.length"), 'A large burst lost the reading position, focus, or introduced duplicate cards');
+  assert(await evaluate("app.activity.arrivals.length===app.activity.newCount"), 'A large arrival burst was truncated');
+  // Refresh a visible delivery outcome, retaining the invoker if a dialog is open.
+  await evaluate("window.heldActivityFocus.click()");
+  await waitForBrowser("!document.getElementById('activityDialog').classList.contains('hidden') && !document.querySelector('#activityDialogBody .dialog-loading')", 'Live Activity details did not open');
+  await waitForBrowser("!app.activityController", 'Activity refresh did not settle before delivery fixture');
+  await evaluate(`(() => {
+    window.deliveryActivityFetch=window.fetch;
+    window.fetch=async (...args)=>{
+      const response=await window.deliveryActivityFetch(...args);
+      if (!String(args[0]).includes('/api/activity?') || !response.ok) return response;
+      const data=await response.json();
+      for (const event of data.events) if (event.id===window.heldActivityFocus.dataset.activityEvent) event.serverAlert={state:'retrying',label:'Retrying',detail:'Fixture delivery is retrying.',channels:['webhook']};
+      return new Response(JSON.stringify(data),{status:200,headers:{'Content-Type':'application/json'}});
+    };
+  })()`);
+  await waitForBrowser("window.heldActivityFocus.querySelector('.event-alert-label').textContent==='Retrying'", 'Live delivery outcome did not update on the retained card',40);
+  assert(await evaluate("window.heldActivityFocus.isConnected && document.activeElement.id==='closeActivityDialog' && !document.getElementById('activityDialog').classList.contains('hidden')"), 'Automatic Activity refresh replaced the invoker or stole dialog focus');
+  await evaluate("window.fetch=window.deliveryActivityFetch");
+  await evaluate("document.getElementById('closeActivityDialog').click()");
+  assert(await evaluate("document.activeElement.dataset.activityEvent===window.heldActivityFocus.dataset.activityEvent"), 'Closing live Activity details did not restore its invoker');
+  // Filter drafts do not change the live query until Apply; matching arrivals respect filters.
+  await evaluate("document.getElementById('activitySearch').value='unapplied Activity draft'; refreshActivity(app.activity.page,{background:true})");
+  assert(await evaluate("document.getElementById('activitySearch').value==='unapplied Activity draft' && app.activity.arrivals.length>100"), 'Live refresh applied or discarded a filter draft');
+  // Removing the snapshot boundary during recovery must not apply that draft.
+  await evaluate(`(async () => {
+    window.beforeRestoreActivitySnapshot=app.activity.snapshot;
+    const anchorId=app.activity.snapshot.slice(app.activity.snapshot.indexOf(':')+1);
+    const backup=await api('/api/data/export');
+    backup.regions.us.events=backup.regions.us.events.filter(event=>event.id!==anchorId);
+    await api('/api/data/import',{method:'POST',body:JSON.stringify({backup})});
+  })()`);
+  await waitForBrowser("app.activity.snapshot!==window.beforeRestoreActivitySnapshot && !app.activityController", 'Activity did not recover an expired reading boundary automatically',40);
+  assert(await evaluate("document.getElementById('activitySearch').value==='unapplied Activity draft' && app.activity.count>100 && app.activity.filters.search!=='unapplied Activity draft'"), 'Recovering the Activity boundary applied or lost an unsaved filter draft');
+  await evaluate("document.getElementById('activityFilters').requestSubmit()");
+  await waitForBrowser("app.activity.count===0 && app.activity.arrivals?.length===0", 'Applying filters did not reset the live reading boundary');
+  await evaluate("resetActivityFilters()");
+  await waitForBrowser("app.activity.loaded && app.activity.events.length===20 && app.activity.arrivals?.length===0", 'Resetting filters did not restore standard Activity pagination');
+  // A failed poll retains the last good cards and retries without a button.
+  await waitForBrowser("!app.activityController", 'Activity refresh did not settle');
+  await evaluate(`(() => {
+    window.activityOriginalFetch=window.fetch; window.activityFailureIds=app.activity.events.map(event=>event.id);
+    window.activityFailureAnchor=document.querySelectorAll('#activityList .event')[6];
+    window.activityFailureAnchor.scrollIntoView({block:'start'}); window.scrollBy(0,9);
+    window.activityFailureTop=window.activityFailureAnchor.getBoundingClientRect().top;
+    window.fetch=(...args)=>String(args[0]).includes('/api/activity?') ? Promise.reject(new TypeError('Fixture disconnected')) : window.activityOriginalFetch(...args);
+  })()`);
+  await waitForBrowser("document.getElementById('activityLiveStatus').textContent.includes('Reconnecting')", 'Activity did not expose a failed poll',40);
+  assert(await evaluate("JSON.stringify(app.activity.events.map(event=>event.id))===JSON.stringify(window.activityFailureIds) && Math.abs(window.activityFailureAnchor.getBoundingClientRect().top-window.activityFailureTop)<2"), 'A failed live poll cleared the last good Activity cards or moved the reading position');
+  await evaluate("window.fetch=window.activityOriginalFetch");
+  await waitForBrowser("document.getElementById('activityLiveStatus').textContent==='Live · Updates automatically'", 'Activity did not recover automatically',40);
+  assert(await evaluate("Math.abs(window.activityFailureAnchor.getBoundingClientRect().top-window.activityFailureTop)<2"), 'Reconnecting moved the reading position');
+  // Slow refreshes coalesce; a saved edit cannot be overwritten by an older response.
+  await evaluate(`(async () => {
+    await refresh();
+    window.refreshOriginalFetch=window.fetch; window.refreshProductReads=0;
+    window.fetch=async (...args)=>{
+      const response=await window.refreshOriginalFetch(...args);
+      if (String(args[0]).includes('/api/products?')) {
+        window.refreshProductReads++;
+        if (window.refreshProductReads===1) await new Promise(resolve=>window.releaseRefresh=resolve);
+      }
+      return response;
+    };
+    window.slowRefresh=refresh({background:true});
+  })()`);
+  await waitForBrowser("Boolean(window.releaseRefresh)", 'Refresh delay fixture did not start');
+  await evaluate("refresh({background:true}); refresh({background:true}); app.dataRevision++; window.expectedProductName=app.products[0].name+' local edit'; app.products[0].name=window.expectedProductName; window.releaseRefresh();");
+  await evaluate("window.slowRefresh");
+  assert(await evaluate("window.refreshProductReads===1 && app.products[0].name===window.expectedProductName"), 'Refresh requests overlapped or stale data replaced an edit');
+  await evaluate("window.fetch=window.refreshOriginalFetch; refresh()");
+  // Hidden tabs defer catalog rendering, and opening the tab refreshes it immediately.
+  await evaluate(`(async () => {
+    window.hiddenOriginalFetch=window.fetch; window.hiddenRequests=[];
+    window.fetch=(...args)=>{window.hiddenRequests.push(String(args[0])); return window.hiddenOriginalFetch(...args);};
+    Object.defineProperty(document,'hidden',{configurable:true,value:true});
+    await refresh({background:true});
+  })()`);
+  await delay(1100);
+  assert(await evaluate("window.hiddenRequests.every(path=>path.includes('/api/events?'))"), 'Hidden tab fetched the catalog or rendered settings');
+  await evaluate("delete document.hidden; document.dispatchEvent(new Event('visibilitychange'))");
+  await waitForBrowser("window.hiddenRequests.some(path=>path.includes('/api/products?')) && !refreshTask", 'Returning to the tab did not refresh the catalog');
+  await evaluate("window.fetch=window.hiddenOriginalFetch; activateTab('settings'); activateSettingsTab('notifications'); activateSettingsSection('notifications', 'alerts')");
+  await waitForBrowser("!refreshTask", 'Settings refresh did not settle');
+  await delay(200);
+  await evaluate("window.preferenceDraft=!document.getElementById('notifyRestock').checked; document.getElementById('notifyRestock').checked=window.preferenceDraft; refresh({background:true})");
+  assert(await evaluate("document.getElementById('notifyRestock').checked===window.preferenceDraft"), 'Background refresh discarded unsaved notification preferences');
+  await cdp.send('Emulation.setDeviceMetricsOverride',{width:1280,height:900,screenWidth:1280,screenHeight:900,deviceScaleFactor:1,mobile:false});
+  const scale=await evaluate(`(() => {
+    activateTab('watchlist'); resetWatchFilters(); document.getElementById('groupCollectedWatches').checked=false;
+    const saved={products:app.products,collections:app.collections,variants:app.catalogVariants,selected:app.selectedWatch};
+    const template=app.products.find(product=>product.watched);
+    try {
+      app.collections=[]; app.catalogVariants=[]; app.selectedWatch=new Set(['scale-0']);
+      app.products=Array.from({length:500},(_,i)=>({...template,slug:'scale-'+i,name:'Scale product '+i,imageUrl:null,collections:[],watched:true}));
+      let start=performance.now(); renderProducts(true); const fullMs=performance.now()-start;
+      const nodes=[...document.querySelectorAll('#watchGrid .watch-card')];
+      const focused=nodes[250].querySelector('[data-product-detail]'); focused.focus();
+      document.getElementById('watchViewToggle').click();
+      const option=document.getElementById('watchCategory').options[0];
+      start=performance.now(); renderProducts(); const unchangedMs=performance.now()-start;
+      const unchanged=nodes.every(node=>node.isConnected);
+      app.products[0]={...app.products[0],price:'$123.45'};
+      start=performance.now(); renderProducts(); const singleMs=performance.now()-start;
+      const retained=nodes.filter(node=>node.isConnected).length;
+      const optionsPreserved=document.getElementById('watchCategory').options[0]===option && !document.getElementById('watchViewOptions').classList.contains('hidden');
+      closeToolbarPanels(); focused.focus(); const scroll=window.scrollY;
+      app.products[1]={...app.products[1],price:'$234.56'}; renderProducts();
+      const focusPreserved=document.activeElement===focused && window.scrollY===scroll;
+      app.products[250]={...app.products[250],price:'$345.67'}; renderProducts();
+      const changedFocus=document.activeElement.getAttribute('data-product-detail')==='scale-250' && window.scrollY===scroll;
+      const project=saved.collections[0];
+      app.collections=Array.from({length:50},(_,i)=>({...project,id:'scale-project-'+i,name:'Scale project '+i,archived:false,slugs:['scale-0']}));
+      renderProducts(true);
+      const projects=[...document.querySelectorAll('#collectionReadiness .collection-card')];
+      app.collections[0]={...app.collections[0],pricing:{...app.collections[0].pricing,total:12345}};
+      renderProducts(); const retainedProjects=projects.filter(node=>node.isConnected).length;
+      return {fullMs,unchangedMs,singleMs,unchanged,retained,retainedProjects,optionsPreserved,focusPreserved,changedFocus,selected:document.querySelector('[data-watch-select="scale-0"]')?.checked};
+    } finally { app.products=saved.products; app.collections=saved.collections; app.catalogVariants=saved.variants; app.selectedWatch=saved.selected; renderProducts(true); }
+  })()`);
+  assert(scale.unchanged && scale.retained===499 && scale.retainedProjects===49 && scale.optionsPreserved && scale.focusPreserved && scale.changedFocus && scale.selected, `Large-list refresh lost state: ${JSON.stringify(scale)}`);
+  console.log(`BROWSER SCALE: 500 watches · full ${scale.fullMs.toFixed(1)}ms · unchanged ${scale.unchangedMs.toFixed(1)}ms · one price ${scale.singleMs.toFixed(1)}ms · ${scale.retained}/500 cards retained`);
+
+  // Delivery preferences persist without background refreshes discarding drafts or focus.
+  await evaluate("activateTab('watchlist'); closeProductDialog(); closeCollectionManager(); resetWatchFilters(); window.deliverySlug=app.products.find(product=>product.watched).slug; openProductDialog(window.deliverySlug)");
+  await waitForBrowser("Boolean(document.querySelector('#productRuleForm [name=deliveryMode]'))", 'Delivery controls did not render');
+  await evaluate(`(() => {
+    const form=document.getElementById('productRuleForm'); window.deliveryForm=form;
+    form.elements.deliveryMode.value='custom'; form.elements.deliveryMode.dispatchEvent(new Event('change',{bubbles:true}));
+    form.querySelectorAll('[name=deliveryChannel]').forEach(input=>input.checked=['ntfy','webhook'].includes(input.value));
+    form.elements.maxAlertAgeMinutes.value='30'; form.elements.maxAlertAgeMinutes.focus();
+  })()`);
+  await evaluate("refresh({background:true})");
+  assert(await evaluate("window.deliveryForm===document.getElementById('productRuleForm') && document.activeElement===window.deliveryForm.elements.maxAlertAgeMinutes && window.deliveryForm.elements.maxAlertAgeMinutes.value==='30'"), 'Refresh replaced the delivery draft or focus');
+  await evaluate("previewProductRule(document.getElementById('productRuleForm'))");
+  assert(await evaluate("document.querySelector('[data-rule-result]').textContent.includes('Channels:')"), 'Delivery preview did not explain channels');
+  await evaluate("document.getElementById('productRuleForm').requestSubmit()");
+  await waitForBrowser("app.currentProductDetails?.product.watchRule.maxAlertAgeMinutes===30 && JSON.stringify(app.currentProductDetails.product.watchRule.channels)===JSON.stringify(['ntfy','webhook'])", 'Watch delivery settings were not saved');
+  await evaluate("closeProductDialog(); openProductDialog(window.deliverySlug)");
+  await waitForBrowser("document.querySelector('#productRuleForm [name=maxAlertAgeMinutes]')?.value==='30'", 'Watch delivery settings did not survive reopening');
+  for (const theme of ['dark','light']) {
+    await evaluate(`applyTheme('${theme}')`); await delay(250);
+    await cdp.send('Emulation.setDeviceMetricsOverride',{width:390,height:844,screenWidth:390,screenHeight:844,deviceScaleFactor:1,mobile:true});
+    await assertAccessible(`Watch delivery controls ${theme} mobile`);
+    assert(await evaluate("document.documentElement.scrollWidth<=window.innerWidth+1 && document.querySelector('.product-dialog-panel').scrollWidth<=document.querySelector('.product-dialog-panel').clientWidth+1"), 'Delivery options overflow the mobile product dialog');
+  }
+  await evaluate("const form=document.getElementById('productRuleForm'); form.elements.deliveryMode.value='defaults'; form.elements.deliveryMode.dispatchEvent(new Event('change',{bubbles:true})); form.elements.maxAlertAgeMinutes.value=''; form.requestSubmit()");
+  await waitForBrowser("app.currentProductDetails?.product.watchRule.channels===null && app.currentProductDetails?.product.watchRule.maxAlertAgeMinutes===null", 'Use defaults did not restore inherited delivery');
+  await evaluate(`(async () => {
+    closeProductDialog(); const created=await api('/api/collections',{method:'POST',body:JSON.stringify({name:'Delivery browser test',slugs:[window.deliverySlug]})});
+    window.deliveryCollectionId=created.id; await refresh(); openCollectionAlerts(created.id);
+  })()`);
+  await waitForBrowser("Boolean(document.querySelector('[data-collection-delivery]'))", 'Collection delivery form did not open');
+  await evaluate(`(() => {
+    const form=document.querySelector('[data-collection-delivery]');
+    form.elements.deliveryMode.value='custom'; form.elements.deliveryMode.dispatchEvent(new Event('change',{bubbles:true}));
+    form.querySelectorAll('[name=deliveryChannel]').forEach(input=>input.checked=input.value==='webhook');
+    form.elements.maxAlertAgeMinutes.value='15'; form.requestSubmit();
+  })()`);
+  await waitForBrowser("!app.collectionNotificationBusy && app.collections.find(item=>item.id===window.deliveryCollectionId).maxAlertAgeMinutes===15", 'Collection delivery preferences did not save');
+  assert(await evaluate("JSON.stringify(app.collections.find(item=>item.id===window.deliveryCollectionId).channels)===JSON.stringify(['webhook'])"), 'Collection route did not persist');
+  await evaluate("window.collectionDeliveryForm=document.querySelector('[data-collection-delivery]'); window.collectionDeliveryForm.elements.maxAlertAgeMinutes.value='45'; window.collectionDeliveryForm.elements.maxAlertAgeMinutes.focus(); refresh({background:true})");
+  assert(await evaluate("document.querySelector('[data-collection-delivery]')===window.collectionDeliveryForm && document.activeElement===window.collectionDeliveryForm.elements.maxAlertAgeMinutes && window.collectionDeliveryForm.elements.maxAlertAgeMinutes.value==='45'"), 'Collection refresh lost a delivery draft');
+  await evaluate("document.querySelector('[data-notify-collection]').click()");
+  await waitForBrowser("!app.collectionNotificationBusy && app.collections.find(item=>item.id===window.deliveryCollectionId).notifyReady", 'Collection toggle did not save');
+  assert(await evaluate("document.querySelector('[data-collection-delivery] [name=maxAlertAgeMinutes]').value==='45' && app.collections.find(item=>item.id===window.deliveryCollectionId).maxAlertAgeMinutes===15"), 'Readiness autosave discarded or saved unrelated delivery edits');
+
+  // Changing regions during capability verification must not submit the old collection to the new region.
+  const routeRace=await evaluate(`(async () => {
+    const originalApi=api, region=app.currentRegion; let writes=0;
+    api=async (path,options={})=>{
+      if (path==='/api/collections' && !options.method) { app.currentRegion='ca'; return {capabilities:{alertDelivery:true}}; }
+      writes++; return originalApi(path,options);
+    };
+    try { await saveCollectionDelivery(document.querySelector('[data-collection-delivery]')); return writes; }
+    finally { api=originalApi; app.currentRegion=region; app.collectionAlertsKey=null; renderCollectionAlerts(); }
+  })()`);
+  assert(routeRace===0,'A region change submitted delivery preferences to the wrong region');
+  for (const theme of ['dark','light']) {
+    await evaluate(`applyTheme('${theme}')`); await delay(250);
+    await assertAccessible(`Collection delivery controls ${theme} mobile`);
+    if (screenshotRoot) {
+      const capture=await cdp.send('Page.captureScreenshot',{format:'png'});
+      await writeFile(join(screenshotRoot,`delivery-${theme}-390.png`),Buffer.from(capture.data,'base64'));
+    }
+    assert(await evaluate("document.documentElement.scrollWidth<=window.innerWidth+1 && document.querySelector('.collection-panel').scrollWidth<=document.querySelector('.collection-panel').clientWidth+1"), 'Collection delivery controls overflow on mobile');
+  }
+  await cdp.send('Emulation.setDeviceMetricsOverride',{width:640,height:450,screenWidth:640,screenHeight:450,deviceScaleFactor:1,mobile:false});
+  assert(await evaluate("document.documentElement.scrollWidth<=window.innerWidth+1"), 'Delivery controls do not reflow at 200% equivalent zoom');
+  await evaluate("closeCollectionManager(); api('/api/collections/'+encodeURIComponent(window.deliveryCollectionId),{method:'DELETE'}).then(()=>refresh())");
+  await waitForBrowser("!app.collections.some(item=>item.id===window.deliveryCollectionId)", 'Test collection cleanup failed');
+  await cdp.send('Emulation.setDeviceMetricsOverride',{width:1280,height:900,screenWidth:1280,screenHeight:900,deviceScaleFactor:1,mobile:false});
+  // Freshness changes update labels in place, including an open dialog with unsaved rules.
+  await evaluate("activateTab('watchlist'); resetWatchFilters(); document.getElementById('groupCollectedWatches').checked=false; renderProducts(true); openProductDialog(window.deliverySlug)");
+  await waitForBrowser("Boolean(document.querySelector('#productRuleForm'))", 'Freshness product did not open');
+  const freshnessResult=await evaluate(`(() => {
+    const product=app.products.find(item=>item.slug===window.deliverySlug), original={freshness:product.freshness,price:product.price,inStock:product.inStock,unlisted:product.unlisted,comingSoon:product.comingSoon};
+    const node=[...document.querySelectorAll('#watchGrid [data-product-card]')].find(node=>node.dataset.productCard===window.deliverySlug);
+    const form=document.getElementById('productRuleForm'); form.elements.targetPrice.focus();
+    try {
+      product.freshness={state:'confirmed',checkedAt:new Date().toISOString(),expiresAt:new Date(Date.now()+60000).toISOString(),pendingKinds:[]}; updateProductFreshness();
+      product.price='$123.45'; product.inStock=false; product.unlisted=false; product.comingSoon=false; updateProductFreshness();
+      const liveFacts=document.querySelector('#productDialog .product-status-row strong').textContent==='$123.45' && document.querySelector('#productDialog .product-status-row .badge').textContent==='Sold out';
+      const confirmed=node.querySelector('[data-product-freshness]').textContent.includes('Confirmed');
+      product.freshness={...product.freshness,state:'pending'}; updateProductFreshness();
+      const pending=node.querySelector('[data-product-freshness]').textContent.includes('awaiting confirmation');
+      product.freshness={...product.freshness,state:'confirmed',expiresAt:new Date(Date.now()-1000).toISOString()}; updateProductFreshness();
+      const stale=node.querySelector('[data-product-freshness]').textContent.includes('checks delayed');
+      const dialogStale=document.querySelector('#productDialog [data-product-freshness]').textContent.includes('checks delayed');
+      return {confirmed,pending,stale,dialogStale,liveFacts,retained:node.isConnected && form===document.getElementById('productRuleForm') && document.activeElement===form.elements.targetPrice};
+    } finally { Object.assign(product,original); updateProductFreshness(); }
+  })()`);
+  assert(Object.values(freshnessResult).every(Boolean), `Freshness labels did not preserve observations or focus: ${JSON.stringify(freshnessResult)}`);
+  await evaluate("closeProductDialog(); activateTab('browse'); renderProducts(true)");
+  assert(await evaluate("document.querySelectorAll('#browseGrid .store-card').length>0 && [...document.querySelectorAll('#browseGrid .store-card')].every(card=>card.querySelector('[data-product-freshness]'))"), 'Browse cards lack freshness evidence');
+  await testUpdateNotice({evaluate,waitForBrowser,assertAccessible,assert,cdp,screenshotRoot});
+  console.log(`BROWSER SMOKE PASSED: ${process.platform} · setup/auth · WCAG axe scans · keyboard/focus/reduced-motion · persistent navigation/filters · resettable empty states · offline recovery · copy actions · unclipped navigation · dark/light · images · watch/rules/bulk/import · exact variants/combined preview/collections/purchased · stock insights/windows/collection readiness/budget alerts/deep-links · compact searchable activity/evidence/live arrivals/anchored scrolling/stable pages · serialized refresh/hidden tabs/drafts/large lists · Settings sections/keyboard/drafts/persistence · email settings/preview/deep-link · backup/import · diagnostics/operations · responsive`);
 } catch (error) {
   if (serverOutput.length) process.stderr.write(`\nGearBeacon server output:\n${serverOutput.join('').slice(-12000)}\n`);
   throw error;

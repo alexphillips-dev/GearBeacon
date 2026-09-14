@@ -1,5 +1,12 @@
 ![GearBeacon — Track Ubiquiti gear and get notified when it is back in stock](.github/assets/banner.png)
 
+[![Latest release](https://img.shields.io/github/v/release/alexphillips-dev/GearBeacon?label=release&color=0088ff)](https://github.com/alexphillips-dev/GearBeacon/releases/latest)
+[![CI status on main](https://img.shields.io/github/actions/workflow/status/alexphillips-dev/GearBeacon/ci.yml?branch=main&label=CI%20%28main%29&logo=githubactions&logoColor=white)](https://github.com/alexphillips-dev/GearBeacon/actions/workflows/ci.yml?query=branch%3Amain)
+[![Apache 2.0 license](https://img.shields.io/github/license/alexphillips-dev/GearBeacon?color=0088ff)](LICENSE)
+[![Platforms: Windows, macOS, Linux](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-555555)](#choose-an-installation)
+[![Docker: GHCR](https://img.shields.io/badge/Docker-GHCR-2496ed?logo=docker&logoColor=white)](https://github.com/alexphillips-dev/GearBeacon/wiki/Docker-and-NAS)
+[![Documentation: Wiki](https://img.shields.io/badge/docs-Wiki-0088ff)](https://github.com/alexphillips-dev/GearBeacon/wiki)
+
 # GearBeacon
 
 **Know the second it's back.**
@@ -8,17 +15,19 @@ GearBeacon is a private, self-hosted Ubiquiti and UniFi Store inventory monitor 
 
 One installation serves one owner. Monitoring and external notification delivery run on your server, even when the browser is closed. There is no GearBeacon cloud account, subscription, hosted database, analytics, or telemetry, and no Ubiquiti login is required.
 
-**Current version: 1.2.0** · [Downloads](https://github.com/alexphillips-dev/GearBeacon/releases) · [Release notes](docs/RELEASE_NOTES.md) · [Wiki](https://github.com/alexphillips-dev/GearBeacon/wiki)
+**Current version: 1.3.0** · [Downloads](https://github.com/alexphillips-dev/GearBeacon/releases) · [Release notes](docs/RELEASE_NOTES.md) · [Wiki](https://github.com/alexphillips-dev/GearBeacon/wiki)
+
+Save named views, use a compact Watchlist, receive budget-aware collection alerts, and read [live Activity cards](docs/ACTIVITY.md) with current availability, watch and price context, delivery explanations, and automatic arrivals that preserve your reading position. GearBeacon supports [per-watch and collection delivery channels, delayed-alert context and expiry, and product freshness](docs/ALERT_DELIVERY.md), [Settings section tabs](docs/SETTINGS.md), and [branch-aware update notices](docs/UPDATES.md). It uses schema v13 and recovery export format v9, with a validated backup before migration.
 
 ## What it does
 
 - **Regional monitoring:** United States, Canada, Europe, and United Kingdom Stores, with separate watches, prices, activity, and health.
 - **Precise watches:** Any variant or an exact SKU, color, length, or pack size; import Store links and TXT/CSV/JSON lists with a review before saving.
 - **Purchase planning:** Collections with product previews, quantities, recorded spending, budgets, archive/undo, and optional grouping without duplicate item cards.
-- **Flexible alerts:** Restocks, price drops, available-at-target conditions, and collection readiness; per-item rules, pauses, quiet hours, digests, and collection-only overrides.
+- **Flexible alerts:** Restocks, price drops, available-at-target conditions, and collection readiness; per-item rules, pauses, quiet hours, digests, and collection-only overrides. Includes [delivery routes, optional expiry, and freshness indicators](docs/ALERT_DELIVERY.md).
 - **Multiple channels:** ntfy, Discord, Gotify, SMTP email, and signed webhooks, with durable delivery and bounded retries. Browser popups are also available while the page is running.
 - **Useful evidence:** Observed stock timelines, 7/30/90-day price insights, and searchable, paginated Activity with delivery outcomes and exports.
-- **Recovery and oversight:** Validated SQLite backups, encrypted exports, secondary recovery copies, restore tests, diagnostics, and owner-controlled updates.
+- **Recovery and oversight:** Validated SQLite backups, encrypted exports, secondary recovery copies, restore tests, diagnostics, and owner-controlled updates. Includes [automatic update notices for the installed branch](docs/UPDATES.md).
 
 Complete valid restocks are recorded immediately; sellouts, ordinary price/status changes, and catalog disappearance require two matching complete observations. Failed or partial checks preserve the last-known-good state. GearBeacon observes catalog data; it does not predict stock, reserve items, or automate checkout.
 

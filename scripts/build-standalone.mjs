@@ -2,6 +2,7 @@ import { cpSync, chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFi
 import { spawnSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import { buildMetadata } from './build-metadata.mjs';
 
 const [major, minor] = process.versions.node.split('.').map(Number);
 if (major < 25 || (major === 25 && minor < 5)) {
@@ -107,8 +108,6 @@ for (const file of platformFiles) {
 }
 if (process.platform !== 'win32') chmodSync(executable, 0o755);
 writeFileSync(join(outputDir, 'build-info.json'), JSON.stringify({
-  name: 'GearBeacon', version: pkg.version, packageVersion, platform, arch,
-  commit: process.env.GEARBEACON_BUILD_COMMIT || process.env.GITHUB_SHA || null,
-  builtAt: new Date().toISOString(), unsigned: true,
+  ...buildMetadata(root,packageVersion), platform, arch, unsigned: true,
 }, null, 2));
 console.log(outputDir);

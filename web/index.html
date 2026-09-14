@@ -84,6 +84,10 @@
       </div>
     </header>
 
+    <div id="appUpdateNotice" class="update-notice hidden" role="status" aria-live="polite" aria-atomic="true">
+      <a id="appUpdateButton" class="update-available-button" href="#settings">update available</a>
+    </div>
+
     <section id="attentionBanner" class="attention-banner hidden" role="status" aria-live="polite">
       <span id="attentionIcon" class="summary-state-dot" aria-hidden="true"></span>
       <div><strong id="attentionTitle">GearBeacon needs attention</strong><small id="attentionDetail"></small></div>
@@ -115,7 +119,12 @@
     <section id="watchlist" class="page active" role="tabpanel" aria-labelledby="tabWatchlist">
       <div class="section-heading">
         <div><h2>Your watchlist</h2><p>Watch exact variants, set availability and price conditions, and organize your gear.</p></div>
-        <div class="watch-heading-actions"><button id="openCollectionManager" type="button">Manage collections</button><button id="openWatchImport" class="primary" type="button">Import watchlist</button></div>
+        <button id="watchManageToggle" class="toolbar-toggle watch-management" type="button" data-toolbar-toggle="watchManageMenu" aria-controls="watchManageMenu" aria-expanded="false">Manage</button>
+      </div>
+      <div id="watchManageMenu" class="toolbar-panel toolbar-actions hidden" data-toolbar-panel role="group" aria-label="Manage watchlist">
+        <button id="openCollectionManager" type="button">Manage collections</button>
+        <button id="openWatchImport" type="button">Import watchlist</button>
+        <button id="selectVisibleWatches" type="button">Select visible watches</button>
       </div>
       <div id="watchOverview" class="watch-overview" aria-label="Watchlist overview">
         <button type="button" data-watch-overview="ready" aria-pressed="false"><strong id="overviewReady">0</strong><span>Ready to buy</span></button>
@@ -127,14 +136,22 @@
         <input id="watchSearch" type="search" placeholder="Search watchlist" autocomplete="off" aria-label="Search watchlist" />
         <select id="watchStatus" aria-label="Filter watchlist by status"><option value="all">All statuses</option><option value="in">In stock</option><option value="out">Unavailable</option><option value="paused">Paused</option><option value="purchased">Purchased</option><option value="wanted">Still wanted</option></select>
         <select id="watchCollection" aria-label="Filter watchlist by collection"><option value="all">All collections</option><option value="none">Uncollected</option></select>
-        <select id="watchCategory" aria-label="Filter watchlist by category"><option value="all">All categories</option></select>
         <select id="watchSort" aria-label="Sort watchlist"><option value="changed">Recently changed</option><option value="added">Recently added</option><option value="name">Name</option><option value="price-low">Price: low to high</option><option value="price-high">Price: high to low</option><option value="availability">Availability</option></select>
+        <button id="watchViewToggle" class="toolbar-toggle" type="button" data-toolbar-toggle="watchViewOptions" aria-controls="watchViewOptions" aria-expanded="false">View options</button>
         <button id="resetWatchFilters" class="filter-reset hidden" type="button">Reset filters</button>
+        <div id="watchViewOptions" class="toolbar-panel view-options-panel hidden" data-toolbar-panel role="group" aria-label="Watchlist view options">
+            <div class="view-options-fields">
+              <label><span>Category</span><select id="watchCategory"><option value="all">All categories</option></select></label>
+              <label><span>Layout</span><select id="watchLayout"><option value="cards">Cards</option><option value="compact">Compact list</option></select></label>
+            </div>
+            <div class="watch-grouping"><label><input id="groupCollectedWatches" type="checkbox" aria-describedby="watchGroupingHint" /> Group items in collections</label><span id="watchGroupingHint">Open a collection to see its items when viewing All collections.</span></div>
+            <div class="saved-view-toolbar" aria-label="Watchlist saved views">
+              <label><span>Saved view</span><select id="watchSavedView" aria-label="Saved Watchlist view"><option value="">Current filters</option></select></label>
+              <div class="view-actions"><button type="button" data-save-view="watchlist">Save view</button><button type="button" data-manage-views="watchlist">Manage views</button></div>
+            </div>
+        </div>
       </div>
-      <div class="collection-toolbar">
-        <button id="selectVisibleWatches" type="button">Select visible watches</button>
-        <div class="watch-grouping"><label><input id="groupCollectedWatches" type="checkbox" aria-describedby="watchGroupingHint" /> Group items in collections</label><span id="watchGroupingHint">In All collections, open a collection to see its items.</span></div>
-      </div>
+      <p id="watchViewContext" class="view-context hidden" role="status" aria-live="polite"></p>
       <div id="bulkActions" class="bulk-actions hidden"><strong id="bulkCount">0 selected</strong><button id="bulkAddCollection" type="button">Add to collection</button><select id="bulkPauseDuration" aria-label="Bulk pause duration"><option value="60">Pause 1 hour</option><option value="1440">Pause 1 day</option><option value="10080">Pause 1 week</option><option value="0">Pause until resumed</option></select><button id="bulkPause">Pause</button><button id="bulkResume">Resume</button><button id="bulkRemove" class="danger-button">Remove</button><button id="bulkClear" class="ghost">Clear selection</button></div>
       <div id="watchlistCards" class="grid watch-grid">
         <div id="collectionReadiness" class="collection-readiness"></div>
@@ -183,7 +200,13 @@
         <div id="browseResults" class="store-results" role="tabpanel" aria-label="All products">
           <div class="store-results-bar">
             <div class="store-results-title"><h3 id="browseTitle">All products</h3><span id="browseCount" role="status" aria-live="polite" aria-atomic="true">0 products</span></div>
-            <label class="store-sort"><span>Sort by</span><select id="browseSort"><option value="name">Name: A–Z</option><option value="price-low">Price: low to high</option><option value="price-high">Price: high to low</option><option value="availability">Availability</option></select></label>
+            <div class="store-results-controls">
+              <label class="store-sort"><span>Sort by</span><select id="browseSort"><option value="name">Name: A–Z</option><option value="price-low">Price: low to high</option><option value="price-high">Price: high to low</option><option value="availability">Availability</option></select></label>
+              <button id="browseViewToggle" class="toolbar-toggle" type="button" data-toolbar-toggle="browseViewOptions" aria-controls="browseViewOptions" aria-expanded="false">View options</button>
+            </div>
+          </div>
+          <div id="browseViewOptions" class="toolbar-panel hidden" data-toolbar-panel role="group" aria-label="Browse view options">
+            <div class="saved-view-toolbar" aria-label="Browse saved views"><label><span>Saved view</span><select id="browseSavedView" aria-label="Saved Browse view"><option value="">Current filters</option></select></label><div class="view-actions"><button type="button" data-save-view="browse">Save view</button><button type="button" data-manage-views="browse">Manage views</button></div></div>
           </div>
           <div id="browseActiveFilters" class="store-active-filters hidden"><span id="browseFilterDescription"></span><button id="resetBrowseFilters" class="filter-reset hidden" type="button">Reset filters</button></div>
           <div id="browseGrid" class="store-grid"></div>
@@ -209,10 +232,16 @@
         <button id="clearActivityFilters" type="button">Reset filters</button>
       </form>
       <div class="activity-results-bar">
-        <div class="activity-results-summary"><strong id="activityResultCount" role="status">Loading activity…</strong><span id="activityRetention">Retained activity</span></div>
+        <div class="activity-results-summary"><strong id="activityResultCount" role="status">Loading activity…</strong><span id="activityRetention">Retained activity</span><span id="activityLiveStatus" role="status">Live · Updates automatically</span></div>
         <label class="activity-page-size"><span>Entries per page</span><select id="activityPageSize"><option value="20">20</option><option value="50">50</option><option value="100">100</option></select></label>
       </div>
-      <div id="activityList" class="activity-list"></div>
+      <div id="activitySummary" class="activity-summary hidden" role="region" aria-label="Summary of all matching activity"></div>
+      <div id="activityFeed" class="activity-feed">
+        <h3 id="activityLiveHeading" class="hidden">Latest activity</h3>
+        <div id="activityLiveList" class="activity-list hidden"></div>
+        <h3 id="activityEarlierHeading" class="hidden">Earlier activity</h3>
+        <div id="activityList" class="activity-list"></div>
+      </div>
       <div id="activityEmpty" class="empty hidden"><h3>No stock changes detected yet</h3><p>The first check establishes a baseline. Changes appear here after that.</p><button id="resetActivityEmpty" class="hidden" type="button">Reset Activity filters</button></div>
       <div id="activityPagination" class="activity-pagination hidden"><button id="activityPrevious" type="button">Previous</button><span id="activityPage">Page 1</span><button id="activityNext" type="button">Next</button></div>
     </section>
@@ -233,196 +262,279 @@
       </div>
 
       <section id="settingsPanelGeneral" class="settings-panel active" role="tabpanel" aria-labelledby="settingsTabGeneral" data-settings-panel="general">
-        <div class="settings-grid">
-        <article class="settings-card">
-          <div class="settings-card-head">
-            <div><span class="settings-kicker">Application</span><h3>GearBeacon <span id="settingsVersion">V1.2.0</span></h3></div>
-            <span id="schemaBadge" class="settings-badge">SQLite</span>
-          </div>
-          <p>Your watched products live in a persistent SQLite database outside the GearBeacon application folder.</p>
-          <dl class="settings-details">
-            <div><dt>Storage</dt><dd id="storageEngine">SQLite</dd></div>
-            <div><dt>Schema</dt><dd id="schemaVersion">—</dd></div>
-            <div><dt>Data folder</dt><dd id="dataPath" class="path-value">—</dd></div>
-          </dl>
-          <div class="settings-actions">
-            <button id="updateBtn" class="primary">Check for updates</button>
-            <button id="prepareUpdateBtn">Prepare safe update</button>
-          </div>
-          <div id="updateResult" class="settings-result hidden"></div>
-        </article>
-
-        <article class="settings-card wide-card">
-          <div class="settings-card-head"><div><span class="settings-kicker">Browser setup</span><h3>Stores & access</h3></div><span id="configRestartBadge" class="settings-badge hidden">Restart required</span></div>
-          <p>These settings are validated before they are saved. Region, bind-address, and access-mode changes take effect after a restart.</p>
-          <form id="appConfigForm" class="config-form">
-            <fieldset><legend>Monitoring</legend><div id="settingsRegions" class="choice-grid"></div><div class="form-row"><label class="field"><span>Poll interval (seconds)</span><input id="configPollSeconds" type="number" min="30" max="86400" /></label><label class="field"><span>Access mode</span><select id="configAccessMode"><option value="local">Local only</option><option value="private">Private LAN / VPN</option><option value="proxy">HTTPS reverse proxy</option></select></label></div><div class="form-row"><label class="field"><span>Bind host</span><input id="configBindHost" /></label><label class="field"><span>Public URL</span><input id="configPublicUrl" type="url" placeholder="https://gearbeacon.example.com" /></label></div><label class="field"><span>Additional allowed browser origins (comma separated)</span><input id="configAllowedOrigins" placeholder="https://trusted.example.com" /></label><label class="inline-check"><input id="configCookieSecure" type="checkbox" /> Always require HTTPS session cookies</label></fieldset>
-            <button class="primary" type="submit">Validate & save</button>
-          </form>
-          <div id="configResult" class="settings-result hidden"></div>
-        </article>
+        <div class="settings-subtabs" role="tablist" aria-label="General sections">
+          <button id="settingsGeneralApplicationTab" class="settings-subtab active" type="button" role="tab" aria-selected="true" aria-controls="settingsGeneralApplicationPanel" data-settings-subtab="general/application" tabindex="0">Application</button>
+          <button id="settingsGeneralStoresTab" class="settings-subtab" type="button" role="tab" aria-selected="false" aria-controls="settingsGeneralStoresPanel" data-settings-subtab="general/stores" tabindex="-1">Stores &amp; access</button>
         </div>
+        <section id="settingsGeneralApplicationPanel" class="settings-section" role="tabpanel" aria-labelledby="settingsGeneralApplicationTab" data-settings-section="general/application">
+          <article class="settings-card">
+            <div class="settings-card-head">
+              <div><span class="settings-kicker">Application</span><h3>GearBeacon <span id="settingsVersion">V1.3.0</span></h3></div>
+              <span id="schemaBadge" class="settings-badge">SQLite</span>
+            </div>
+            <p>Your watched products live in a persistent SQLite database outside the GearBeacon application folder.</p>
+            <dl class="settings-details">
+              <div><dt>Storage</dt><dd id="storageEngine">SQLite</dd></div>
+              <div><dt>Schema</dt><dd id="schemaVersion">—</dd></div>
+              <div><dt>Data folder</dt><dd id="dataPath" class="path-value">—</dd></div>
+            </dl>
+            <div class="settings-actions">
+              <button id="updateBtn" class="primary">Check for updates</button>
+              <button id="prepareUpdateBtn">Prepare safe update</button>
+            </div>
+            <div id="updateResult" class="settings-result hidden"></div>
+          </article>
+        </section>
+        <section id="settingsGeneralStoresPanel" class="settings-section" role="tabpanel" aria-labelledby="settingsGeneralStoresTab" data-settings-section="general/stores" hidden>
+          <article class="settings-card wide-card">
+            <div class="settings-card-head"><div><span class="settings-kicker">Browser setup</span><h3>Stores & access</h3></div><span id="configRestartBadge" class="settings-badge hidden">Restart required</span></div>
+            <p>These settings are validated before they are saved. Region, bind-address, and access-mode changes take effect after a restart.</p>
+            <form id="appConfigForm" class="config-form">
+              <fieldset><legend>Monitoring</legend><div id="settingsRegions" class="choice-grid"></div><div class="form-row"><label class="field"><span>Poll interval (seconds)</span><input id="configPollSeconds" type="number" min="30" max="86400" /></label><label class="field"><span>Access mode</span><select id="configAccessMode"><option value="local">Local only</option><option value="private">Private LAN / VPN</option><option value="proxy">HTTPS reverse proxy</option></select></label></div><div class="form-row"><label class="field"><span>Bind host</span><input id="configBindHost" /></label><label class="field"><span>Public URL</span><input id="configPublicUrl" type="url" placeholder="https://gearbeacon.example.com" /></label></div><label class="field"><span>Additional allowed browser origins (comma separated)</span><input id="configAllowedOrigins" placeholder="https://trusted.example.com" /></label><label class="inline-check"><input id="configCookieSecure" type="checkbox" /> Always require HTTPS session cookies</label></fieldset>
+              <button class="primary" type="submit">Validate & save</button>
+            </form>
+            <div id="configResult" class="settings-result hidden"></div>
+          </article>
+        </section>
       </section>
 
       <section id="settingsPanelNotifications" class="settings-panel" role="tabpanel" aria-labelledby="settingsTabNotifications" data-settings-panel="notifications" hidden>
-        <div class="settings-grid">
-        <article class="settings-card wide-card">
-          <div class="settings-card-head"><div><span class="settings-kicker">Delivery schedule</span><h3>Timing & reliability</h3></div><span id="deliveryModeBadge" class="settings-badge">Immediate</span></div>
-          <p>Choose when alerts can be delivered. Per-product immediate restocks can bypass quiet hours and digests.</p>
-          <form id="notificationDeliveryForm" class="config-form">
-            <div class="form-row"><label class="field"><span>Timezone</span><input id="configTimeZone" placeholder="America/New_York" /></label><label class="field"><span>Cooldown (minutes)</span><input id="configCooldownMinutes" type="number" min="0" max="10080" /></label><label class="field"><span>Delivery attempts</span><input id="configMaxAttempts" type="number" min="1" max="10" /></label><label class="field"><span>Group window (seconds)</span><input id="configGroupSeconds" type="number" min="0" max="3600" /></label></div>
-            <div class="form-row"><label class="inline-check"><input id="configQuietEnabled" type="checkbox" /> Enable quiet hours</label><label class="field"><span>Quiet start</span><input id="configQuietStart" type="time" /></label><label class="field"><span>Quiet end</span><input id="configQuietEnd" type="time" /></label><label class="inline-check"><input id="configDigestEnabled" type="checkbox" /> Deliver a daily digest</label><label class="field"><span>Digest time</span><input id="configDigestTime" type="time" /></label></div>
-            <fieldset><legend>Operational alerts</legend><div class="inline-checks"><label><input id="operationalMonitorFailures" type="checkbox" /> Store monitoring failures</label><label><input id="operationalNotificationFailures" type="checkbox" /> Delivery failures</label><label><input id="operationalBackupFailures" type="checkbox" /> Backup failures</label><label><input id="operationalLowDisk" type="checkbox" /> Low disk space</label></div></fieldset>
-            <div class="settings-actions wrap"><button class="primary" type="submit">Save delivery settings</button><button id="previewDelivery" type="button">Preview delivery</button></div>
-          </form>
-          <div id="deliveryResult" class="settings-result hidden"></div>
-        </article>
-        <article class="settings-card wide-card">
-          <div class="settings-card-head"><div><span class="settings-kicker">Email design</span><h3>Email appearance & preview</h3></div><span id="emailAppearanceBadge" class="settings-badge">Standard</span></div>
-          <p>Control how much detail email includes, safely embed product images, and preview the exact template GearBeacon sends through SMTP.</p>
-          <form id="emailAppearanceForm" class="config-form">
-            <div class="form-row">
-              <label class="field"><span>Detail level</span><select id="emailDetailLevel"><option value="compact">Compact</option><option value="standard">Standard</option><option value="detailed">Detailed</option></select></label>
-              <label class="field"><span>Color theme</span><select id="emailTheme"><option value="auto">Match device</option><option value="dark">Dark</option><option value="light">Light</option></select></label>
-              <label class="field"><span>Subject prefix</span><input id="emailSubjectPrefix" maxlength="60" placeholder="[GearBeacon]" /></label>
-              <label class="field"><span>Maximum digest items</span><input id="emailDigestMaxItems" type="number" min="1" max="50" /></label>
-            </div>
-            <div class="inline-checks email-options">
-              <label><input id="emailEmbedImages" type="checkbox" /> Embed product images in email</label>
-              <label><input id="emailExplainReason" type="checkbox" /> Explain why the alert was sent</label>
-              <label><input id="emailPriceCalculations" type="checkbox" /> Show savings and price changes</label>
-            </div>
-            <div class="settings-actions wrap"><button class="primary" type="submit">Save email appearance</button><button id="sendTestEmail" type="button">Send test email</button></div>
-          </form>
-          <div id="emailAppearanceResult" class="settings-result hidden"></div>
-          <div class="email-preview-panel">
-            <div class="email-preview-toolbar">
-              <label class="field"><span>Preview product</span><select id="emailPreviewProduct"></select></label>
-              <label class="field"><span>Alert type</span><select id="emailPreviewType"><option value="restock">Back in stock</option><option value="target_price">Target price reached</option><option value="price_drop">Price drop</option><option value="sold_out">Sold out</option><option value="status_change">Status changed</option><option value="new_product">New product</option><option value="digest">Daily digest</option><option value="operational">Operational alert</option><option value="test">Test email</option></select></label>
-              <label class="field"><span>Preview width</span><select id="emailPreviewViewport"><option value="desktop">Desktop</option><option value="mobile">Mobile</option></select></label>
-              <button id="previewEmail" type="button">Preview email</button>
-            </div>
-            <div id="emailPreviewStatus" class="email-preview-status">Choose an alert and select Preview email.</div>
-            <div id="emailPreviewCanvas" class="email-preview-canvas hidden"><iframe id="emailPreviewFrame" title="GearBeacon email preview" loading="lazy"></iframe></div>
-          </div>
-        </article>
-        <article class="settings-card wide-card">
-          <div class="settings-card-head"><div><span class="settings-kicker">Encrypted locally</span><h3>Notification channels</h3></div><span id="secretKeyBadge" class="settings-badge">Separate key file</span></div>
-          <p>Leave a secret blank to keep the saved value; enter an empty value after choosing “clear” to remove it. Test buttons send only through that channel.</p>
-          <form id="channelConfigForm" class="channel-config"></form>
-          <div class="settings-actions"><button id="saveChannels" class="primary" type="button">Save channels</button></div>
-          <div id="channelConfigResult" class="settings-result hidden"></div>
-        </article>
-        <article class="settings-card wide-card">
-          <div class="settings-card-head">
-            <div><span class="settings-kicker">Alerts</span><h3>Notifications</h3></div>
-            <span id="channelBadge" class="settings-badge">Browser only</span>
-          </div>
-          <p>Choose which monitored events can trigger server-side alerts. Restocks stay enabled by default; other alert types are opt-in. The All activity updates option overrides the individual filters.</p>
-          <div class="notification-options">
-            <label class="setting-toggle"><span><strong>Restocks</strong><small>Watched product becomes available</small></span><input id="notifyRestock" type="checkbox" checked /><span class="toggle-ui"></span></label>
-            <label class="setting-toggle"><span><strong>Sold out</strong><small>Watched product becomes unavailable</small></span><input id="notifySoldOut" type="checkbox" /><span class="toggle-ui"></span></label>
-            <label class="setting-toggle"><span><strong>Price changes</strong><small>Price changes on a watched product</small></span><input id="notifyPriceChange" type="checkbox" /><span class="toggle-ui"></span></label>
-            <label class="setting-toggle"><span><strong>Status changes</strong><small>Other store-status changes on watched products</small></span><input id="notifyStatusChange" type="checkbox" /><span class="toggle-ui"></span></label>
-            <label class="setting-toggle"><span><strong>New products</strong><small>Alert when GearBeacon discovers a new catalog item</small></span><input id="notifyNewProduct" type="checkbox" /><span class="toggle-ui"></span></label>
-            <label class="setting-toggle"><span><strong>All activity updates</strong><small>Alert for every new Activity feed entry, including unwatched products</small></span><input id="notifyAllActivity" type="checkbox" /><span class="toggle-ui"></span></label>
-          </div>
-          <div class="settings-actions wrap">
-            <button id="saveNotificationPrefs" class="primary">Save notification settings</button>
-            <button id="testNotificationBtn">Send test notification</button>
-          </div>
-          <div id="notificationResult" class="settings-result hidden"></div>
-        </article>
+        <div class="settings-subtabs" role="tablist" aria-label="Notifications sections">
+          <button id="settingsNotificationsAlertsTab" class="settings-subtab active" type="button" role="tab" aria-selected="true" aria-controls="settingsNotificationsAlertsPanel" data-settings-subtab="notifications/alerts" tabindex="0">Alert types</button>
+          <button id="settingsNotificationsChannelsTab" class="settings-subtab" type="button" role="tab" aria-selected="false" aria-controls="settingsNotificationsChannelsPanel" data-settings-subtab="notifications/channels" tabindex="-1">Channels</button>
+          <button id="settingsNotificationsDeliveryTab" class="settings-subtab" type="button" role="tab" aria-selected="false" aria-controls="settingsNotificationsDeliveryPanel" data-settings-subtab="notifications/delivery" tabindex="-1">Delivery</button>
+          <button id="settingsNotificationsEmailTab" class="settings-subtab" type="button" role="tab" aria-selected="false" aria-controls="settingsNotificationsEmailPanel" data-settings-subtab="notifications/email" tabindex="-1">Email</button>
         </div>
+        <section id="settingsNotificationsAlertsPanel" class="settings-section" role="tabpanel" aria-labelledby="settingsNotificationsAlertsTab" data-settings-section="notifications/alerts">
+          <article class="settings-card wide-card">
+            <div class="settings-card-head">
+              <div><span class="settings-kicker">Alerts</span><h3>Notifications</h3></div>
+              <span id="channelBadge" class="settings-badge">Browser only</span>
+            </div>
+            <p>Choose which monitored events can trigger server-side alerts. Restocks stay enabled by default; other alert types are opt-in. The All activity updates option overrides the individual filters.</p>
+            <div class="notification-options">
+              <label class="setting-toggle"><span><strong>Restocks</strong><small>Watched product becomes available</small></span><input id="notifyRestock" type="checkbox" checked /><span class="toggle-ui"></span></label>
+              <label class="setting-toggle"><span><strong>Sold out</strong><small>Watched product becomes unavailable</small></span><input id="notifySoldOut" type="checkbox" /><span class="toggle-ui"></span></label>
+              <label class="setting-toggle"><span><strong>Price changes</strong><small>Price changes on a watched product</small></span><input id="notifyPriceChange" type="checkbox" /><span class="toggle-ui"></span></label>
+              <label class="setting-toggle"><span><strong>Status changes</strong><small>Other store-status changes on watched products</small></span><input id="notifyStatusChange" type="checkbox" /><span class="toggle-ui"></span></label>
+              <label class="setting-toggle"><span><strong>New products</strong><small>Alert when GearBeacon discovers a new catalog item</small></span><input id="notifyNewProduct" type="checkbox" /><span class="toggle-ui"></span></label>
+              <label class="setting-toggle"><span><strong>All activity updates</strong><small>Alert for every new Activity feed entry, including unwatched products</small></span><input id="notifyAllActivity" type="checkbox" /><span class="toggle-ui"></span></label>
+            </div>
+            <div class="settings-actions wrap">
+              <button id="saveNotificationPrefs" class="primary">Save notification settings</button>
+              <button id="testNotificationBtn">Send test notification</button>
+            </div>
+            <div id="notificationResult" class="settings-result hidden"></div>
+          </article>
+        </section>
+        <section id="settingsNotificationsChannelsPanel" class="settings-section" role="tabpanel" aria-labelledby="settingsNotificationsChannelsTab" data-settings-section="notifications/channels" hidden>
+          <article class="settings-card wide-card">
+            <div class="settings-card-head"><div><span class="settings-kicker">Encrypted locally</span><h3>Notification channels</h3></div><span id="secretKeyBadge" class="settings-badge">Separate key file</span></div>
+            <p>Leave a secret blank to keep the saved value; enter an empty value after choosing “clear” to remove it. Test buttons send only through that channel.</p>
+            <form id="channelConfigForm" class="channel-config"></form>
+            <div class="settings-actions"><button id="saveChannels" class="primary" type="button">Save channels</button></div>
+            <div id="channelConfigResult" class="settings-result hidden"></div>
+          </article>
+        </section>
+        <section id="settingsNotificationsDeliveryPanel" class="settings-section" role="tabpanel" aria-labelledby="settingsNotificationsDeliveryTab" data-settings-section="notifications/delivery" hidden>
+          <article class="settings-card wide-card">
+            <div class="settings-card-head"><div><span class="settings-kicker">Delivery schedule</span><h3>Timing & reliability</h3></div><span id="deliveryModeBadge" class="settings-badge">Immediate</span></div>
+            <p>Choose when alerts can be delivered. Per-product immediate restocks can bypass quiet hours and digests.</p>
+            <form id="notificationDeliveryForm" class="config-form">
+              <div class="form-row"><label class="field"><span>Timezone</span><input id="configTimeZone" placeholder="America/New_York" /></label><label class="field"><span>Cooldown (minutes)</span><input id="configCooldownMinutes" type="number" min="0" max="10080" /></label><label class="field"><span>Delivery attempts</span><input id="configMaxAttempts" type="number" min="1" max="10" /></label><label class="field"><span>Group window (seconds)</span><input id="configGroupSeconds" type="number" min="0" max="3600" /></label></div>
+              <div class="form-row"><label class="inline-check"><input id="configQuietEnabled" type="checkbox" /> Enable quiet hours</label><label class="field"><span>Quiet start</span><input id="configQuietStart" type="time" /></label><label class="field"><span>Quiet end</span><input id="configQuietEnd" type="time" /></label><label class="inline-check"><input id="configDigestEnabled" type="checkbox" /> Deliver a daily digest</label><label class="field"><span>Digest time</span><input id="configDigestTime" type="time" /></label></div>
+              <fieldset><legend>Operational alerts</legend><div class="inline-checks"><label><input id="operationalMonitorFailures" type="checkbox" /> Store monitoring failures</label><label><input id="operationalNotificationFailures" type="checkbox" /> Delivery failures</label><label><input id="operationalBackupFailures" type="checkbox" /> Backup failures</label><label><input id="operationalLowDisk" type="checkbox" /> Low disk space</label></div></fieldset>
+              <div class="settings-actions wrap"><button class="primary" type="submit">Save delivery settings</button><button id="previewDelivery" type="button">Preview delivery</button></div>
+            </form>
+            <div id="deliveryResult" class="settings-result hidden"></div>
+          </article>
+        </section>
+        <section id="settingsNotificationsEmailPanel" class="settings-section" role="tabpanel" aria-labelledby="settingsNotificationsEmailTab" data-settings-section="notifications/email" hidden>
+          <article class="settings-card wide-card">
+            <div class="settings-card-head"><div><span class="settings-kicker">Email design</span><h3>Email appearance & preview</h3></div><span id="emailAppearanceBadge" class="settings-badge">Standard</span></div>
+            <p>Control how much detail email includes, safely embed product images, and preview the exact template GearBeacon sends through SMTP.</p>
+            <form id="emailAppearanceForm" class="config-form">
+              <div class="form-row">
+                <label class="field"><span>Detail level</span><select id="emailDetailLevel"><option value="compact">Compact</option><option value="standard">Standard</option><option value="detailed">Detailed</option></select></label>
+                <label class="field"><span>Color theme</span><select id="emailTheme"><option value="auto">Match device</option><option value="dark">Dark</option><option value="light">Light</option></select></label>
+                <label class="field"><span>Subject prefix</span><input id="emailSubjectPrefix" maxlength="60" placeholder="[GearBeacon]" /></label>
+                <label class="field"><span>Maximum digest items</span><input id="emailDigestMaxItems" type="number" min="1" max="50" /></label>
+              </div>
+              <div class="inline-checks email-options">
+                <label><input id="emailEmbedImages" type="checkbox" /> Embed product images in email</label>
+                <label><input id="emailExplainReason" type="checkbox" /> Explain why the alert was sent</label>
+                <label><input id="emailPriceCalculations" type="checkbox" /> Show savings and price changes</label>
+              </div>
+              <div class="settings-actions wrap"><button class="primary" type="submit">Save email appearance</button><button id="sendTestEmail" type="button">Send test email</button></div>
+            </form>
+            <div id="emailAppearanceResult" class="settings-result hidden"></div>
+            <div class="email-preview-panel">
+              <div class="email-preview-toolbar">
+                <label class="field"><span>Preview product</span><select id="emailPreviewProduct"></select></label>
+                <label class="field"><span>Alert type</span><select id="emailPreviewType"><option value="restock">Back in stock</option><option value="target_price">Target price reached</option><option value="price_drop">Price drop</option><option value="sold_out">Sold out</option><option value="status_change">Status changed</option><option value="new_product">New product</option><option value="digest">Daily digest</option><option value="operational">Operational alert</option><option value="test">Test email</option></select></label>
+                <label class="field"><span>Preview width</span><select id="emailPreviewViewport"><option value="desktop">Desktop</option><option value="mobile">Mobile</option></select></label>
+                <button id="previewEmail" type="button">Preview email</button>
+              </div>
+              <div id="emailPreviewStatus" class="email-preview-status">Choose an alert and select Preview email.</div>
+              <div id="emailPreviewCanvas" class="email-preview-canvas hidden"><iframe id="emailPreviewFrame" title="GearBeacon email preview" loading="lazy"></iframe></div>
+            </div>
+          </article>
+        </section>
       </section>
 
       <section id="settingsPanelData" class="settings-panel" role="tabpanel" aria-labelledby="settingsTabData" data-settings-panel="data" hidden>
-        <div class="settings-grid">
-        <article class="settings-card wide-card">
-          <div class="settings-card-head"><div><span class="settings-kicker">Retention</span><h3>Backups & product history</h3></div><span id="historyBadge" class="settings-badge">Change-only history</span></div>
-          <p>GearBeacon records only meaningful availability or price changes and automatically removes history beyond the selected retention period.</p>
-          <form id="dataScheduleForm" class="config-form"><div class="form-row"><label class="field"><span>Backup interval (hours)</span><input id="configBackupHours" type="number" min="0" max="720" /></label><label class="field"><span>Backups retained</span><input id="configBackupRetention" type="number" min="1" max="100" /></label><label class="field"><span>Product history retention (days)</span><input id="configHistoryRetention" type="number" min="30" max="3650" /></label><label class="field"><span>Activity retention (0 = unlimited)</span><input id="configEventRetention" type="number" min="0" max="3650" /></label></div><label class="field"><span>Secondary backup directory or mounted share</span><input id="configSecondaryBackupDir" placeholder="D:\GearBeacon Recovery or /recovery" /></label><div class="inline-checks"><label><input id="configSecondaryEncrypted" type="checkbox" /> Store scheduled secondary copies as passphrase-encrypted exports</label></div><label class="field"><span id="secondaryPassphraseLabel">Secondary export passphrase</span><input id="configSecondaryPassphrase" type="password" minlength="12" autocomplete="new-password" placeholder="Leave blank to keep the saved passphrase" /></label><label id="clearSecondaryPassphraseWrap" class="clear-secret hidden"><input id="clearSecondaryPassphrase" type="checkbox" /> Clear saved secondary passphrase</label><button class="primary" type="submit">Save data settings</button></form>
-          <div id="dataScheduleResult" class="settings-result hidden"></div>
-        </article>
-        <article class="settings-card wide-card">
-          <div class="settings-card-head">
-            <div><span class="settings-kicker">Data safety</span><h3>Backups & transfer</h3></div>
-            <span id="backupBadge" class="settings-badge">0 backups</span>
-          </div>
-          <p>GearBeacon validates SQLite before and after every backup, creates pre-update and pre-import safety copies, and can export passphrase-encrypted transfer files.</p>
-          <dl class="settings-details">
-            <div><dt>Latest backup</dt><dd id="latestBackup">None yet</dd></div>
-            <div><dt>Watchlist</dt><dd id="settingsWatchCount">0 products</dd></div>
-          </dl>
-          <div class="settings-actions wrap">
-            <button id="backupBtn">Create backup now</button>
-            <button id="testPrimaryBackup">Test latest primary</button>
-            <button id="testSecondaryBackup">Test latest secondary</button>
-            <button id="exportBtn">Export encrypted data</button>
-            <button id="exportPlainBtn">Export plain JSON</button>
-            <button id="importBtn">Import GearBeacon data</button>
-            <input id="importFile" type="file" accept=".json,.gearbeacon.json,application/json" hidden />
-          </div>
-          <div id="backupTestResult" class="settings-result hidden" aria-live="polite"></div>
-          <div class="settings-note">Importing replaces this monitor's current watchlist/data after first creating a safety backup.</div>
-        </article>
+        <div class="settings-subtabs" role="tablist" aria-label="Data sections">
+          <button id="settingsDataScheduleTab" class="settings-subtab active" type="button" role="tab" aria-selected="true" aria-controls="settingsDataSchedulePanel" data-settings-subtab="data/schedule" tabindex="0">Schedule &amp; retention</button>
+          <button id="settingsDataBackupsTab" class="settings-subtab" type="button" role="tab" aria-selected="false" aria-controls="settingsDataBackupsPanel" data-settings-subtab="data/backups" tabindex="-1">Backups &amp; transfer</button>
         </div>
+        <section id="settingsDataSchedulePanel" class="settings-section" role="tabpanel" aria-labelledby="settingsDataScheduleTab" data-settings-section="data/schedule">
+          <article class="settings-card wide-card">
+            <div class="settings-card-head"><div><span class="settings-kicker">Retention</span><h3>Backups & product history</h3></div><span id="historyBadge" class="settings-badge">Change-only history</span></div>
+            <p>GearBeacon records only meaningful availability or price changes and automatically removes history beyond the selected retention period.</p>
+            <form id="dataScheduleForm" class="config-form"><div class="form-row"><label class="field"><span>Backup interval (hours)</span><input id="configBackupHours" type="number" min="0" max="720" /></label><label class="field"><span>Backups retained</span><input id="configBackupRetention" type="number" min="1" max="100" /></label><label class="field"><span>Product history retention (days)</span><input id="configHistoryRetention" type="number" min="30" max="3650" /></label><label class="field"><span>Activity retention (0 = unlimited)</span><input id="configEventRetention" type="number" min="0" max="3650" /></label></div><label class="field"><span>Secondary backup directory or mounted share</span><input id="configSecondaryBackupDir" placeholder="D:\GearBeacon Recovery or /recovery" /></label><div class="inline-checks"><label><input id="configSecondaryEncrypted" type="checkbox" /> Store scheduled secondary copies as passphrase-encrypted exports</label></div><label class="field"><span id="secondaryPassphraseLabel">Secondary export passphrase</span><input id="configSecondaryPassphrase" type="password" minlength="12" autocomplete="new-password" placeholder="Leave blank to keep the saved passphrase" /></label><label id="clearSecondaryPassphraseWrap" class="clear-secret hidden"><input id="clearSecondaryPassphrase" type="checkbox" /> Clear saved secondary passphrase</label><button class="primary" type="submit">Save data settings</button></form>
+            <div id="dataScheduleResult" class="settings-result hidden"></div>
+          </article>
+        </section>
+        <section id="settingsDataBackupsPanel" class="settings-section" role="tabpanel" aria-labelledby="settingsDataBackupsTab" data-settings-section="data/backups" hidden>
+          <article class="settings-card wide-card">
+            <div class="settings-card-head">
+              <div><span class="settings-kicker">Data safety</span><h3>Backups & transfer</h3></div>
+              <span id="backupBadge" class="settings-badge">0 backups</span>
+            </div>
+            <p>GearBeacon validates SQLite before and after every backup, creates pre-update and pre-import safety copies, and can export passphrase-encrypted transfer files.</p>
+            <dl class="settings-details">
+              <div><dt>Latest backup</dt><dd id="latestBackup">None yet</dd></div>
+              <div><dt>Watchlist</dt><dd id="settingsWatchCount">0 products</dd></div>
+            </dl>
+            <div class="settings-actions wrap">
+              <button id="backupBtn">Create backup now</button>
+              <button id="testPrimaryBackup">Test latest primary</button>
+              <button id="testSecondaryBackup">Test latest secondary</button>
+              <button id="exportBtn">Export encrypted data</button>
+              <button id="exportPlainBtn">Export plain JSON</button>
+              <button id="importBtn">Import GearBeacon data</button>
+              <input id="importFile" type="file" accept=".json,.gearbeacon.json,application/json" hidden />
+            </div>
+            <div id="backupTestResult" class="settings-result hidden" aria-live="polite"></div>
+            <div class="settings-note">Importing replaces this monitor's current watchlist/data after first creating a safety backup.</div>
+          </article>
+        </section>
       </section>
 
       <section id="settingsPanelSecurity" class="settings-panel" role="tabpanel" aria-labelledby="settingsTabSecurity" data-settings-panel="security" hidden>
-        <div class="settings-grid">
-        <article class="settings-card wide-card">
-          <div class="settings-card-head">
-            <div><span class="settings-kicker">Private access</span><h3>Owner security</h3></div>
-            <span id="accessBadge" class="settings-badge">Local</span>
-          </div>
-          <p id="accessDescription">GearBeacon is available only on this computer.</p>
-          <dl class="settings-details">
-            <div><dt>Access mode</dt><dd id="accessMode">—</dd></div>
-            <div><dt>Authentication</dt><dd id="authenticationState">—</dd></div>
-            <div><dt>Active sessions</dt><dd id="sessionCount">—</dd></div>
-          </dl>
-          <form id="passwordForm" class="settings-form">
-            <label id="currentPasswordField" class="field"><span>Current password</span><input id="currentPassword" type="password" autocomplete="current-password" /></label>
-            <label class="field"><span>New password</span><input id="newPassword" type="password" minlength="12" autocomplete="new-password" required /></label>
-            <label class="field"><span>Confirm new password</span><input id="newPasswordConfirm" type="password" minlength="12" autocomplete="new-password" required /></label>
-            <button class="primary" type="submit">Update owner password</button>
-          </form>
-          <div id="securityResult" class="settings-result hidden"></div>
-          <div id="sessionList" class="session-list"></div>
-        </article>
+        <div class="settings-subtabs" role="tablist" aria-label="Security sections">
+          <button id="settingsSecurityOverviewTab" class="settings-subtab active" type="button" role="tab" aria-selected="true" aria-controls="settingsSecurityOverviewPanel" data-settings-subtab="security/overview" tabindex="0">Overview</button>
+          <button id="settingsSecurityPasswordTab" class="settings-subtab" type="button" role="tab" aria-selected="false" aria-controls="settingsSecurityPasswordPanel" data-settings-subtab="security/password" tabindex="-1">Password</button>
+          <button id="settingsSecuritySessionsTab" class="settings-subtab" type="button" role="tab" aria-selected="false" aria-controls="settingsSecuritySessionsPanel" data-settings-subtab="security/sessions" tabindex="-1">Sessions</button>
         </div>
+        <section id="settingsSecurityOverviewPanel" class="settings-section" role="tabpanel" aria-labelledby="settingsSecurityOverviewTab" data-settings-section="security/overview">
+          <article class="settings-card wide-card">
+            <div class="settings-card-head">
+              <div><span class="settings-kicker">Private access</span><h3>Owner security</h3></div>
+              <span id="accessBadge" class="settings-badge">Local</span>
+            </div>
+            <p id="accessDescription">GearBeacon is available only on this computer.</p>
+            <dl class="settings-details">
+              <div><dt>Access mode</dt><dd id="accessMode">—</dd></div>
+              <div><dt>Authentication</dt><dd id="authenticationState">—</dd></div>
+              <div><dt>Active sessions</dt><dd id="sessionCount">—</dd></div>
+            </dl>
+          </article>
+        </section>
+        <section id="settingsSecurityPasswordPanel" class="settings-section" role="tabpanel" aria-labelledby="settingsSecurityPasswordTab" data-settings-section="security/password" hidden>
+          <article class="settings-card wide-card">
+            <div class="settings-card-head"><div><span class="settings-kicker">Private access</span><h3>Owner password</h3></div></div>
+            <p>Update the password used to sign in to this GearBeacon installation.</p>
+            <form id="passwordForm" class="settings-form">
+              <label id="currentPasswordField" class="field"><span>Current password</span><input id="currentPassword" type="password" autocomplete="current-password" /></label>
+              <label class="field"><span>New password</span><input id="newPassword" type="password" minlength="12" autocomplete="new-password" required /></label>
+              <label class="field"><span>Confirm new password</span><input id="newPasswordConfirm" type="password" minlength="12" autocomplete="new-password" required /></label>
+              <button class="primary" type="submit">Update owner password</button>
+            </form>
+            <div id="securityResult" class="settings-result hidden"></div>
+          </article>
+        </section>
+        <section id="settingsSecuritySessionsPanel" class="settings-section" role="tabpanel" aria-labelledby="settingsSecuritySessionsTab" data-settings-section="security/sessions" hidden>
+          <article class="settings-card wide-card">
+            <div class="settings-card-head"><div><span class="settings-kicker">Private access</span><h3>Signed-in browsers</h3></div></div>
+            <p>Review active owner sessions and sign out browsers that no longer need access.</p>
+            <div id="sessionList" class="session-list"></div>
+          </article>
+        </section>
       </section>
 
       <section id="settingsPanelPrivacy" class="settings-panel" role="tabpanel" aria-labelledby="settingsTabPrivacy" data-settings-panel="privacy" hidden>
-        <div class="settings-grid">
-        <article class="settings-card wide-card">
-          <div class="settings-card-head">
-            <div><span class="settings-kicker">Privacy</span><h3>Outbound connections</h3></div>
-            <span class="settings-badge">No telemetry</span>
-          </div>
-          <p>GearBeacon has no public account service, hosted database, analytics, or telemetry. This list shows every server-side outbound integration.</p>
-          <div id="outboundList" class="outbound-list"></div>
-        </article>
+        <div class="settings-subtabs" role="tablist" aria-label="Privacy sections">
+          <button id="settingsPrivacyCatalogTab" class="settings-subtab active" type="button" role="tab" aria-selected="true" aria-controls="settingsPrivacyCatalogPanel" data-settings-subtab="privacy/catalog" tabindex="0">Catalog &amp; updates</button>
+          <button id="settingsPrivacyNotificationsTab" class="settings-subtab" type="button" role="tab" aria-selected="false" aria-controls="settingsPrivacyNotificationsPanel" data-settings-subtab="privacy/notifications" tabindex="-1">Notifications</button>
         </div>
+        <section id="settingsPrivacyCatalogPanel" class="settings-section" role="tabpanel" aria-labelledby="settingsPrivacyCatalogTab" data-settings-section="privacy/catalog">
+          <article class="settings-card wide-card">
+            <div class="settings-card-head">
+              <div><span class="settings-kicker">Privacy</span><h3>Catalog &amp; updates</h3></div>
+              <span class="settings-badge">No telemetry</span>
+            </div>
+            <p>GearBeacon has no public account service, hosted database, analytics, or telemetry. Catalog checks and manual update checks use the connections below. Notification connections are listed in the Notifications section.</p>
+            <div id="outboundList" class="outbound-list"></div>
+          </article>
+        </section>
+        <section id="settingsPrivacyNotificationsPanel" class="settings-section" role="tabpanel" aria-labelledby="settingsPrivacyNotificationsTab" data-settings-section="privacy/notifications" hidden>
+          <article class="settings-card wide-card">
+            <div class="settings-card-head"><div><span class="settings-kicker">Privacy</span><h3>Notification connections</h3></div></div>
+            <p>These connections deliver alerts through your configured services. Disabled channels do not send notifications.</p>
+            <div id="outboundNotificationList" class="outbound-list"></div>
+          </article>
+        </section>
       </section>
 
       <section id="settingsPanelOperations" class="settings-panel" role="tabpanel" aria-labelledby="settingsTabOperations" data-settings-panel="operations" hidden>
-        <div class="section-heading"><div><h2>Operations</h2><p>Region health, delivery reliability, backups, storage, security, and local logs.</p></div><div class="settings-actions"><button id="runDiagnostics" class="primary">Run diagnostics</button><button id="refreshOperations">Refresh</button><button id="downloadSupportBundle">Support bundle</button><button id="downloadLogs">Download logs</button></div></div>
-        <div id="operationsSummary" class="operations-summary"><strong>Checking installation health…</strong></div>
-        <section id="diagnosticsPanel" class="diagnostics-panel hidden" aria-live="polite"></section>
-        <div id="securityWarnings" class="warning-list"></div>
-        <div id="operationsGrid" class="ops-grid"></div>
-        <article class="settings-card ops-log-card">
-          <div class="settings-card-head"><div><span class="settings-kicker">Application logs</span><h3>Recent activity</h3></div><span id="runtimeBadge" class="settings-badge">Runtime</span></div>
-          <div class="log-filters"><select id="logLevel" aria-label="Filter logs by level"><option value="">All levels</option><option value="info">Info</option><option value="warn">Warning</option><option value="error">Error</option></select><input id="logSearch" type="search" placeholder="Filter logs" aria-label="Search logs" /><button id="applyLogFilter">Filter</button></div>
-          <div id="operationsLogs" class="log-list"></div>
-        </article>
+        <div class="settings-section-toolbar">
+          <div class="settings-subtabs" role="tablist" aria-label="Operations sections">
+            <button id="settingsOperationsOverviewTab" class="settings-subtab active" type="button" role="tab" aria-selected="true" aria-controls="settingsOperationsOverviewPanel" data-settings-subtab="operations/overview" tabindex="0">Overview</button>
+            <button id="settingsOperationsMonitoringTab" class="settings-subtab" type="button" role="tab" aria-selected="false" aria-controls="settingsOperationsMonitoringPanel" data-settings-subtab="operations/monitoring" tabindex="-1">Monitoring</button>
+            <button id="settingsOperationsDeliveryTab" class="settings-subtab" type="button" role="tab" aria-selected="false" aria-controls="settingsOperationsDeliveryPanel" data-settings-subtab="operations/delivery" tabindex="-1">Delivery</button>
+            <button id="settingsOperationsBackupsTab" class="settings-subtab" type="button" role="tab" aria-selected="false" aria-controls="settingsOperationsBackupsPanel" data-settings-subtab="operations/backups" tabindex="-1">Backups</button>
+            <button id="settingsOperationsDiagnosticsTab" class="settings-subtab" type="button" role="tab" aria-selected="false" aria-controls="settingsOperationsDiagnosticsPanel" data-settings-subtab="operations/diagnostics" tabindex="-1">Diagnostics</button>
+            <button id="settingsOperationsLogsTab" class="settings-subtab" type="button" role="tab" aria-selected="false" aria-controls="settingsOperationsLogsPanel" data-settings-subtab="operations/logs" tabindex="-1">Logs</button>
+          </div>
+          <button id="refreshOperations" class="settings-refresh" type="button" aria-label="Refresh Operations">Refresh</button>
+        </div>
+        <div id="operationsError" class="settings-result hidden" role="status"></div>
+        <section id="settingsOperationsOverviewPanel" class="settings-section" role="tabpanel" aria-labelledby="settingsOperationsOverviewTab" data-settings-section="operations/overview">
+          <div id="operationsSummary" class="operations-summary"><strong>Checking installation health…</strong></div>
+          <div id="securityWarnings" class="warning-list"></div>
+          <div id="operationsGrid"></div>
+        </section>
+        <section id="settingsOperationsMonitoringPanel" class="settings-section" role="tabpanel" aria-labelledby="settingsOperationsMonitoringTab" data-settings-section="operations/monitoring" hidden>
+          <div id="operationsMonitoring" class="ops-grid"></div>
+        </section>
+        <section id="settingsOperationsDeliveryPanel" class="settings-section" role="tabpanel" aria-labelledby="settingsOperationsDeliveryTab" data-settings-section="operations/delivery" hidden>
+          <div id="operationsDelivery"></div>
+        </section>
+        <section id="settingsOperationsBackupsPanel" class="settings-section" role="tabpanel" aria-labelledby="settingsOperationsBackupsTab" data-settings-section="operations/backups" hidden>
+          <div id="operationsBackups" class="ops-grid"></div>
+        </section>
+        <section id="settingsOperationsDiagnosticsPanel" class="settings-section" role="tabpanel" aria-labelledby="settingsOperationsDiagnosticsTab" data-settings-section="operations/diagnostics" hidden>
+          <article class="settings-card wide-card">
+            <div class="settings-card-head"><div><span class="settings-kicker">Troubleshooting</span><h3>Installation diagnostics</h3></div></div>
+            <p>Check storage, backups, encryption, delivery, and Store connectivity. Download a redacted support bundle for troubleshooting.</p>
+            <div class="settings-actions wrap"><button id="runDiagnostics" class="primary">Run diagnostics</button><button id="downloadSupportBundle">Support bundle</button></div>
+          </article>
+          <section id="diagnosticsPanel" class="diagnostics-panel hidden" aria-live="polite"></section>
+        </section>
+        <section id="settingsOperationsLogsPanel" class="settings-section" role="tabpanel" aria-labelledby="settingsOperationsLogsTab" data-settings-section="operations/logs" hidden>
+          <article class="settings-card ops-log-card">
+            <div class="settings-card-head"><div><span class="settings-kicker">Application logs</span><h3>Recent activity</h3></div><span id="runtimeBadge" class="settings-badge">Runtime</span></div>
+            <div class="settings-actions"><button id="downloadLogs">Download logs</button></div>
+            <div class="log-filters"><select id="logLevel" aria-label="Filter logs by level"><option value="">All levels</option><option value="info">Info</option><option value="warn">Warning</option><option value="error">Error</option></select><input id="logSearch" type="search" placeholder="Filter logs" aria-label="Search logs" /><button id="applyLogFilter">Filter</button></div>
+            <div id="operationsLogs" class="log-list" role="region" aria-label="Application logs" tabindex="0"></div>
+          </article>
+        </section>
       </section>
     </section>
 
     <footer>
-      <span>GearBeacon V1.2.0 · Private self-hosted monitoring</span>
+      <span>GearBeacon V1.3.0 · Private self-hosted monitoring</span>
       <span id="notifyStatus"></span>
     </footer>
   </main>
@@ -521,6 +633,7 @@
     </article>
   </section>
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+  <dialog id="ownerDialog" class="owner-dialog" aria-labelledby="ownerDialogTitle"><div class="product-dialog-head"><h2 id="ownerDialogTitle">Saved views</h2><button id="closeOwnerDialog" type="button" class="icon-button" aria-label="Close dialog">×</button></div><div id="ownerDialogBody" class="product-dialog-body"></div><p id="ownerDialogResult" class="settings-result" role="status" aria-live="polite"></p></dialog>
   <script src="/app.js"></script>
 </body>
 </html>

@@ -218,6 +218,8 @@ function downgradeDatabaseForUpgradeTest(databaseFile, appVersion, schema) {
     DROP TABLE events_v7;
     CREATE INDEX idx_events_region_detected ON events(region,detected_at);
   `);
+  if (schema < 13) target.exec('ALTER TABLE watch_collections DROP COLUMN delivery_json;');
+  if (schema < 12) target.exec('ALTER TABLE watch_collections DROP COLUMN budget_required;');
   if (schema < 11) target.exec('ALTER TABLE watch_collections DROP COLUMN archived;');
   if (schema < 10) target.exec('ALTER TABLE watch_collections DROP COLUMN budget; ALTER TABLE watch_collections DROP COLUMN alerts_only; ALTER TABLE watch_collection_members DROP COLUMN paid_total; ALTER TABLE watch_collection_members DROP COLUMN purchased_quantity; ALTER TABLE watch_collection_members DROP COLUMN quantity;');
   if (schema < 9) target.exec('DROP TABLE IF EXISTS inventory_history; DROP TABLE IF EXISTS monitor_coverage; ALTER TABLE watch_collections DROP COLUMN notify_ready; ALTER TABLE watch_collections DROP COLUMN ready_state;');
@@ -254,8 +256,8 @@ try {
     GEARBEACON_WEBHOOK_HMAC_SECRET: webhookHmacSecret,
   });
   const status = await waitFor('/api/status?region=us');
-  if (status.version !== '1.2.0') throw new Error(`Unexpected app version: ${status.version}`);
-  if (status.storage?.engine !== 'SQLite' || status.storage?.schemaVersion !== 11) throw new Error('SQLite schema v11 was not initialized.');
+  if (status.version !== '1.3.0') throw new Error(`Unexpected app version: ${status.version}`);
+  if (status.storage?.engine !== 'SQLite' || status.storage?.schemaVersion !== 13) throw new Error('SQLite schema v13 was not initialized.');
   if (status.deployment?.mode !== 'local' || status.deployment?.bindHost !== '127.0.0.1' || status.deployment?.authenticationRequired) throw new Error('Safe local access defaults are wrong.');
   if (status.privacy?.telemetry !== false || status.privacy?.publicCloudRequired !== false) throw new Error('Privacy status is wrong.');
   if (status.regions?.length !== 2) throw new Error('Multi-region configuration was not loaded.');
@@ -274,7 +276,7 @@ try {
   const schemaDb = new DatabaseSync(join(localData, 'gearbeacon.mock.sqlite3'));
   const pushTable = schemaDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='push_tokens'").get();
   schemaDb.close();
-  if (pushTable) throw new Error('The obsolete push-token table still exists in schema v11.');
+  if (pushTable) throw new Error('The obsolete push-token table still exists in schema v13.');
 
   const initialConfig = await request('/api/config');
   if ((await request('/api/auth/status')).onboardingComplete) throw new Error('Fresh installation incorrectly skipped guided onboarding.');
@@ -462,7 +464,7 @@ try {
     emailDetailLevel:'detailed', emailTheme:'dark', emailSubjectPrefix:'[GB Test]', emailDigestMaxItems:3,
     emailEmbedImages:true, emailExplainReason:true, emailPriceCalculations:true,
   }, secrets:{ secondaryBackupPassphrase:'v19 secondary recovery passphrase' } }) });
-  if (schedulingSave.config.notificationTimeZone !== 'UTC' || schedulingSave.config.notificationCooldownMinutes !== 7 || schedulingSave.config.historyRetentionDays !== 400 || schedulingSave.config.eventRetentionDays !== 730 || schedulingSave.config.secondaryBackupDir !== secondaryData || !schedulingSave.config.secondaryEncryptedExports || !schedulingSave.secretsConfigured.secondaryBackupPassphrase || !schedulingSave.config.operationalAlerts.lowDiskSpace || schedulingSave.config.emailDetailLevel !== 'detailed' || schedulingSave.config.emailDigestMaxItems !== 3 || schedulingSave.config.emailSubjectPrefix !== '[GB Test]') throw new Error('V1.2.0 delivery, email, recovery, or retention settings did not save.');
+  if (schedulingSave.config.notificationTimeZone !== 'UTC' || schedulingSave.config.notificationCooldownMinutes !== 7 || schedulingSave.config.historyRetentionDays !== 400 || schedulingSave.config.eventRetentionDays !== 730 || schedulingSave.config.secondaryBackupDir !== secondaryData || !schedulingSave.config.secondaryEncryptedExports || !schedulingSave.secretsConfigured.secondaryBackupPassphrase || !schedulingSave.config.operationalAlerts.lowDiskSpace || schedulingSave.config.emailDetailLevel !== 'detailed' || schedulingSave.config.emailDigestMaxItems !== 3 || schedulingSave.config.emailSubjectPrefix !== '[GB Test]') throw new Error('V1.3.0 delivery, email, recovery, or retention settings did not save.');
   await fetchJson('/api/config/validate', { method:'POST', body:JSON.stringify({ ...schedulingSave.config, emailSubjectPrefix:'[GearBeacon]\r\nBcc: attacker@example.test' }) }, 400);
   const deliveryPreview = await request('/api/notifications/preview?region=us&slug=u7-pro-xgs&eventType=restock');
   if (deliveryPreview.decision?.allowed !== true || deliveryPreview.delivery?.mode !== 'immediate-restock' || deliveryPreview.delivery?.timeZone !== 'UTC' || !deliveryPreview.copy?.title || !/^\[GB Test\]/.test(deliveryPreview.email?.subject || '') || !/Why you received this/i.test(deliveryPreview.email?.text || '')) throw new Error('Notification delivery or email preview did not honor saved settings.');
@@ -544,16 +546,17 @@ try {
   startServer(8899, localData);
   await waitFor('/api/status?region=us');
   const afterUpgrade = await request('/api/data/info?region=us');
-  if (afterUpgrade.backup.count <= beforeUpgrade || afterUpgrade.schemaVersion !== 11) throw new Error('Automatic V0.1.5 pre-update backup or schema migration failed.');
+  if (afterUpgrade.backup.count <= beforeUpgrade || afterUpgrade.schemaVersion !== 13) throw new Error('Automatic V0.1.5 pre-update backup or schema migration failed.');
   const migratedDb = new DatabaseSync(join(localData, 'gearbeacon.mock.sqlite3'));
   const migratedPushTable = migratedDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='push_tokens'").get();
   migratedDb.close();
-  if (migratedPushTable) throw new Error('Obsolete push storage returned during the V0.1.5 to V1.2.0 migration.');
+  if (migratedPushTable) throw new Error('Obsolete push storage returned during the V0.1.5 to V1.3.0 migration.');
   const updates = await request('/api/update/check?region=us');
-  if (updates.currentVersion !== '1.2.0' || updates.latestVersion !== '1.2.0' || updates.updateAvailable) throw new Error('Bundled update check failed.');
+  const installedVersion = (await request('/healthz')).packageVersion;
+  if (updates.currentVersion !== installedVersion || updates.latestVersion !== installedVersion || updates.updateAvailable || updates.verified) throw new Error('Disabled update checks did not preserve the installed package version and unverified state.');
   await stopServer();
 
-  for (const historical of [{ version:'0.1.6', schema:5 }, { version:'0.1.7', schema:6 }, { version:'1.0.0', schema:7 }, { version:'1.0.1', schema:7 }, { version:'1.1.0', schema:8 }, { version:'1.2.0', schema:9 }, { version:'1.2.0', schema:10 }]) {
+  for (const historical of [{ version:'0.1.6', schema:5 }, { version:'0.1.7', schema:6 }, { version:'1.0.0', schema:7 }, { version:'1.0.1', schema:7 }, { version:'1.1.0', schema:8 }, { version:'1.2.0', schema:9 }, { version:'1.2.0', schema:10 }, { version:'1.2.0', schema:11 }]) {
     const backupCount = (await (async () => {
       const testDb = new DatabaseSync(join(localData, 'gearbeacon.mock.sqlite3'), { readOnly:true });
       const count = Number(testDb.prepare('SELECT COUNT(*) AS count FROM backup_log').get()?.count || 0);
@@ -563,7 +566,7 @@ try {
     startServer(8899, localData);
     await waitFor('/api/status?region=us');
     const migrated = await request('/api/data/info?region=us');
-    if (migrated.schemaVersion !== 11 || migrated.backup.count < 1) throw new Error(`Automatic V${historical.version} to V1.2.0 migration failed.`);
+    if (migrated.schemaVersion !== 13 || migrated.backup.count < 1) throw new Error(`Automatic V${historical.version} to V1.3.0 migration failed.`);
     const migratedCheck = await request('/api/check?region=us', { method:'POST', body:'{}' });
     if (!migratedCheck.ok) throw new Error(`V${historical.version} monitoring did not work after migration.`);
     const migratedWatch = await request('/api/watchlist?region=us');
@@ -656,7 +659,7 @@ try {
   await fetchJson('/api/status', { headers:{ Cookie:proxyCookie, 'X-Forwarded-Host':'attacker.invalid' } }, 421);
   await fetchJson('/api/status', { headers:{ Cookie:proxyCookie, 'X-Forwarded-Host':'gearbeacon.test, attacker.invalid' } }, 421);
 
-  console.log('\nSELF-TEST PASSED: V1.2.0 confirmed transitions + searchable/exportable activity + secondary recovery/restore tests + diagnostics/support bundle + watch intelligence + notifications + private self-hosting security all work.');
+  console.log('\nSELF-TEST PASSED: V1.3.0 confirmed transitions + searchable/exportable activity + secondary recovery/restore tests + diagnostics/support bundle + watch intelligence + notifications + private self-hosting security all work.');
 } finally {
   await stopServer();
   await new Promise((resolve) => smtpServer.close(resolve));

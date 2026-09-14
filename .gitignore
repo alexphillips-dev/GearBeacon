@@ -6,6 +6,7 @@ backend/dist/*
 !backend/dist/index.js
 !backend/dist/email.js
 coverage/
+/build-info.json
 *.tsbuildinfo
 /release-assets/
 /GearBeacon-v*/
@@ -65,3 +66,4 @@ GearBeacon-Activity-*
 GearBeacon-Logs-*
 *.log
 *.log.*
+/.gearbeacon-update.*

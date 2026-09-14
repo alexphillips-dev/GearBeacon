@@ -161,7 +161,8 @@ try {
   const backup = await request('/api/data/export');
   // New interval exports can exceed the previous 25 MiB request budget.
   await request('/api/data/preview', { backup, padding:'x'.repeat(26 * 1024 * 1024) });
-  const now = Date.now(); const at = (days) => new Date(now - days * 86400000).toISOString();
+  // Start before the request to exercise clipping even on fast runners.
+  const now = Date.now() - 5000; const at = (days) => new Date(now - days * 86400000).toISOString();
   const interval = (start,end,price,inStock) => ({ slug:black, startedAt:at(start), endedAt:at(end), price:price === null ? null : `$${price}.00`, priceValue:price, currency:'USD', inStock, status:inStock ? 'Available' : 'SoldOut' });
   backup.regions.us.inventoryHistory = [interval(100,95,100,true),interval(60,31,200,false),interval(30,20,300,true),interval(10,8,250,true),interval(5,4,0,false),interval(3,2,280,true),interval(1,.5,null,true)];
   backup.regions.us.monitoringCoverage = backup.regions.us.inventoryHistory.map((row) => ({ startedAt:row.startedAt, endedAt:row.endedAt, checks:2 }));
@@ -169,8 +170,11 @@ try {
   await request('/api/data/import', { backup });
   const insight = (await details()).insights;
   assert.deepEqual(insight.prices.map((row) => [row.days,row.lowest,row.lowestAvailable]), [[7,0,280],[30,0,250],[90,0,250]]);
-  assert.ok(Math.abs(insight.availableSeconds - 13.5 * 86400) <= 2);
-  assert.ok(Math.abs(insight.observedSeconds - 14.5 * 86400) <= 2);
+  assert.equal(Date.parse(insight.until)-Date.parse(insight.since),30*86400000);
+  const clippedSeconds = (Date.parse(insight.since)-Date.parse(at(30)))/1000;
+  assert.ok(clippedSeconds>=5 && clippedSeconds<86400,'Unexpected imported-history window');
+  assert.equal(insight.availableSeconds,Math.round(13.5*86400-clippedSeconds));
+  assert.equal(insight.observedSeconds,Math.round(14.5*86400-clippedSeconds));
   assert.equal(insight.restocks.length, 1, 'Parent restocks contaminated exact variant counts.');
   assert.equal(insight.currentConfirmed, false, 'Imported history implied current monitoring coverage.');
   assert.equal((await details(black,7)).insights.days, 7);

@@ -2,14 +2,61 @@
 
 The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. The first release promoted to `main` is V1.0.0.
 
-## V1.2.0 — Stock insights and collection readiness
+## V1.3.0 — Live Activity, flexible alerts, and easier settings
 
-See the [complete 1.2.0 release notes](RELEASE_NOTES.md) for Features, UI/UX, Fixes, Security, and upgrade guidance covering every change since the published 1.0.0 release, including the intervening 1.0.1 and 1.1.0 development updates.
+Released September 14, 2026. Includes every development change since v1.2.0. See the [complete release notes](RELEASE_NOTES.md).
+
+- Release validation now runs Activity context and update-channel tests across the CI platform matrix. Corrected the delayed-delivery restart fixture to capture startup deliveries and assert that a due job resumes with its original context.
+- Source-package rehearsal now accepts the full installed prerelease version and verifies that disabled online checks do not claim a verified update result.
+- Corrected imported-history duration assertions to account for elapsed request time at the rolling-window boundary, with deterministic boundary clipping on every run.
+- Updater fixtures now invoke a literal runner script with separate path arguments instead of an inline shell command, and validate paths containing spaces, ampersands, and quotes.
+- Prerelease package metadata now selects dev before considering the workflow's dispatch branch, preventing candidates built from main from following stable updates. Explicit build-channel overrides remain supported.
+- Operations now rejects older overlapping responses and errors after a newer refresh starts, preventing stale warnings and shortcut destinations from replacing recovered data. Browser regression coverage deliberately delivers the older response last.
+
+- Added a compact blue `update available · vX.Y.Z` button below the main header on every tab. It opens matching release notes in a new tab, or Settings > General > Application when no notes link is available, and preserves Activity reading position and keyboard focus when it appears.
+- Update checks now run on server startup and daily, with shared results across browsers and retry/rate-limit handling. Main installations follow published stable releases; dev installations compare the running commit with dev, including newer commits with the same version. Source, packaged, and container builds retain channel/commit identity. Downloads and installation remain owner-initiated. See [update checks and channels](UPDATES.md).
+
+- Added consistent vertical spacing between the Store choices, field rows, and access options in Settings > General > Stores & access, including fields that stack on mobile, so labels no longer crowd the controls above them.
+
+- Replaced the card and alert-rule “Why?” controls with compact question-mark buttons, descriptive accessible labels, and tooltips. Fixed the shared alert explanation dialog's cramped edges and horizontal scrollbar with padded content, a contained sticky header, and wrapping long names; empty result messages no longer leave a blank bar below the explanation.
+
+- Added current availability and check freshness, current watch/collection membership, exact variant identity, and event-price comparisons against the current target to individual Activity cards and details. A 30-day observed-low indicator requires sufficient retained history for that Store and exact item, ending at the event. Original event snapshots remain unchanged.
+- Activity delivery badges now name suppression reasons and successful channels. Added Today/Yesterday/date separators and totals for all matching events across pages, using the configured timezone for headings and calendar-date filters. Every event remains an individual 64-pixel card, with automatic arrivals and reading/focus preservation. See the [Activity guide](ACTIVITY.md).
+
+- Split each Settings category into compact section tabs, including separate notification, recovery, security, privacy, and Operations pages. Each category remembers its last section in this browser; switching sections preserves unsaved inputs. Added scoped keyboard navigation, mobile wrapping, and links that reveal the relevant settings section. See the [Settings navigation guide](SETTINGS.md).
+
+- Activity restock rows now show “In stock” in green to match the restock icon, including a darker light-theme shade that keeps the text readable on hover.
+- Activity sellout rows now show the “Sold out” status in the same red as the sellout icon, with readable shades in both themes.
+- Activity price decreases now use a blue icon and savings amount/percentage, with theme-specific shades for dark and light mode. Price increases retain their amber accent; arrows and before/after values continue to show the direction.
+
+- Added per-watch and per-collection server delivery channels with Use defaults, explicit channel choices, disabled/unconfigured channel explanations, effective rule previews, and cancellation of pending/failed jobs when a channel is removed. Collection-only overrides and browser-popup preferences retain their existing behavior.
+- Added optional expiry for restock, target-price, price-drop, and collection-ready alerts, enforced before delivery and retries. Queued jobs retain their original expiry ceiling; shorter current settings apply immediately. Expired alerts remain in Activity with an Expired outcome and cannot be revived through Retry failed.
+- Delayed alerts (at least one minute old) now show the original detection time plus separately labeled current confirmed or last-known status. Exact-variant evidence stays scoped to the triggering variant. ntfy, Discord, Gotify, webhooks, email, and grouped/digest messages include this context; original events remain unchanged. Grouped text stays bounded and diagnostics redact product context.
+- Added product freshness indicators to Watchlist cards/compact lists, Browse cards, and product details. Complete confirmed checks, pending changes, stale checks, and unknown coverage are distinguished without replacing cards or unsaved rule forms during refreshes.
+- Added backup-protected schema-v13 migration and format-v9 recovery exports preserving channel selections and expiry. Existing watches, collections, and older imports retain default channels and no expiry. Added deterministic delivery/freshness/recovery tests and desktop/mobile/light/dark/keyboard browser coverage. See [delivery and freshness guidance](ALERT_DELIVERY.md).
+
+- Added a compact README badge row beneath the banner for the latest release, main-branch CI status, Apache 2.0 license, supported desktop platforms, Docker image hosting, and Wiki documentation.
+- Added an opt-in **Only notify when this collection is within budget** condition under the existing collection Alerts button. Readiness combines recorded spending, remaining quantities, and confirmed qualifying variant prices; unknown costs and pending prices block qualification. Cards, details, and alert explanations show the blocker. Rule/budget edits establish a baseline and cancel obsolete pending deliveries; existing item-alert overrides remain intact.
+- Added backup-protected schema-v12 migration and format-v8 recovery exports for the budget condition. Existing collections and older recovery files default it off; quantities, payments, alert settings, and readiness state survive upgrades and recovery.
+- Made background refreshes reuse unchanged product, collection, and Activity rows, retain dropdown options, coalesce overlapping refresh requests, and reject stale responses after edits or region changes. Unsaved notification preferences remain intact. Hidden tabs defer catalog rendering and retain the lightweight browser-alert check when permission is enabled; server monitoring and notification delivery continue independently.
+- Activity automatically checks for new cards every second while visible. New cards appear above the page being read, preserving the visible card and keyboard focus when scrolled; staying at the top follows arrivals immediately. Older pages remain available beneath a separate Latest activity section. Bounded arrival batches avoid dropping large bursts, delivery outcomes refresh automatically, and reconnects or expired reading boundaries recover automatically. Existing 20/50/100 pagination, filters, and 64-pixel rows remain supported; no click is required to reveal new activity.
+- Added deterministic budget, migration/recovery, snapshot, refresh-race, hidden-tab, draft/focus, and 500-watch browser coverage, with mobile/light/dark accessibility checks. Updated the Wiki for configuration and compatibility.
+
+- Simplified Watchlist controls to one primary row for search, status, collection, and sorting. View options groups category, layout, collection grouping, and saved views; Manage groups collection management, imports, and bulk selection. Browse saved views now sit under View options beside sorting. All view selectors share the existing dropdown styling, with responsive panels, visible active-filter context, keyboard dismissal, and focus restoration.
+- Added named Watchlist and Browse views, stored per regional Store on the installation and included in recovery exports/backups. Save, rename, replace filters, or delete views across devices, with revision conflict protection. Added Cards/Compact list layout with product images, prices, status, memberships, and actions.
+- Added effective alert summaries and accessible Why? explanations for items and collections. They explain inherited event settings, target conditions, pauses, purchased state, collection-only overrides, enabled channels, scheduling, and cooldowns. Actual pending/processing/failed jobs are shown separately from hypothetical delivery timing. Collection changes refresh member summaries immediately.
+- Hardened owner-initiated updates: persist the Docker version in project `.env`, verify the running image, check local startup health and the expected application version, retain native build metadata, and report recovery instructions after failed restarts. Native helpers support custom ports; all helpers retain mandatory backup confirmation. Rollback requires a compatible pre-update database and matching key. No schema or export-format change.
+- Added deterministic view/recovery/alert tests, mobile/light/dark/keyboard browser coverage, and isolated Windows, Linux/macOS and Docker updater success/failure fixtures. Updated the Wiki for usage, API details, and recovery limitations.
 
 - Shortened the README into an overview and setup guide, with complete platform, feature, configuration, API, security, recovery, and release documentation in the navigable GitHub Wiki. Updated deployment and offline quick-start links and clarified source archive layouts, saved-setting precedence, Windows task management, and Docker update pinning.
 - Organized the repository root into `docs/` for release history and getting-started guidance, `launchers/` for source startup scripts, and `.github/` for contribution and security policies. Updated launch paths, documentation, CI, and release packaging; standalone downloads retain their top-level getting-started file.
 - Removed local agent instructions from Git tracking and expanded ignore rules for editor files, local environment/Compose overrides, credentials, SQLite state, backups, exports, logs, and generated release artifacts.
 - Made real-host installation, upgrade, rollback, manual accessibility, and soak testing optional release recommendations. Automated CI, security, packaging, checksum, SBOM, attestation, and protected-branch requirements remain mandatory.
+
+## V1.2.0 — Stock insights and collection readiness
+
+See the [published 1.2.0 release notes](https://github.com/alexphillips-dev/GearBeacon/releases/tag/v1.2.0) for changes since 1.0.0.
+
 - Corrected the release manifest and standalone validation to use schema v11, added schema/curated-note consistency checks, and included purchase-plan and Watchlist-workflow tests in the Windows/macOS/Linux CI matrix. GitHub release publication now uses the curated release notes.
 - Fixed browser persistence checks racing page reloads by waiting for a new document before inspecting restored navigation and filters.
 - Removed dynamic browser-test code construction from collection persistence and Activity pagination assertions flagged by CodeQL; browser-returned identifiers are compared outside the browser expression.

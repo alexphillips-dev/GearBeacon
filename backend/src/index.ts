@@ -1,4 +1,4 @@
-// GearBeacon V1.2.0 backend
+// GearBeacon V1.3.0 backend
 // Private, owner-operated stock monitoring for local and self-hosted installs.
 // @ts-nocheck
 
@@ -11,11 +11,12 @@ const net = require('node:net');
 const tls = require('node:tls');
 const { AsyncLocalStorage } = require('node:async_hooks');
 const { URL } = require('node:url');
+const { execFileSync } = require('node:child_process');
 const { DatabaseSync } = require('node:sqlite');
 const { renderEmail, buildMimeEmail, numericPrice } = require('./email');
 
-const APP_VERSION = '1.2.0';
-const DATABASE_SCHEMA_VERSION = 11;
+const APP_VERSION = '1.3.0';
+const DATABASE_SCHEMA_VERSION = 13;
 const STORE_BASE = 'https://store.ui.com';
 const REGIONS = {
   us: { label: 'United States', path: 'us/en', currency: 'USD', origin: STORE_BASE },
@@ -79,6 +80,7 @@ let SMTP_TO = String(process.env.SMTP_TO || '').split(',').map((value) => value.
 const MOCK_MODE = ['1', 'true', 'yes'].includes(String(process.env.MOCK_MODE || '').toLowerCase());
 const UPDATE_MANIFEST_URL = String(process.env.GEARBEACON_UPDATE_MANIFEST_URL || '').trim();
 const GITHUB_RELEASE_API = String(process.env.GEARBEACON_GITHUB_RELEASE_API !== undefined ? process.env.GEARBEACON_GITHUB_RELEASE_API : 'https://api.github.com/repos/alexphillips-dev/GearBeacon/releases/latest').trim();
+const AUTO_UPDATE_CHECKS = !['0', 'false', 'no'].includes(String(process.env.GEARBEACON_AUTO_UPDATE_CHECKS ?? '1').toLowerCase());
 let PUBLIC_BASE_URL = String(process.env.GEARBEACON_PUBLIC_BASE_URL || '').trim().replace(/\/$/, '');
 const MIN_CATALOG_RATIO = Math.min(0.95, Math.max(0.1, Number(process.env.GEARBEACON_MIN_CATALOG_RATIO || 0.55)));
 const STALE_AFTER_SECONDS = Math.max(POLL_SECONDS * 3, Number(process.env.GEARBEACON_STALE_AFTER_SECONDS || 180));
@@ -138,6 +140,13 @@ const LEGACY_DATA_DIR = path.join(PROJECT_ROOT, 'data');
 const RELEASE_MANIFEST_FILE = path.join(PROJECT_ROOT, 'release-manifest.json');
 const BUILD_INFO_FILE = path.join(PROJECT_ROOT, 'build-info.json');
 const BUILD_INFO = fs.existsSync(BUILD_INFO_FILE) ? safeJsonParse(fs.readFileSync(BUILD_INFO_FILE, 'utf8'), {}) : {};
+const RUNNING_BUILD = runningBuildIdentity();
+let updateCheckTask = null;
+let updateCheckTimer = null;
+let updateRetryAfter = 0;
+let updateStatus = { currentVersion:RUNNING_BUILD.version, latestVersion:RUNNING_BUILD.version, channel:RUNNING_BUILD.channel,
+  currentCommit:RUNNING_BUILD.commit, updateAvailable:false, verified:false, checkedAt:null, lastAttemptAt:null, nextCheckAt:null,
+  releaseNotesUrl:null, warning:null, automatic:AUTO_UPDATE_CHECKS };
 
 function defaultUserDataDir() {
   if (process.env.GEARBEACON_DATA_DIR) return path.resolve(process.env.GEARBEACON_DATA_DIR);
@@ -219,6 +228,58 @@ function setSetting(key, value) {
     ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`).run(key, String(value), isoNow());
 }
 
+// Owner views use the existing settings store, so backups retain them without a schema change.
+function normalizeViewFilters(scope, input) {
+  const invalid = message => Object.assign(new Error(message), {statusCode:400});
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw invalid('Choose valid view filters.');
+  const text = (key, fallback, max = 200) => {
+    const value = input[key] === undefined ? fallback : input[key];
+    if (typeof value !== 'string' || value.length > max || /[\x00-\x1f\x7f]/.test(value)) throw invalid(`Invalid ${key} filter.`);
+    return value.trim();
+  };
+  const choice = (key, values, fallback) => { const value = text(key, fallback); if (!values.includes(value)) throw invalid(`Invalid ${key} filter.`); return value; };
+  const filters = { search:text('search', ''), category:text('category', scope === 'browse' ? 'All' : 'all', 100) };
+  if (scope === 'browse') return { ...filters, availability:choice('availability', ['all','in','out','soon','unlisted'], 'all'), watching:choice('watching', ['all','watched','unwatched'], 'all'), sort:choice('sort', ['name','price-low','price-high','availability'], 'name') };
+  if (scope !== 'watchlist') throw invalid('Choose Watchlist or Browse for a saved view.');
+  if (input.groupCollections !== undefined && typeof input.groupCollections !== 'boolean') throw invalid('Invalid collection grouping setting.');
+  return { ...filters, status:choice('status', ['all','in','out','paused','purchased','wanted'], 'all'), sort:choice('sort', ['changed','added','name','price-low','price-high','availability'], 'changed'), collection:text('collection','all',80), overview:choice('overview',['all','ready','target','collections'],'all'), groupCollections:input.groupCollections === true, layout:choice('layout',['cards','compact'],'cards') };
+}
+
+function ownerViews() {
+  const saved = safeJsonParse(getSetting('owner_views', '[]'), []);
+  if (!Array.isArray(saved)) return [];
+  return saved.slice(0, 120).flatMap((view) => {
+    try {
+      if (!view || typeof view.id !== 'string' || !/^[a-zA-Z0-9-]{1,80}$/.test(view.id) || typeof view.region !== 'string' || !Object.hasOwn(REGIONS,view.region) || !Number.isSafeInteger(view.revision) || view.revision < 1) return [];
+      return [{ id:view.id, name:collectionName(view.name), region:view.region, scope:view.scope, revision:view.revision, filters:normalizeViewFilters(view.scope,view.filters) }];
+    } catch { return []; }
+  });
+}
+
+function savedViewsForRegion() {
+  return ownerViews().filter((view) => view.region === currentRegion());
+}
+
+function changeOwnerView(input, id = null, remove = false) {
+  const views = ownerViews();
+  const previous = id ? views.find((view) => view.id === id && view.region === currentRegion()) : null;
+  if (id && !previous) throw Object.assign(new Error('Saved view no longer exists. Refresh the view list.'), { statusCode:404 });
+  if (previous && input?.revision !== previous.revision) throw Object.assign(new Error('This view changed on another device. Reopen it before saving.'), { statusCode:409 });
+  let next;
+  if (!remove) {
+    const scope = previous?.scope || input?.scope;
+    let name;
+    try { name = collectionName(input?.name); } catch { throw Object.assign(new Error('Choose a view name with 1 to 80 printable characters.'),{statusCode:400}); }
+    const filters = normalizeViewFilters(scope, input?.filters ?? previous?.filters);
+    if (views.some((view) => view.id !== id && view.region === currentRegion() && view.scope === scope && view.name.toLowerCase() === name.toLowerCase())) throw Object.assign(new Error('A view with that name already exists here.'), { statusCode:409 });
+    if (!id && savedViewsForRegion().length >= 30) throw Object.assign(new Error('A store can contain at most 30 saved views.'),{statusCode:400});
+    if (scope === 'watchlist' && !['all','none'].includes(filters.collection) && !db.prepare('SELECT id FROM watch_collections WHERE region=? AND id=?').get(currentRegion(), filters.collection)) throw Object.assign(new Error('That collection no longer exists. Choose another collection before saving.'),{statusCode:400});
+    next = { id:id || crypto.randomUUID(), name, scope, region:currentRegion(), revision:(previous?.revision || 0) + 1, filters };
+  }
+  setSetting('owner_views', JSON.stringify([...views.filter((view) => view.id !== id || view.region !== currentRegion()), ...(next ? [next] : [])]));
+  return { ok:true, view:next || null, views:savedViewsForRegion() };
+}
+
 function notificationPreferences() {
   const raw = safeJsonParse(getSetting('notification_preferences', ''), {});
   const normalized = { ...DEFAULT_NOTIFICATION_PREFERENCES };
@@ -249,7 +310,54 @@ const DEFAULT_WATCH_RULE = Object.freeze({
   pausedUntil: null,
   availableUnderTarget: false,
   purchasedAt: null,
+  channels: null,
+  maxAlertAgeMinutes: null,
 });
+
+function normalizeAlertDelivery(input = {}, base = { channels:null, maxAlertAgeMinutes:null }) {
+  const result = { channels:base.channels ?? null, maxAlertAgeMinutes:base.maxAlertAgeMinutes ?? null };
+  if (input.channels !== undefined) {
+    if (input.channels !== null && (!Array.isArray(input.channels) || input.channels.length > CHANNEL_NAMES.length || input.channels.some(channel => !CHANNEL_NAMES.includes(channel)))) throw new Error('Choose valid notification channels or use defaults.');
+    result.channels = input.channels === null ? null : CHANNEL_NAMES.filter(channel => input.channels.includes(channel));
+  }
+  if (input.maxAlertAgeMinutes !== undefined) {
+    const age = input.maxAlertAgeMinutes;
+    if (age !== null && (!Number.isInteger(age) || age < 1 || age > 10080)) throw new Error('Alert expiry must be a whole number from 1 to 10,080 minutes, or empty.');
+    result.maxAlertAgeMinutes = age;
+  }
+  return result;
+}
+
+function collectionAlertDelivery(id, region = currentRegion()) {
+  const row = db.prepare('SELECT delivery_json FROM watch_collections WHERE region=? AND id=?').get(region, id);
+  return normalizeAlertDelivery(safeJsonParse(row?.delivery_json, {}));
+}
+
+function eventAlertDelivery(event, override = null) {
+  if (['test','operational'].includes(event.type)) return normalizeAlertDelivery();
+  if (event.type === 'collection_ready') return collectionAlertDelivery(event.collectionId, event.region || currentRegion());
+  return normalizeAlertDelivery(override || (event.watchedAtDetection ? watchRule(event.slug, event.region || currentRegion()) : {}));
+}
+
+function deliveryChannels(policy) {
+  return (policy.channels ?? CHANNEL_NAMES).filter(channelConfigured);
+}
+
+function cancelDeliveryJob(row, reason) {
+  db.prepare("UPDATE notification_queue SET status='cancelled',last_error=?,updated_at=? WHERE id=? AND status IN ('pending','failed','processing')").run(reason, isoNow(), row.id);
+  logNotification(row.event_id, row.channel, 'cancelled', reason);
+}
+
+function reconcileAlertDelivery(region, identity, collection = false) {
+  const key = collection ? 'collectionId' : 'slug';
+  const rows = db.prepare(`SELECT * FROM notification_queue WHERE region=? AND status IN ('pending','failed') AND json_extract(payload_json,'$.${key}')=?`).all(region, identity);
+  for (const row of rows) {
+    const event = safeJsonParse(row.payload_json, {});
+    const policy = eventAlertDelivery(event);
+    if (policy.channels !== null && !policy.channels.includes(row.channel)) cancelDeliveryJob(row, 'Channel removed from this alert route.');
+    else if (alertExpired(event, policy)) cancelDeliveryJob(row, 'Alert expired before delivery.');
+  }
+}
 
 function priceValue(value) {
   return numericPrice(value);
@@ -257,7 +365,7 @@ function priceValue(value) {
 
 function normalizeWatchRule(input, base = DEFAULT_WATCH_RULE) {
   const value = input && typeof input === 'object' ? input : {};
-  const normalized = { ...base };
+  const normalized = { ...base, ...normalizeAlertDelivery(value, base) };
   if (typeof value.enabled === 'boolean') normalized.enabled = value.enabled;
   for (const key of ['restock', 'soldOut', 'priceChange', 'statusChange']) {
     if (value[key] === null || typeof value[key] === 'boolean') normalized[key] = value[key];
@@ -313,6 +421,7 @@ function saveWatchRule(slug, input, region = currentRegion()) {
   if (next.targetPrice !== previous.targetPrice || next.purchasedAt !== previous.purchasedAt) {
     baselineCollections(region, db.prepare('SELECT collection_id FROM watch_collection_members WHERE region=? AND slug=?').all(region, slug).map((row) => row.collection_id));
   }
+  if (JSON.stringify(next.channels) !== JSON.stringify(previous.channels) || next.maxAlertAgeMinutes !== previous.maxAlertAgeMinutes) reconcileAlertDelivery(region, slug);
   return next;
 }
 
@@ -733,6 +842,14 @@ MIGRATIONS.push({ version:10, name:'collection-purchase-plans', sql:`
 
 MIGRATIONS.push({ version:11, name:'archived-collections', sql:`
   ALTER TABLE watch_collections ADD COLUMN archived INTEGER NOT NULL DEFAULT 0 CHECK(archived IN (0,1));
+` });
+
+MIGRATIONS.push({ version:12, name:'collection-budget-alerts', sql:`
+  ALTER TABLE watch_collections ADD COLUMN budget_required INTEGER NOT NULL DEFAULT 0 CHECK(budget_required IN (0,1));
+` });
+
+MIGRATIONS.push({ version:13, name:'alert-routing-and-expiry', sql:`
+  ALTER TABLE watch_collections ADD COLUMN delivery_json TEXT NOT NULL DEFAULT '{}';
 ` });
 
 function runMigrations() {
@@ -1782,12 +1899,29 @@ async function postJson(url, body, headers = {}) {
 }
 
 function notificationCopy(event) {
+  const copy = originalNotificationCopy(event);
+  if (event.deliveryContext) return { ...copy, title:`Delayed alert: ${event.name}`, body:`${copy.body.replace(' · detected now', '')}\n${event.deliveryContext.message}` };
+  return copy;
+}
+
+function digestNotificationBody(event, region) {
+  const lines = [];
+  for (const item of event.events || []) {
+    const line = `${item.name}: ${item.status || item.type}${item.deliveryContext ? ` (${item.deliveryContext.message})` : ''}`;
+    if (lines.length >= 8 || lines.join(' · ').length + line.length > 1500) break;
+    lines.push(line);
+  }
+  const remaining = (event.events?.length || 0) - lines.length;
+  return `${lines.join(' · ')}${remaining ? ` · ${remaining} more updates in GearBeacon` : ''} · ${region}`;
+}
+
+function originalNotificationCopy(event) {
   const regionKey = event.region || currentRegion();
   const region = REGIONS[regionKey]?.label || String(regionKey).toUpperCase();
   if (event.type === 'collection_ready') return { title:`${event.name} is ready`, body:`${event.detail} · ${region}`, ntfyTags:'white_check_mark,package' };
   if (event.type === 'digest') return {
     title: `${event.events?.length || 0} GearBeacon stock updates`,
-    body: `${(event.events || []).slice(0, 8).map((item) => `${item.name}: ${item.status || item.type}`).join(' · ')}${event.events?.length > 8 ? ' · more…' : ''} · ${region}`,
+    body: digestNotificationBody(event, region),
     ntfyTags: 'package,bell',
   };
   if (event.type === 'sold_out') return {
@@ -1869,6 +2003,67 @@ function notificationDecision(event, prefs = notificationPreferences(), ruleOver
 
 function shouldNotifyEvent(event, prefs = notificationPreferences()) {
   return notificationDecision(event, prefs).allowed;
+}
+
+function alertConfiguration(product = null, collection = null) {
+  const region = currentRegion();
+  const rule = product ? watchRule(product.slug, region) : { ...DEFAULT_WATCH_RULE };
+  const policy = normalizeAlertDelivery(collection || rule);
+  const channels = deliveryChannels(policy);
+  const prefs = notificationPreferences();
+  const reasons = [];
+  let state = 'active', label = '', events = [];
+  if (collection) {
+    events = ['collection_ready'];
+    if (collection.archived) { state='off'; label='Archived · collection alerts off'; }
+    else if (!collection.notifyReady) { state='off'; label='Collection readiness alerts off'; }
+    else if (!collection.readiness?.remaining) { state='waiting'; label='No remaining items to alert for'; }
+    else label='Collection readiness alerts enabled';
+    reasons.push('Alerts once when every remaining item becomes available at or below its shared target, if set. Enabling alerts or editing conditions establishes a baseline; it does not send an immediate catch-up alert.');
+    if (collection.budgetRequired) reasons.push(`The project must also be within budget. ${collection.readiness?.budget?.reason || 'Waiting for confirmed costs.'}`);
+    reasons.push(collection.alertsOnly && collection.notifyReady && !collection.archived ? 'This collection suppresses individual member alerts while active. Saved item rules are retained.' : 'Individual item rules apply unless another active collection suppresses them.');
+    reasons.push('Pausing an individual item does not pause collection readiness alerts.');
+  } else {
+    const suppressors = collectionAlertSuppressors(product.slug, region);
+    if (rule.purchasedAt) { state='off'; label='Purchased · alerts stopped'; }
+    else if (suppressors.length) { state='suppressed'; label=`Individual alerts suppressed by ${suppressors.map(value=>value.name).join(', ')}`; reasons.push('An active collection uses Collection alerts only. This also overrides All activity and immediate restocks; your saved item rules are retained.'); }
+    else if (prefs.allActivity) { label='All activity alerts enabled'; events=['restock','sold_out','price_change','status_change']; reasons.push('All activity overrides event choices, targets, and individual pauses. Purchased watches and collection-only suppression still stop item alerts.'); }
+    else if (rulePaused(rule)) { state='off'; label=!rule.enabled ? 'Individual alerts disabled' : rule.pausedUntil === 'indefinite' ? 'Alerts paused until resumed' : `Alerts paused until ${rule.pausedUntil}`; }
+    else {
+      const enabled = key => rule[key] === null ? Boolean(prefs[key]) : Boolean(rule[key]);
+      if (rule.availableUnderTarget) { events.push('restock','price_change'); label=`Available-at-target alerts enabled · ${rule.targetPrice.toFixed(2)} ${REGIONS[region].currency}`; reasons.push('The same variant must be available and meet the target. One alert per qualifying period; fresh confirmed observations rearm the rule.'); }
+      else {
+        if (enabled('restock')) events.push('restock');
+        if (rule.targetPrice !== null || enabled('priceChange')) events.push('price_change');
+        if (rule.targetPrice !== null) reasons.push(`Price alerts require crossing the ${rule.targetPrice.toFixed(2)} ${REGIONS[region].currency} target. Restock alerts do not require that target unless available-at-target is enabled.`);
+        else if (rule.priceDropOnly) reasons.push('Price-change alerts are limited to decreases.');
+      }
+      if (enabled('soldOut')) events.push('sold_out');
+      if (enabled('statusChange')) events.push('status_change');
+      if (!events.length) { state='off'; label='Individual event alerts off'; }
+      else if (!label) label=events.length === 1 && events[0] === 'restock' ? 'Restock alerts enabled' : 'Individual alerts enabled';
+      reasons.push('Unset event choices inherit Settings > Notifications.');
+    }
+  }
+  reasons.push(policy.channels === null ? 'Delivery uses all enabled, configured server channels.' : `Selected server channels: ${policy.channels.join(', ') || 'none'}. Disabled or unconfigured channels cannot deliver. Adding a channel does not resend earlier events.`);
+  if (policy.maxAlertAgeMinutes !== null) reasons.push(`Restock, price-opportunity, and collection-ready alerts expire after ${policy.maxAlertAgeMinutes} minutes from detection. Activity history is retained.`);
+  if (state === 'active' && !channels.length) { state='no-channel'; reasons.unshift(label + '.'); label='No server notification channel selected or enabled'; }
+  if (!channels.length) reasons.push('Select a configured channel for this alert or use defaults. Configure channels in Settings > Notifications. Browser popups use separate browser permissions.');
+  reasons.push('This describes saved rules, not a promise of stock or a queued notification. Actual jobs are shown separately.');
+  return { state, label, channels, selectedChannels:policy.channels, maxAlertAgeMinutes:policy.maxAlertAgeMinutes, events, reasons, pausedUntil:rule.pausedUntil, immediateRestock:rule.immediateRestock, timeZone:NOTIFICATION_TIME_ZONE };
+}
+
+function alertExplanation(product = null, collection = null) {
+  const configuration = alertConfiguration(product, collection);
+  const region = currentRegion();
+  const identity = collection ? collection.id : product.slug;
+  const expression = collection ? "json_extract(payload_json,'$.collectionId')" : "json_extract(payload_json,'$.slug')";
+  const delivery = db.prepare(`SELECT event_id AS eventId,channel,status,attempts,next_attempt_at AS deliverAt,(SELECT data_json FROM events WHERE id=notification_queue.event_id) AS event_json FROM notification_queue WHERE region=? AND ${expression}=? AND status IN ('pending','processing','failed') ORDER BY id DESC LIMIT 20`).all(region, identity)
+    .map(({ event_json, ...row }) => ({ ...row, mode:safeJsonParse(event_json, {})?.serverAlert?.mode || null }));
+  const plans = configuration.state === 'active' ? configuration.events.map(type => ({ type, ...deliveryPlan({type,region,slug:product?.slug}, product ? watchRule(product.slug) : DEFAULT_WATCH_RULE) })) : [];
+  const cooldowns = db.prepare('SELECT event_type AS type,last_notified_at AS notifiedAt FROM notification_cooldowns WHERE region=? AND slug=?').all(region, collection ? `collection:${identity}` : identity)
+    .map(row => ({ type:row.type, until:new Date(new Date(row.notifiedAt).getTime() + NOTIFICATION_COOLDOWN_MINUTES * 60000).toISOString() })).filter(row => new Date(row.until).getTime() > Date.now());
+  return { configuration, delivery, deliveryLimit:20, plans, cooldowns, name:collection?.name || product.name };
 }
 
 function logNotification(eventId, channel, status, detail = null) {
@@ -2278,7 +2473,8 @@ function enqueueAlert(event, options = {}) {
     return 0;
   }
   const excluded = new Set(options.excludeChannels || []);
-  const channels = CHANNEL_NAMES.filter((channel) => channelConfigured(channel) && !excluded.has(channel));
+  const policy = eventAlertDelivery(event);
+  const channels = deliveryChannels(policy).filter(channel => !excluded.has(channel));
   const now = isoNow();
   const plan = deliveryPlan(event, rule);
   if (!channels.length) {
@@ -2287,7 +2483,7 @@ function enqueueAlert(event, options = {}) {
   }
   const insert = db.prepare(`INSERT INTO notification_queue(event_id,region,channel,payload_json,attempts,max_attempts,next_attempt_at,status,last_error,created_at,updated_at)
     VALUES(?,?,?,?,0,?,?,'pending',NULL,?,?) ON CONFLICT(event_id,channel) DO NOTHING`);
-  for (const channel of channels) insert.run(event.id, event.region || currentRegion(), channel, JSON.stringify(event), NOTIFICATION_MAX_ATTEMPTS, plan.deliverAt, now, now);
+  for (const channel of channels) insert.run(event.id, event.region || currentRegion(), channel, JSON.stringify({ ...event, deliveryPolicy:policy }), NOTIFICATION_MAX_ATTEMPTS, plan.deliverAt, now, now);
   if (channels.length) {
     rememberPlan({ state:'queued', reason:'enabled', mode:plan.mode, deliverAt:plan.deliverAt, channels });
     markCooldown(event);
@@ -2333,8 +2529,12 @@ function eventServerAlertSummary(event, decision, queueRows = [], logRows = []) 
     const explanation = mode === 'digest' ? 'Queued for the daily digest' : mode === 'after-quiet-hours' ? 'Held until quiet hours end' : attempts ? 'Waiting for another delivery attempt' : 'Server alert queued';
     return { state:attempts ? 'retrying' : mode === 'digest' ? 'digest' : mode === 'after-quiet-hours' ? 'quiet' : 'queued', label, detail:`${explanation}${channelText ? ` through ${channelText}` : ''}.`, channels, mode, deliverAt:next };
   }
-  if (sentChannels.length || statuses.has('sent')) return { state:'sent', label:'Sent', detail:`Server alert sent${channelText ? ` through ${channelText}` : ''}.`, channels, mode:event.serverAlert?.mode || null, deliverAt:event.serverAlert?.deliverAt || null };
-  if (statuses.has('cancelled')) return { state:'muted', label:'Cancelled', detail:decision.reason === 'purchased' ? 'Pending delivery was cancelled when this watch was marked purchased.' : 'Server delivery was cancelled by a watch or channel change.', channels, mode:event.serverAlert?.mode || null, deliverAt:event.serverAlert?.deliverAt || null };
+  if (sentChannels.length || statuses.has('sent')) return { state:'sent', label:sentChannels.length === 1 ? `Sent · ${displayChannel(sentChannels[0])}` : sentChannels.length > 1 ? `Sent · ${sentChannels.length} channels` : 'Sent', detail:`Server alert sent${channelText ? ` through ${channelText}` : ''}.`, channels, mode:event.serverAlert?.mode || null, deliverAt:event.serverAlert?.deliverAt || null };
+  if (statuses.has('cancelled')) {
+    const expired = currentRows.some(row => (row.last_error || row.detail) === 'Alert expired before delivery.');
+    const removed = currentRows.some(row => (row.last_error || row.detail) === 'Channel removed from this alert route.');
+    return { state:'muted', label:expired ? 'Expired' : 'Cancelled', detail:expired ? 'The alert expired before delivery; its original observation remains in Activity.' : removed ? 'Pending delivery was cancelled because this channel was removed from the alert route.' : decision.reason === 'purchased' ? 'Pending delivery was cancelled when this watch was marked purchased.' : 'Server delivery was cancelled by a watch or channel change.', channels, mode:event.serverAlert?.mode || null, deliverAt:event.serverAlert?.deliverAt || null };
+  }
 
   const snapshot = event.serverAlert;
   if (snapshot?.state === 'no-channel') return { state:'no-channel', label:'No channel', detail:'This event matched your alert rules, but no server notification channel was configured.', channels:[], mode:snapshot.mode || null, deliverAt:snapshot.deliverAt || null };
@@ -2350,8 +2550,11 @@ function eventServerAlertSummary(event, decision, queueRows = [], logRows = []) 
       disabled:'This event type was disabled by your alert rules.',
       cooldown:'The alert was suppressed by the configured cooldown.',
       'unsupported-event':'This event type does not send server alerts.',
+      'variant-baseline':'The initial discovery of an exact variant does not send a new-product alert.',
+      'collection-disabled':'Readiness alerts for this collection are disabled.',
     };
-    return { state:'muted', label:reason === 'not-watched' ? 'No alert' : 'Muted', detail:reasons[reason] || 'No server alert was sent for this event.', channels:[], mode:null, deliverAt:null };
+    const labels = { 'not-watched':'Not watched', paused:'Alerts paused', purchased:'Purchased', disabled:'Rule filtered', cooldown:'Cooldown', 'collection-only':'Collection only', 'collection-disabled':'Collection alerts off', 'condition-not-met':'Target not met', 'condition-already-matched':'Already alerted', 'variant-baseline':'Variant discovered', 'unsupported-event':'No alert for this type' };
+    return { state:'muted', reason, label:labels[reason] || 'No alert', detail:reasons[reason] || 'No server alert was sent for this event.', channels:[], mode:null, deliverAt:null };
   }
   if (snapshot?.state === 'queued') return { state:'queued', label:'Alerted', detail:'A server alert was queued when this change was detected; detailed delivery history is no longer available.', channels:snapshot.channels || [], mode:snapshot.mode || null, deliverAt:snapshot.deliverAt || null };
   return { state:'no-channel', label:'No channel', detail:'No server-side notification delivery was recorded for this event.', channels:[], mode:null, deliverAt:null };
@@ -2359,6 +2562,37 @@ function eventServerAlertSummary(event, decision, queueRows = [], logRows = []) 
 
 function retryDelaySeconds(attempts) {
   return Math.min(30 * 60, 30 * (2 ** Math.max(0, attempts - 1)));
+}
+
+function alertExpired(event, currentPolicy = eventAlertDelivery(event), now = Date.now()) {
+  if (!['restock','collection_ready'].includes(event.type) && !['target_price','price_drop'].includes(event.alertKind)) return false;
+  const limits = [event.deliveryPolicy?.maxAlertAgeMinutes, currentPolicy.maxAlertAgeMinutes].filter(value => Number.isInteger(value) && value > 0);
+  return Boolean(limits.length && now - new Date(event.detectedAt).getTime() >= Math.min(...limits) * 60000);
+}
+
+function delayedAlertContext(event, now = Date.now()) {
+  const ageSeconds = Math.floor((now - new Date(event.detectedAt).getTime()) / 1000);
+  if (!Number.isFinite(ageSeconds) || ageSeconds < 60 || ['test','operational'].includes(event.type)) return event;
+  const region = event.region || currentRegion();
+  const product = states[region]?.products[event.sourceSlug || event.slug];
+  let freshness = productFreshness(product, region), status = null, price = null;
+  if (event.type === 'collection_ready') {
+    const collection = watchCollections(region).find(item => item.id === event.collectionId);
+    if (collection) {
+      const ready = collection.readiness;
+      freshness = { state:coverageFresh(region) && !ready.unknown && !(collection.budgetRequired && ready.budget.state === 'unknown') ? 'confirmed' : 'unknown', checkedAt:ready.checkedAt };
+      status = collection.archived ? 'Archived' : ready.ready ? 'Ready' : ready.unknown ? 'Unknown' : 'Not ready';
+    }
+  } else if (product) {
+    status = product.unlisted ? 'Unlisted' : product.inStock ? 'In stock' : product.comingSoon ? 'Coming soon' : 'Sold out';
+    price = product.price || null;
+  }
+  const timeZone = event.notificationTimeZone || NOTIFICATION_TIME_ZONE;
+  const format = value => new Date(value).toLocaleString('en-US', { timeZone, timeZoneName:'short' });
+  const current = freshness.state === 'confirmed' && status ? `Latest confirmed status: ${status}${price ? `; ${price}` : ''} (checked ${format(freshness.checkedAt)}).`
+    : `Current status is unconfirmed${freshness.state === 'pending' ? ': a change is awaiting confirmation' : ': waiting for a complete, recent check'}.${status ? ` Last known status: ${status}${price ? `; ${price}` : ''}.` : ''}`;
+  const deliveryContext = { asOf:new Date(now).toISOString(), ageSeconds, freshness, status, price, message:`Detected ${format(event.detectedAt)}. ${current}` };
+  return { ...event, deliveryContext };
 }
 
 let notificationWorkerRunning = false;
@@ -2379,6 +2613,9 @@ async function processNotificationQueue() {
       const rows = pendingRows.filter((row) => {
         if (db.prepare('SELECT status FROM notification_queue WHERE id=?').get(row.id)?.status !== 'pending') return false;
         const event = safeJsonParse(row.payload_json, {});
+        const policy = eventAlertDelivery(event);
+        if (policy.channels !== null && !policy.channels.includes(row.channel)) { cancelDeliveryJob(row, 'Channel removed from this alert route.'); return false; }
+        if (alertExpired(event, policy)) { cancelDeliveryJob(row, 'Alert expired before delivery.'); return false; }
         if ((event.type === 'collection_ready' && !collectionAlertActive(event.collectionId,row.region)) || (event.slug && !['test','operational','collection_ready'].includes(event.type) && collectionAlertSuppressors(event.slug, row.region).length)) {
           db.prepare("UPDATE notification_queue SET status='cancelled',last_error='Alert disabled by collection settings.',updated_at=? WHERE id=?").run(isoNow(), row.id);
           return false;
@@ -2393,12 +2630,12 @@ async function processNotificationQueue() {
         continue;
       }
       db.prepare(`UPDATE notification_queue SET status='processing',updated_at=? WHERE id IN (${marks})`).run(isoNow(), ...ids);
-      const events = rows.map((row) => safeJsonParse(row.payload_json, {}));
+      const events = rows.map((row) => delayedAlertContext(safeJsonParse(row.payload_json, {})));
       const event = events.length > 1 ? { id: `digest-${rows[0].id}`, type: 'digest', alertKind:'digest', events, region: rows[0].region, detectedAt: isoNow(), notificationTimeZone:NOTIFICATION_TIME_ZONE, url: PUBLIC_BASE_URL || null, dashboardUrl:PUBLIC_BASE_URL || null } : events[0];
       try {
         await regionContext.run(rows[0].region, () => sendChannel(rows[0].channel, event));
         db.prepare(`UPDATE notification_queue SET status='sent',attempts=attempts+1,last_error=NULL,updated_at=? WHERE id IN (${marks})`).run(isoNow(), ...ids);
-        for (const row of rows) logNotification(row.event_id, row.channel, 'sent', `attempt ${row.attempts + 1}${events.length > 1 ? `; grouped ${events.length}` : ''}`);
+        for (const [index, row] of rows.entries()) logNotification(row.event_id, row.channel, 'sent', `attempt ${row.attempts + 1}${events.length > 1 ? `; grouped ${events.length}` : ''}${events[index].deliveryContext ? `; delayed alert context: ${events[index].deliveryContext.message}` : ''}`);
         if (monitors[rows[0].region]) monitors[rows[0].region].lastAlertAt = isoNow();
       } catch (err) {
         const message = String(err?.message || err).slice(0, 1000);
@@ -2575,15 +2812,42 @@ function collectionReadiness(collection, region = currentRegion()) {
     const variants = !product.variantId ? Object.values(products).filter((entry) => entry.parentSlug === slug) : [];
     const candidates = variants.length ? variants : [product];
     const uncertain = (entry) => pending.some((row) => row.slug === entry.slug && (row.kind !== 'price' || rule.targetPrice !== null));
-    const matching = candidates.find((entry) => !uncertain(entry) && !entry.unlisted && entry.inStock && (rule.targetPrice === null || (priceValue(entry.price) !== null && priceValue(entry.price) <= rule.targetPrice)));
-    if (matching) return { ...item, state:'ready', reason:rule.targetPrice === null ? 'Available.' : 'Available at or below target.', matchingSlug:matching.slug };
+    const matching = candidates.filter((entry) => !uncertain(entry) && !entry.unlisted && entry.inStock && (rule.targetPrice === null || (priceValue(entry.price) !== null && priceValue(entry.price) <= rule.targetPrice)))
+      .sort((a,b) => (priceValue(a.price) ?? Infinity) - (priceValue(b.price) ?? Infinity) || a.slug.localeCompare(b.slug))[0];
+    if (matching) return { ...item, state:'ready', reason:rule.targetPrice === null ? 'Available.' : 'Available at or below target.', matchingSlug:matching.slug, unitPrice:priceValue(matching.price) };
     if (candidates.some((entry) => uncertain(entry) || (entry.inStock && rule.targetPrice !== null && priceValue(entry.price) === null))) return { ...item, reason:'Waiting for confirmed availability or price.' };
     return { ...item, state:'waiting', reason:candidates.some((entry) => entry.inStock && !entry.unlisted) ? 'Available above target price.' : product.unlisted ? 'Unlisted by the Store.' : 'Not available.' };
   });
   const count = (value) => items.filter((item) => item.state === value).length;
   const purchased = count('purchased'); const remaining = items.length - purchased; const qualifying = count('ready');
-  return { ready:remaining > 0 && qualifying === remaining, remaining, qualifying, purchased, waiting:count('waiting'), unknown:count('unknown'), items, checkedAt:coverageSessions.get(region)?.at || null,
-    confirmedNotReady:remaining === 0 || count('waiting') > 0 };
+  const budget = collectionBudgetCondition(collection, items, region, fresh, pending);
+  return { ready:remaining > 0 && qualifying === remaining && (!collection.budgetRequired || budget.state === 'within'), remaining, qualifying, purchased, waiting:count('waiting'), unknown:count('unknown'), items, budget, checkedAt:coverageSessions.get(region)?.at || null,
+    confirmedNotReady:remaining === 0 || count('waiting') > 0 || budget.state === 'over' };
+}
+
+function collectionBudgetCondition(collection, items, region, fresh, pending) {
+  const currency = REGIONS[region].currency;
+  const result = { state:'off', total:null, difference:null, currency, reason:'Project budget is not an alert condition.' };
+  if (!collection.budgetRequired) return result;
+  const unknown = (reason) => ({ ...result, state:'unknown', reason });
+  if (collection.budget == null) return unknown('Set a project budget in Edit collection.');
+  let cents = 0;
+  for (const item of items) {
+    const member = collection.items.find(value => value.slug === item.slug);
+    if (member.purchasedQuantity && member.paidTotal === null) return unknown('Record the amount paid for purchased units to confirm the project total.');
+    cents += Math.round((member.paidTotal || 0) * 100);
+    if (!item.remainingQuantity) continue;
+    if (!fresh || item.state !== 'ready') return unknown('Waiting for confirmed availability and prices for all remaining items.');
+    const product = states[region]?.products[item.matchingSlug];
+    if (!product || priceValue(product.price) === null || pending.some(row => row.slug === product.slug)) return unknown('Waiting for a confirmed price for each remaining item.');
+    // An unknown or pending alternative price must not falsely rearm an over-budget period.
+    const alternatives = Object.values(states[region]?.products || {}).filter(value => value.parentSlug === item.slug && value.inStock && !value.unlisted);
+    if (alternatives.some(value => priceValue(value.price) === null || pending.some(row => row.slug === value.slug))) return unknown('Waiting for confirmed variant prices. Select an exact variant to narrow this condition.');
+    cents += Math.round(priceValue(product.price) * 100) * item.remainingQuantity;
+  }
+  const difference = (Math.round(collection.budget * 100) - cents) / 100;
+  return { ...result, state:difference >= 0 ? 'within' : 'over', total:cents / 100, difference,
+    reason:difference >= 0 ? `Estimated project total ${(cents / 100).toFixed(2)} ${currency} is within budget.` : `${Math.abs(difference).toFixed(2)} ${currency} over budget.` };
 }
 
 function cancelCollectionAlerts(id, region = currentRegion()) {
@@ -2613,9 +2877,9 @@ function evaluateCollectionAlerts() {
         const at = isoNow();
         const dashboardUrl = PUBLIC_BASE_URL ? `${PUBLIC_BASE_URL.replace(/\/$/, '')}/?region=${currentRegion()}&collection=${encodeURIComponent(collection.id)}#watchlist` : null;
         const event = { id:crypto.randomUUID(), type:'collection_ready', alertKind:'collection_ready', collectionId:collection.id, name:collection.name, slug:null,
-          detail:`All ${result.remaining} remaining items are available and meet their target prices. ${result.purchased} already purchased.`, readiness:result,
+          detail:`All ${result.remaining} remaining items are available and meet their target prices. ${result.purchased} already purchased.${collection.budgetRequired ? ` ${result.budget.reason}` : ''}`, readiness:result,
           status:'Ready', region:currentRegion(), detectedAt:at, watchedAtDetection:false, url:null, dashboardUrl, notificationTimeZone:NOTIFICATION_TIME_ZONE,
-          triggerReason:'You enabled notifications when all remaining items in this collection qualify.',
+          triggerReason:`You enabled notifications when all remaining items in this collection qualify${collection.budgetRequired ? ' and the project is within budget' : ''}.`,
           confirmation:{ policy:'confirmed-collection-conditions', observations:1, required:1, firstObservedAt:at, confirmedAt:at } };
         recordEvent(event);
         enqueueAlert(event);
@@ -2884,12 +3148,23 @@ function scheduleMonitor() {
   timer.unref();
 }
 
+function productFreshness(product, region = currentRegion()) {
+  if (!product) return { state:'unknown', checkedAt:null, expiresAt:null, pendingKinds:[] };
+  const identities = [product.slug, ...(!product.variantId && Array.isArray(product.variantKeys) ? product.variantKeys : [])];
+  const pending = db.prepare(`SELECT DISTINCT kind FROM pending_transitions WHERE region=? AND slug IN (${identities.map(() => '?').join(',')})`).all(region, ...identities);
+  const checkedAt = db.prepare('SELECT ended_at FROM inventory_history WHERE region=? AND slug=? ORDER BY ended_at DESC,id DESC LIMIT 1').get(region, product.slug)?.ended_at || null;
+  const fresh = coverageFresh(region);
+  return { state:!fresh ? checkedAt ? 'stale' : 'unknown' : pending.length ? 'pending' : checkedAt ? 'confirmed' : 'unknown', checkedAt,
+    expiresAt:checkedAt ? new Date(new Date(coverageSessions.get(region)?.at || checkedAt).getTime() + coverageToleranceMs()).toISOString() : null,
+    pendingKinds:pending.map(row => row.kind) };
+}
+
 function productForApi(product) {
   if (!product) return null;
   const watched = state.watchlist.includes(product.slug);
   const watch = watched ? db.prepare('SELECT created_at FROM watchlist WHERE region=? AND slug=?').get(currentRegion(), product.slug) : null;
   const collections = watched ? db.prepare('SELECT collection_id FROM watch_collection_members WHERE region=? AND slug=?').all(currentRegion(), product.slug).map((row) => row.collection_id) : [];
-  return { ...product, watched, watchedAt:watch?.created_at || null, watchRule:watched ? watchRule(product.slug) : null, collections };
+  return { ...product, freshness:productFreshness(product), watched, watchedAt:watch?.created_at || null, watchRule:watched ? watchRule(product.slug) : null, collections, alertSummary:watched ? alertConfiguration(product) : null };
 }
 
 function collectionAlertActive(id, region = currentRegion()) {
@@ -2908,7 +3183,8 @@ function watchOverview(collections, region = currentRegion()) {
 
 function watchWorkspace() {
   const collections=watchCollections();
-  return { collections, overview:watchOverview(collections) };
+  const watchAlerts=Object.fromEntries(state.watchlist.filter(slug=>Object.hasOwn(state.products,slug)).map(slug=>[slug,alertConfiguration(state.products[slug])]));
+  return { collections, overview:watchOverview(collections), watchAlerts };
 }
 
 function collectionAlertSuppressors(slug, region = currentRegion()) {
@@ -2946,10 +3222,11 @@ function collectionItemRows(id, region = currentRegion()) {
 }
 
 function watchCollections(region = currentRegion()) {
-  return db.prepare('SELECT id,name,created_at AS createdAt,notify_ready AS notifyReady,ready_state AS readyState,budget,alerts_only AS alertsOnly,archived FROM watch_collections WHERE region=? ORDER BY name COLLATE NOCASE').all(region)
+  return db.prepare('SELECT id,name,created_at AS createdAt,notify_ready AS notifyReady,ready_state AS readyState,budget,alerts_only AS alertsOnly,archived,budget_required AS budgetRequired,delivery_json AS deliveryJson FROM watch_collections WHERE region=? ORDER BY name COLLATE NOCASE').all(region)
     .map((collection) => {
       const items = collectionItemRows(collection.id, region);
-      const value = { ...collection, notifyReady:Boolean(collection.notifyReady), alertsOnly:Boolean(collection.alertsOnly), archived:Boolean(collection.archived), items, slugs:items.map((item) => item.slug) };
+      const { deliveryJson, ...saved } = collection;
+      const value = { ...saved, ...normalizeAlertDelivery(safeJsonParse(deliveryJson, {})), notifyReady:Boolean(collection.notifyReady), alertsOnly:Boolean(collection.alertsOnly), archived:Boolean(collection.archived), budgetRequired:Boolean(collection.budgetRequired), items, slugs:items.map((item) => item.slug) };
       let spentCents = 0, remainingCents = 0, missingPaid = 0, missingPrices = 0, missing = 0;
       for (const item of items) {
         const unitPrice = priceValue(states[region]?.products[item.slug]?.price);
@@ -2966,7 +3243,8 @@ function watchCollections(region = currentRegion()) {
       const pricing = { total, currency:REGIONS[region].currency, priced:items.length - missing, missing, items:items.length };
       const planning = { quantity:items.reduce((sum,item) => sum + item.quantity,0), purchasedQuantity:items.reduce((sum,item) => sum + item.purchasedQuantity,0), completedItems:items.filter((item) => item.purchasedQuantity === item.quantity).length,
         spent:spentCents / 100, remainingCost:remainingCents / 100, estimatedTotal:total, missingPaid, missingPrices, budgetDifference:collection.budget === null || missing ? null : Math.round((collection.budget - total) * 100) / 100 };
-      return { ...value, pricing, planning, readiness:collectionReadiness(value, region) };
+      const result = { ...value, pricing, planning, readiness:collectionReadiness(value, region) };
+      return { ...result, alertSummary:regionContext.run(region, () => alertConfiguration(null,result)) };
     });
 }
 
@@ -3199,6 +3477,7 @@ function productDetailsForApi(slug, days = 30) {
     history,
     insights:productInsights(slug, days),
     historyRetentionDays: HISTORY_RETENTION_DAYS,
+    capabilities:{ alertDelivery:true },
     firstObservedAt: history.length ? history[history.length - 1].observedAt : product.firstDiscoveredAt || product.lastSeenAt || null,
     lastChangedAt: product.lastChangedAt || history[0]?.observedAt || null,
     notificationDecision: state.watchlist.includes(slug) ? notificationDecision({ type:'restock', slug, region:currentRegion(), watchedAtDetection:true }) : null,
@@ -3340,6 +3619,23 @@ function operationsSummary() {
   };
 }
 
+// Calendar-date filters use the same timezone as the feed headings. Binary search
+// also handles 23/25-hour days and zones whose clocks change at midnight.
+function activityDayBoundary(value, timeZone, end = false) {
+  const date = new Date(`${value}T00:00:00.000Z`);
+  if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0,10) !== value) throw new Error('Activity dates must be valid ISO dates.');
+  if (end) date.setUTCDate(date.getUTCDate() + 1);
+  const target = date.toISOString().slice(0,10);
+  const formatter = new Intl.DateTimeFormat('en-CA', { timeZone, year:'numeric', month:'2-digit', day:'2-digit' });
+  const key = (at) => {
+    const parts = Object.fromEntries(formatter.formatToParts(new Date(at)).map(part => [part.type,part.value]));
+    return `${parts.year}-${parts.month}-${parts.day}`;
+  };
+  let low = date.getTime() - 36 * 3600000, high = date.getTime() + 36 * 3600000;
+  while (low < high) { const middle = Math.floor((low + high) / 2); if (key(middle) < target) low = middle + 1; else high = middle; }
+  return new Date(low).toISOString();
+}
+
 function activityFilterSql(url) {
   const scope = String(url.searchParams.get('scope') || url.searchParams.get('region') || DEFAULT_REGION).toLowerCase();
   const regions = scope === 'all' ? [...ACTIVE_REGIONS] : ACTIVE_REGIONS.includes(scope) ? [scope] : null;
@@ -3357,12 +3653,15 @@ function activityFilterSql(url) {
     conditions.push("(lower(COALESCE(e.name,'')) LIKE ? OR lower(COALESCE(e.slug,'')) LIKE ?)");
     parameters.push(`%${search}%`, `%${search}%`);
   }
+  let timeZone;
+  try { timeZone = validTimeZone(url.searchParams.get('timeZone') || 'UTC'); }
+  catch { throw new Error('Activity timezone must be a valid IANA timezone.'); }
   const normalizeDate = (value, end = false) => {
     if (!value) return null;
     const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
-    const date = new Date(dateOnly ? `${value}T00:00:00.000Z` : value);
+    if (dateOnly) return activityDayBoundary(value, timeZone, end);
+    const date = new Date(value);
     if (Number.isNaN(date.valueOf())) throw new Error('Activity dates must be valid ISO dates.');
-    if (end && dateOnly) date.setUTCDate(date.getUTCDate() + 1);
     return date.toISOString();
   };
   const from = normalizeDate(String(url.searchParams.get('from') || ''));
@@ -3375,7 +3674,76 @@ function activityFilterSql(url) {
   if (delivery === 'pending') conditions.push("EXISTS (SELECT 1 FROM notification_queue nq WHERE nq.event_id=e.id AND nq.status IN ('pending','processing'))");
   if (delivery === 'failed') conditions.push("(EXISTS (SELECT 1 FROM notification_queue nq WHERE nq.event_id=e.id AND nq.status='failed') OR EXISTS (SELECT 1 FROM notification_log nl WHERE nl.event_id=e.id AND nl.status='failed'))");
   if (delivery === 'not-sent') conditions.push('NOT EXISTS (SELECT 1 FROM notification_queue nq WHERE nq.event_id=e.id) AND NOT EXISTS (SELECT 1 FROM notification_log nl WHERE nl.event_id=e.id)');
-  return { where:conditions.join(' AND '), parameters, filters:{ scope, type, search, from, to, delivery } };
+  return { where:conditions.join(' AND '), parameters, filters:{ scope, type, search, from, to, delivery, timeZone } };
+}
+
+// This is read-time context, separate from the immutable event and alert snapshot.
+// A per-response cache avoids repeating current-product queries for busy feeds.
+function activityEventContext(event, cache) {
+  const region = event.region || DEFAULT_REGION;
+  const slug = event.slug;
+  if (event.type === 'collection_ready') {
+    const key = `collections:${region}`;
+    if (!cache.has(key)) cache.set(key, watchCollections(region));
+    const collection = cache.get(key).find(item => item.id === event.collectionId);
+    const ready = collection?.readiness;
+    return { asOf:isoNow(), collection:true, current:collection ? {
+      status:collection.archived ? 'Archived' : ready.ready ? 'Ready' : 'Not ready',
+      inStock:null, freshness:{ state:coverageFresh(region) && !ready.unknown && (!collection.budgetRequired || ready.budget?.state !== 'unknown') ? 'confirmed' : 'unknown', checkedAt:ready.checkedAt },
+    } : { status:null, inStock:null, freshness:{ state:'unknown', checkedAt:null } },
+    watch:{ watched:false, parentWatched:false, collections:collection ? [{id:collection.id,name:collection.name,archived:collection.archived,viaParent:false}] : [] }, price:null, identity:null };
+  }
+  const key = JSON.stringify([region,slug]);
+  if (!cache.has(key)) {
+    const product = states[region]?.products[slug];
+    const parentSlug = product?.parentSlug || event.parentSlug;
+    const watched = Boolean(states[region]?.watchlist.includes(slug));
+    const parentWatched = Boolean(parentSlug && states[region]?.watchlist.includes(parentSlug));
+    const collections = db.prepare(`SELECT c.id,c.name,c.archived,m.slug FROM watch_collection_members m
+      JOIN watch_collections c ON c.region=m.region AND c.id=m.collection_id WHERE m.region=? AND (m.slug=? OR m.slug=?) ORDER BY c.name`).all(region,slug || '',parentSlug || '');
+    const unique = new Map();
+    for (const item of collections) {
+      if (!unique.has(item.id) || item.slug === slug) unique.set(item.id, {id:item.id,name:item.name,archived:Boolean(item.archived),viaParent:item.slug !== slug});
+    }
+    const exactPriceScope = Boolean(product) && (Boolean(product.variantId) || !Object.values(states[region].products).some(item => item.parentSlug === slug));
+    cache.set(key, {
+      current:{ status:product ? product.unlisted ? 'Unlisted' : product.inStock ? 'In stock' : product.comingSoon ? 'Coming soon' : 'Sold out' : null,
+        inStock:product ? Boolean(product.inStock && !product.unlisted) : null, price:product?.price || null, freshness:productFreshness(product,region) },
+      watch:{watched,parentWatched,collections:[...unique.values()]},
+      identity:{parentSlug:parentSlug || null,variantId:product?.variantId || null,variantTitle:product?.variantTitle || null,sku:product?.sku || null},
+      exactPriceScope, targetPrice:watched ? watchRule(slug,region).targetPrice : null,
+    });
+  }
+  const current = cache.get(key);
+  const value = typeof event.priceValue === 'number' && Number.isFinite(event.priceValue) ? event.priceValue : priceValue(event.price);
+  const identity = {parentSlug:event.parentSlug || current.identity.parentSlug,variantId:event.variantId || current.identity.variantId,variantTitle:event.variantTitle || current.identity.variantTitle,sku:event.sku || current.identity.sku};
+  const exactPriceScope = current.exactPriceScope && (!event.variantId || event.variantId === current.identity.variantId);
+  let low30 = null;
+  const detected = new Date(event.detectedAt).getTime();
+  if (exactPriceScope && value !== null && Number.isFinite(detected)) {
+    const since = new Date(detected - 30 * 86400000).toISOString(), until = new Date(detected).toISOString();
+    // End the window at this event; later bargains must not rewrite its comparison.
+    const stats = db.prepare(`SELECT MIN(price_value) AS lowest,COUNT(price_value) AS samples,
+      MIN(started_at) AS firstObservedAt, SUM(MAX(0,julianday(MIN(ended_at,?))-julianday(MAX(started_at,?))))*86400 AS observedSeconds
+      FROM inventory_history WHERE region=? AND slug=? AND currency=? AND ended_at>=? AND started_at<=? AND price_value IS NOT NULL`).get(until,since,region,slug,REGIONS[region].currency,since,until);
+    low30 = { ...stats, since, until, fullWindow:Boolean(stats.firstObservedAt && stats.firstObservedAt <= since && HISTORY_RETENTION_DAYS >= 30 && stats.observedSeconds > 0),
+      isLowest:false };
+    low30.isLowest = low30.fullWindow && stats.lowest !== null && value <= stats.lowest;
+  }
+  return { asOf:isoNow(), current:current.current, watch:current.watch, identity,
+    price:{currency:REGIONS[region]?.currency || null,exactPriceScope,eventPrice:value,targetPrice:exactPriceScope ? current.targetPrice : null,
+      targetDifference:exactPriceScope && value !== null && current.targetPrice !== null ? Math.round((value-current.targetPrice)*100)/100 : null,low30} };
+}
+
+function activitySummary(filter, ceiling) {
+  const difference = `COALESCE(json_extract(e.data_json,'$.priceDifference'),json_extract(e.data_json,'$.priceValue')-json_extract(e.data_json,'$.previousPriceValue'),CASE WHEN json_extract(e.data_json,'$.alertKind')='price_drop' THEN -1 END)`;
+  const counts = db.prepare(`SELECT COUNT(*) AS total,
+    SUM(e.type='restock') AS restocks,SUM(e.type='sold_out') AS soldOut,SUM(e.type='price_change') AS priceChanges,
+    SUM(CASE WHEN e.type='price_change' AND ${difference}<0 THEN 1 ELSE 0 END) AS priceDrops,
+    SUM(CASE WHEN e.type='price_change' AND ${difference}>0 THEN 1 ELSE 0 END) AS priceIncreases,
+    SUM(e.type='status_change') AS statusChanges,SUM(e.type='new_product') AS newProducts,SUM(e.type='collection_ready') AS collectionReady
+    FROM events e WHERE ${filter.where} AND e.rowid<=?`).get(...filter.parameters,ceiling);
+  return { ...Object.fromEntries(Object.entries(counts).map(([key,value]) => [key,Number(value) || 0])), timeZone:filter.filters.timeZone, asOf:isoNow() };
 }
 
 function enrichActivityEvents(events) {
@@ -3396,24 +3764,52 @@ function enrichActivityEvents(events) {
       }
     }
   }
+  const contextCache = new Map();
   return events.map((event) => regionContext.run(event.region || DEFAULT_REGION, () => {
     const decision = notificationDecision(event);
-    return { ...event, notificationDecision:decision, serverAlert:eventServerAlertSummary(event, decision, queueByEvent.get(event.id) || [], logsByEvent.get(event.id) || []) };
+    return { ...event, context:activityEventContext(event,contextCache), notificationDecision:decision, serverAlert:eventServerAlertSummary(event, decision, queueByEvent.get(event.id) || [], logsByEvent.get(event.id) || []) };
   }));
 }
 
 function activityQuery(url, { exportLimit = null } = {}) {
   const filter = activityFilterSql(url);
-  const count = Number(db.prepare(`SELECT COUNT(*) AS count FROM events e WHERE ${filter.where}`).get(...filter.parameters)?.count || 0);
+  const latest = db.prepare('SELECT rowid AS sequence,id FROM events ORDER BY rowid DESC LIMIT 1').get();
+  let ceiling = Number(latest?.sequence || 0), anchor = latest?.id || '', snapshotReset = false;
+  const requestedSnapshot = exportLimit ? null : url.searchParams.get('snapshot');
+  if (requestedSnapshot !== null) {
+    const match = /^(\d+):(.{0,200})$/.exec(requestedSnapshot);
+    if (!match || !Number.isSafeInteger(Number(match[1]))) throw new Error('Activity snapshot is invalid.');
+    const sequence = Number(match[1]);
+    if (sequence === 0 && !match[2] || db.prepare('SELECT id FROM events WHERE rowid=?').get(sequence)?.id === match[2]) {
+      ceiling = sequence; anchor = match[2];
+    } else snapshotReset = true; // Retention or a restore removed the reading boundary.
+  }
+  const snapshot = `${ceiling}:${anchor}`;
+  const newCount = Number(db.prepare(`SELECT COUNT(*) AS count FROM events e WHERE ${filter.where} AND e.rowid>?`).get(...filter.parameters,ceiling)?.count || 0);
+  // A bounded, separately paginated range supplies arrivals above the page being read.
+  // Validate both the row sequence and ID so a restore cannot silently reuse a cursor.
+  let floor = 0;
+  const after = exportLimit ? null : url.searchParams.get('after');
+  if (after !== null) {
+    const match = /^(\d+):(.{0,200})$/.exec(after);
+    if (!match || !Number.isSafeInteger(Number(match[1]))) throw new Error('Activity cursor is invalid.');
+    const sequence = Number(match[1]);
+    if (sequence <= ceiling && (sequence === 0 && !match[2] || db.prepare('SELECT id FROM events WHERE rowid=?').get(sequence)?.id === match[2])) floor = sequence;
+    else snapshotReset = true;
+  }
+  const where = `${filter.where} AND e.rowid<=?${after !== null ? ' AND e.rowid>?' : ''}`;
+  const parameters = [...filter.parameters,ceiling,...(after !== null ? [floor] : [])];
+  const count = Number(db.prepare(`SELECT COUNT(*) AS count FROM events e WHERE ${where}`).get(...parameters)?.count || 0);
   const requestedLimit = Number(url.searchParams.get('limit') || 20);
   const requestedPage = Number(url.searchParams.get('page') || 1);
   const limit = exportLimit || (Number.isInteger(requestedLimit) ? Math.min(100, Math.max(10, requestedLimit)) : 20);
   const pages = Math.max(1, Math.ceil(count / limit));
   const page = exportLimit ? 1 : Number.isInteger(requestedPage) ? Math.min(pages, Math.max(1, requestedPage)) : 1;
   const offset = exportLimit ? 0 : (page - 1) * limit;
-  const rows = db.prepare(`SELECT e.data_json FROM events e WHERE ${filter.where} ORDER BY e.detected_at DESC,e.id DESC LIMIT ? OFFSET ?`).all(...filter.parameters, limit, offset);
+  const rows = db.prepare(`SELECT e.data_json FROM events e WHERE ${where} ORDER BY e.detected_at DESC,e.id DESC LIMIT ? OFFSET ?`).all(...parameters, limit, offset);
   const events = enrichActivityEvents(rows.map((row) => safeJsonParse(row.data_json, null)).filter(Boolean));
-  return { events, count, page, limit, pages, filters:filter.filters, truncated:Boolean(exportLimit && count > exportLimit) };
+  const summary = activitySummary(filter, after !== null ? ceiling : Number(latest?.sequence || 0));
+  return { events, count, page, limit, pages, snapshot, newCount, snapshotReset, summary, filters:filter.filters, truncated:Boolean(exportLimit && count > exportLimit) };
 }
 
 function csvCell(value) {
@@ -3524,6 +3920,7 @@ function scrubSupportValue(value, key = '') {
   if (Array.isArray(value)) return value.map((item) => scrubSupportValue(item));
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, scrubSupportValue(item, name)]));
   if (typeof value === 'string') return value
+    .replace(/; delayed alert context: [\s\S]*/, '; delayed alert context: [redacted]')
     .replace(/(bearer\s+)[^\s,;]+/ig, '$1[redacted]')
     .replace(/(password|secret|token|authorization)(["'=:\s]+)[^\s,"'}]+/ig, '$1$2[redacted]')
     .replace(/\b(?:https?|wss?):\/\/[^\s"'<>]+/ig, '[url redacted]')
@@ -3566,9 +3963,9 @@ function updatePreparation() {
   for (const region of ACTIVE_REGIONS) flushState(region);
   const backup = createDatabaseBackup(`pre-update-${APP_VERSION}`);
   const commands = {
-    win32: '.\\update-windows.ps1 -Version <new-version> -BackupConfirmed',
-    darwin: './update-mac-linux.sh <new-version> --backup-confirmed',
-    linux: './update-mac-linux.sh <new-version> --backup-confirmed',
+    win32: `.\\update-windows.ps1 -Version <new-version> -BackupConfirmed${PORT === 8787 ? '' : ` -Port ${PORT}`}`,
+    darwin: `./update-mac-linux.sh <new-version> --backup-confirmed${PORT === 8787 ? '' : ` --port ${PORT}`}`,
+    linux: `./update-mac-linux.sh <new-version> --backup-confirmed${PORT === 8787 ? '' : ` --port ${PORT}`}`,
     docker: './update-docker.sh <new-version> --backup-confirmed',
   };
   writeAppLog('info', 'updates', 'Owner prepared a validated pre-update backup.', { backup: backup?.filename });
@@ -3578,7 +3975,7 @@ function updatePreparation() {
     command: commands[process.platform] || null,
     dockerCommand: commands.docker,
     warning: 'GearBeacon will never install an update silently. Review the release notes, stop the service, and run the matching helper yourself.',
-    rollback: 'Stop GearBeacon, restore the validated pre-update SQLite file to the data directory, then reinstall the previous version.',
+    rollback: 'Stop GearBeacon, restore a validated pre-update SQLite file compatible with the previous version and its matching secrets.key, then reinstall that version and verify startup. Never start an older application against a migrated database.',
   };
 }
 
@@ -3603,7 +4000,7 @@ function exportSnapshot() {
       events: db.prepare('SELECT data_json FROM events WHERE region=? ORDER BY detected_at').all(region)
         .map((row) => safeJsonParse(row.data_json, null)).filter(Boolean),
       watchRules,
-      collections:watchCollections(region).map(({ readiness, pricing, planning, ...collection }) => collection),
+      collections:watchCollections(region).map(({ readiness, pricing, planning, alertSummary, ...collection }) => collection),
       monitoringCoverage:db.prepare('SELECT started_at AS startedAt,ended_at AS endedAt,checks FROM monitor_coverage WHERE region=? ORDER BY started_at,id').all(region),
       inventoryHistory:db.prepare('SELECT slug,started_at AS startedAt,ended_at AS endedAt,status,in_stock AS inStock,price_text AS price,price_value AS priceValue,currency FROM inventory_history WHERE region=? ORDER BY slug,started_at,id').all(region).map((row) => ({ ...row, inStock:Boolean(row.inStock) })),
       conditionState:db.prepare('SELECT slug,matched FROM watch_condition_state WHERE region=?').all(region),
@@ -3613,7 +4010,7 @@ function exportSnapshot() {
   }
   return {
     format: 'GearBeaconBackup',
-    formatVersion: 7,
+    formatVersion: 9,
     exportedAt: isoNow(),
     appVersion: APP_VERSION,
     schemaVersion: schemaVersion(),
@@ -3665,7 +4062,7 @@ function normalizeImportedSnapshot(snapshot) {
   const isBackup = snapshot.format === 'GearBeaconBackup';
   const isLegacy = !snapshot.format && (Array.isArray(snapshot.watchlist) || snapshot.products || Array.isArray(snapshot.events));
   if (!isBackup && !isLegacy) throw new Error('This file is not a GearBeacon backup or legacy GearBeacon state file.');
-  if (isBackup && Number(snapshot.formatVersion || 0) > 7) throw new Error(`This backup format (${snapshot.formatVersion}) is newer than GearBeacon ${APP_VERSION} supports.`);
+  if (isBackup && Number(snapshot.formatVersion || 0) > 9) throw new Error(`This backup format (${snapshot.formatVersion}) is newer than GearBeacon ${APP_VERSION} supports.`);
   const normalizeRegion = (value) => ({
     watchlist: Array.isArray(value?.watchlist) ? value.watchlist.map(String).filter(Boolean) : [],
     watchCreatedAt: value?.watchCreatedAt && typeof value.watchCreatedAt === 'object' && !Array.isArray(value.watchCreatedAt) ? value.watchCreatedAt : {},
@@ -3709,8 +4106,10 @@ function validateSnapshotCollections(regions) {
       if (collection.notifyReady !== undefined && typeof collection.notifyReady !== 'boolean') throw new Error('Backup contains invalid collection notification settings.');
       if (collection.readyState !== undefined && ![null,0,1].includes(collection.readyState)) throw new Error('Backup contains invalid collection alert state.');
       if (collection.archived !== undefined && typeof collection.archived !== 'boolean') throw new Error('Backup contains an invalid collection archive setting.');
+      Object.assign(collection, normalizeAlertDelivery(collection));
       collection.budget = collectionMoney(collection.budget === undefined ? null : collection.budget, 'Collection budget');
       if (collection.alertsOnly !== undefined && typeof collection.alertsOnly !== 'boolean') throw new Error('Backup contains an invalid collection alert mode.');
+      if (collection.budgetRequired !== undefined && typeof collection.budgetRequired !== 'boolean') throw new Error('Backup contains an invalid collection budget alert setting.');
       if (collection.slugs.length > 1000) throw new Error('A collection can contain at most 1000 items.');
       const memberSlugs = [...new Set(collection.slugs)];
       if (collection.items === undefined) collection.items = memberSlugs.map((slug) => ({ slug, quantity:1, purchasedQuantity:regionState.watchRules[slug]?.purchasedAt ? 1 : 0, paidTotal:null }));
@@ -3765,7 +4164,7 @@ function importSnapshot(snapshot) {
     db.prepare('DELETE FROM watch_collections WHERE region=?').run(region);
     for (const collection of regionState.collections) {
       const createdAt = collection.createdAt && !Number.isNaN(new Date(collection.createdAt).valueOf()) ? new Date(collection.createdAt).toISOString() : isoNow();
-      db.prepare('INSERT INTO watch_collections(region,id,name,created_at,notify_ready,ready_state,budget,alerts_only,archived) VALUES(?,?,?,?,?,?,?,?,?)').run(region, collection.id, collection.name, createdAt, collection.notifyReady ? 1 : 0, collection.readyState ?? null, collection.budget, collection.alertsOnly ? 1 : 0, collection.archived ? 1 : 0);
+      db.prepare('INSERT INTO watch_collections(region,id,name,created_at,notify_ready,ready_state,budget,alerts_only,archived,budget_required,delivery_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(region, collection.id, collection.name, createdAt, collection.notifyReady ? 1 : 0, collection.readyState ?? null, collection.budget, collection.alertsOnly ? 1 : 0, collection.archived ? 1 : 0, collection.budgetRequired ? 1 : 0, JSON.stringify(normalizeAlertDelivery(collection)));
       for (const item of collection.items) db.prepare('INSERT INTO watch_collection_members(region,collection_id,slug,quantity,purchased_quantity,paid_total) VALUES(?,?,?,?,?,?)').run(region, collection.id, item.slug, item.quantity, item.purchasedQuantity, item.paidTotal);
     }
     db.prepare('DELETE FROM watch_condition_state WHERE region=?').run(region);
@@ -3845,96 +4244,205 @@ function compareVersions(a, b) {
   return 0;
 }
 
-function normalizeReleasePayload(payload, source) {
-  if (!payload || typeof payload !== 'object') return null;
-  if (payload.latestVersion) return {
-    latestVersion: String(payload.latestVersion),
-    downloadUrl: payload.downloadUrl || null,
-    releaseNotes: payload.releaseNotes || payload.notes || null,
-    publishedAt: payload.publishedAt || null,
-    minimumSchemaVersion: Number(payload.minimumSchemaVersion || 0) || null,
-    maximumSchemaVersion: Number(payload.maximumSchemaVersion || 0) || null,
-    minimumNodeVersion: payload.minimumNodeVersion || null,
-    releasePageUrl: payload.releasePageUrl || null,
-    source,
-  };
-  if (payload.tag_name) {
-    const assets = Array.isArray(payload.assets) ? payload.assets : [];
-    const zipAsset = assets.find((a) => /gearbeacon.*\.zip$/i.test(String(a?.name || '')))
-      || assets.find((a) => /\.zip$/i.test(String(a?.name || '')));
-    return {
-      latestVersion: String(payload.tag_name).replace(/^v/i, ''),
-      downloadUrl: zipAsset?.browser_download_url || payload.html_url || null,
-      releaseNotes: payload.body || null,
-      publishedAt: payload.published_at || payload.created_at || null,
-      releasePageUrl: payload.html_url || null,
-      source,
-    };
-  }
-  return null;
+function releaseVersion(value) {
+  const version = String(value || '').replace(/^v/, '');
+  if (version.length > 128) return null;
+  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/.exec(version);
+  if (!match || match.slice(1,4).some(part => !Number.isSafeInteger(Number(part)))) return null;
+  const pre = match[4] ? match[4].split('.') : [];
+  if (pre.some(part => /^0\d+$/.test(part))) return null;
+  return {version,core:match.slice(1,4).map(Number),pre};
 }
 
-async function fetchReleaseJson(url, source) {
-  const res = await fetchWithTimeout(url, {
-    headers: {
-      Accept: 'application/vnd.github+json, application/json',
-      'User-Agent': `GearBeacon/${APP_VERSION}`,
-      'X-GitHub-Api-Version': '2022-11-28',
-    },
-  }, 10000);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const payload = await res.json();
-  const normalized = normalizeReleasePayload(payload, source);
-  if (!normalized?.latestVersion) throw new Error('Release payload did not include a version.');
-  return normalized;
+function compareReleaseVersions(a, b) {
+  const left = releaseVersion(a), right = releaseVersion(b);
+  if (!left || !right) throw new Error('Invalid release version.');
+  for (let index=0; index<3; index++) if (left.core[index] !== right.core[index]) return Math.sign(left.core[index]-right.core[index]);
+  if (!left.pre.length || !right.pre.length) return Number(!left.pre.length)-Number(!right.pre.length);
+  for (let index=0; index<Math.max(left.pre.length,right.pre.length); index++) {
+    const x=left.pre[index], y=right.pre[index];
+    if (x === y) continue;
+    if (x === undefined || y === undefined) return x === undefined ? -1 : 1;
+    const numericX=/^\d+$/.test(x), numericY=/^\d+$/.test(y);
+    if (numericX !== numericY) return numericX ? -1 : 1;
+    if (numericX && x.length !== y.length) return Math.sign(x.length-y.length);
+    return x < y ? -1 : 1;
+  }
+  return 0;
+}
+
+function runningBuildIdentity() {
+  const override=String(process.env.GEARBEACON_UPDATE_CHANNEL || 'auto').trim().toLowerCase();
+  if (!['auto','main','dev'].includes(override)) throw new Error('GEARBEACON_UPDATE_CHANNEL must be auto, main, or dev.');
+  const validCommit=value => /^[a-f0-9]{40}$/i.test(String(value || '')) ? String(value).toLowerCase() : null;
+  const git = args => {
+    if (runningAsSea || !fs.existsSync(path.join(PROJECT_ROOT,'.git'))) return '';
+    try { return execFileSync('git',args,{cwd:PROJECT_ROOT,encoding:'utf8',timeout:2000,windowsHide:true,stdio:['ignore','pipe','ignore']}).trim(); }
+    catch { return ''; }
+  };
+  const branch=git(['symbolic-ref','--short','HEAD']);
+  const taggedVersion=git(['tag','--points-at','HEAD']).split('\n').map(releaseVersion).find(value => value?.core.join('.') === APP_VERSION);
+  const imageTag=String(process.env.GEARBEACON_IMAGE || '').split(':').at(-1);
+  const packaged=releaseVersion(process.env.GEARBEACON_PACKAGE_VERSION || BUILD_INFO.packageVersion || imageTag);
+  const version=packaged?.core.join('.') === APP_VERSION ? packaged.version : taggedVersion?.version || APP_VERSION;
+  const recorded=String(process.env.GEARBEACON_BUILD_BRANCH || BUILD_INFO.branch || '');
+  const channel=override !== 'auto' ? override : ['main','dev'].includes(branch) ? branch : ['main','dev'].includes(recorded) ? recorded
+    : releaseVersion(version)?.pre.length || imageTag === 'dev' ? 'dev' : 'main';
+  return {channel,version,commit:validCommit(git(['rev-parse','HEAD'])) || validCommit(process.env.GEARBEACON_BUILD_COMMIT) || validCommit(BUILD_INFO.commit)};
+}
+
+function releaseLink(value) {
+  try { const url=new URL(value); return ['https:','http:'].includes(url.protocol) && !url.username && !url.password ? url.href : null; }
+  catch { return null; }
+}
+
+function normalizeReleasePayload(payload, source) {
+  if (!payload || typeof payload !== 'object' || payload.draft) return null;
+  const version=releaseVersion(payload.latestVersion || payload.tag_name);
+  if (!version) return null;
+  const prerelease=Boolean(payload.prerelease || version.pre.length);
+  const channel=payload.channel || (prerelease ? 'dev' : 'main');
+  if (channel !== RUNNING_BUILD.channel || RUNNING_BUILD.channel === 'main' && prerelease) return null;
+  const assets=Array.isArray(payload.assets) ? payload.assets : [];
+  const zip=assets.find(asset => /gearbeacon.*\.zip$/i.test(String(asset?.name || '')));
+  return {latestVersion:version.version,channel,prerelease,
+    downloadUrl:releaseLink(payload.downloadUrl || zip?.browser_download_url || payload.html_url),
+    releasePageUrl:releaseLink(payload.releasePageUrl || payload.html_url),
+    releaseNotesUrl:releaseLink(payload.releaseNotesUrl || payload.releasePageUrl || payload.html_url),
+    releaseNotes:typeof (payload.releaseNotes || payload.notes || payload.body) === 'string' ? String(payload.releaseNotes || payload.notes || payload.body).slice(0,100000) : null,
+    publishedAt:payload.publishedAt || payload.published_at || null,
+    minimumSchemaVersion:Number(payload.minimumSchemaVersion || 0) || null,
+    maximumSchemaVersion:Number(payload.maximumSchemaVersion || 0) || null,
+    minimumNodeVersion:payload.minimumNodeVersion || null,source};
+}
+
+async function fetchUpdateJson(url, signal) {
+  const response=await fetch(url,{signal,headers:{Accept:'application/vnd.github+json, application/json','User-Agent':`GearBeacon/${APP_VERSION}`,'X-GitHub-Api-Version':'2022-11-28'}});
+  if (!response.ok) {
+    const retry=response.headers.get('retry-after');
+    const reset=response.headers.get('x-ratelimit-remaining') === '0' ? Number(response.headers.get('x-ratelimit-reset'))*1000 : 0;
+    if (retry || reset) updateRetryAfter=Math.max(updateRetryAfter,reset || 0,/^\d+$/.test(retry || '') ? Date.now()+Number(retry)*1000 : Date.parse(retry || '') || 0);
+    await response.body?.cancel();
+    const error=new Error(`Update source returned HTTP ${response.status}.`); error.statusCode=response.status; throw error;
+  }
+  const chunks=[]; let size=0;
+  for await (const chunk of response.body) {
+    size+=chunk.length;
+    if (size>2*1024*1024) throw new Error('Update information exceeded the size limit.');
+    chunks.push(chunk);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+}
+
+function githubRepositoryApi() {
+  const url=new URL(GITHUB_RELEASE_API);
+  if (!/\/releases(?:\/latest)?\/?$/.test(url.pathname)) throw new Error('The development update source must use a GitHub repository releases endpoint.');
+  url.pathname=url.pathname.replace(/\/releases(?:\/latest)?\/?$/,''); url.search=''; url.hash='';
+  return url.href;
+}
+
+async function githubFile(api, file, commit, signal) {
+  const payload=await fetchUpdateJson(`${api}/contents/${file}?ref=${commit}`,signal);
+  if (payload.type !== 'file' || payload.encoding !== 'base64' || typeof payload.content !== 'string') throw new Error('Invalid repository file response.');
+  return Buffer.from(payload.content,'base64').toString('utf8');
+}
+
+async function developmentManifest(signal) {
+  const api=githubRepositoryApi();
+  const head=await fetchUpdateJson(`${api}/commits/dev`,signal);
+  if (!/^[a-f0-9]{40}$/i.test(head.sha || '')) throw new Error('The development update source did not identify its commit.');
+  const commit=head.sha.toLowerCase();
+  const payload=JSON.parse(await githubFile(api,'release-manifest.json',commit,signal));
+  const manifest=normalizeReleasePayload({...payload,channel:'dev',releasePageUrl:null,releaseNotesUrl:null,downloadUrl:null},'GitHub dev');
+  if (!manifest) throw new Error('The development update source did not include a valid version.');
+  let comparison='unknown';
+  if (RUNNING_BUILD.commit === commit) comparison='identical';
+  else if (RUNNING_BUILD.commit) {
+    try {
+      const compared=await fetchUpdateJson(`${api}/compare/${RUNNING_BUILD.commit}...${commit}?per_page=1`,signal);
+      if (['ahead','behind','identical','diverged'].includes(compared.status)) comparison=compared.status;
+    } catch (error) { if (error.statusCode !== 404 && error.statusCode !== 422) throw error; }
+  }
+  // A published prerelease may provide notes for this exact development commit.
+  // Never send a dev build to an older stable release that shares its base version.
+  if (releaseVersion(manifest.latestVersion).pre.length) {
+    try {
+      const release=await fetchUpdateJson(`${api}/releases/tags/v${manifest.latestVersion}`,signal);
+      const normalized=normalizeReleasePayload(release,'GitHub dev');
+      const tag=normalized && await fetchUpdateJson(`${api}/commits/${encodeURIComponent(release.tag_name)}`,signal);
+      if (tag?.sha === commit) manifest.releaseNotesUrl=normalized.releaseNotesUrl;
+    } catch (error) { if (error.statusCode !== 404) manifest.warning='Release notes are temporarily unavailable.'; }
+  }
+  if (!manifest.releaseNotesUrl && !signal.aborted && Date.now()>=updateRetryAfter) {
+    for (const file of ['docs/CHANGELOG.md','docs/RELEASE_NOTES.md']) {
+      try {
+        await githubFile(api,file,commit,signal);
+        manifest.releaseNotesUrl=`https://github.com/alexphillips-dev/GearBeacon/blob/${commit}/${file}`;
+        break;
+      } catch (error) { if (error.statusCode !== 404) { manifest.warning='Release notes are temporarily unavailable.'; break; } }
+    }
+  }
+  return {...manifest,latestCommit:commit,comparison,publishedAt:head.commit?.committer?.date || manifest.publishedAt};
 }
 
 async function readUpdateManifest() {
-  const warnings = [];
+  const signal=AbortSignal.timeout(15000);
   if (UPDATE_MANIFEST_URL) {
-    try {
-      const remote = await fetchReleaseJson(UPDATE_MANIFEST_URL, UPDATE_MANIFEST_URL);
-      return { manifest: remote, source: UPDATE_MANIFEST_URL, warning: null };
-    } catch (err) {
-      warnings.push(`Configured update channel failed: ${err?.message || String(err)}.`);
-    }
-  } else if (GITHUB_RELEASE_API) {
-    try {
-      const github = await fetchReleaseJson(GITHUB_RELEASE_API, 'GitHub Releases');
-      return { manifest: github, source: 'GitHub Releases', warning: null };
-    } catch (err) {
-      warnings.push(`GitHub Releases check failed: ${err?.message || String(err)}.`);
-    }
+    const url=UPDATE_MANIFEST_URL.replaceAll('{channel}',RUNNING_BUILD.channel);
+    const result=normalizeReleasePayload(await fetchUpdateJson(url,signal),'Configured update manifest');
+    if (!result) throw new Error('The configured manifest does not contain a release for this update channel.');
+    return result;
   }
+  if (!GITHUB_RELEASE_API) return null;
+  if (RUNNING_BUILD.channel === 'dev') return developmentManifest(signal);
+  const payload=await fetchUpdateJson(GITHUB_RELEASE_API,signal);
+  const releases=(Array.isArray(payload) ? payload : [payload]).map(item=>normalizeReleasePayload(item,'GitHub Releases')).filter(Boolean);
+  releases.sort((a,b)=>compareReleaseVersions(b.latestVersion,a.latestVersion));
+  if (!releases.length) throw new Error('No stable release is available from this update source.');
+  return releases[0];
+}
 
-  if (!fs.existsSync(RELEASE_MANIFEST_FILE)) throw new Error(`${warnings.join(' ')} No bundled GearBeacon release information is available.`);
-  const payload = safeJsonParse(fs.readFileSync(RELEASE_MANIFEST_FILE, 'utf8'), null);
-  const bundled = normalizeReleasePayload(payload, 'bundled');
-  if (!bundled?.latestVersion) throw new Error('The bundled GearBeacon update manifest is invalid.');
-  return { manifest: bundled, source: 'bundled', warning: warnings.length ? `${warnings.join(' ')} Using bundled release information.` : null };
+function updateCheckSnapshot() { return {...updateStatus,checking:Boolean(updateCheckTask)}; }
+
+function scheduleUpdateCheck() {
+  if (updateCheckTimer) clearTimeout(updateCheckTimer);
+  if (!AUTO_UPDATE_CHECKS || !(UPDATE_MANIFEST_URL || GITHUB_RELEASE_API)) return;
+  const next=Math.max(Date.parse(updateStatus.nextCheckAt || '') || 0,updateRetryAfter);
+  updateCheckTimer=setTimeout(()=>{void checkForUpdates();},Math.max(0,next-Date.now()));
+  updateCheckTimer.unref();
 }
 
 async function checkForUpdates() {
-  const { manifest, source, warning } = await readUpdateManifest();
-  const latestVersion = String(manifest.latestVersion);
-  const compatibilityWarnings = [];
-  if (Number(latestVersion.split('.')[0] || 0) > Number(APP_VERSION.split('.')[0] || 0)) compatibilityWarnings.push('This is a major-version update. Review migration and rollback notes before continuing.');
-  if (manifest.minimumSchemaVersion && schemaVersion() < manifest.minimumSchemaVersion) compatibilityWarnings.push(`The release requires database schema v${manifest.minimumSchemaVersion}; GearBeacon will create a validated backup before migration.`);
-  if (manifest.maximumSchemaVersion && schemaVersion() > manifest.maximumSchemaVersion) compatibilityWarnings.push(`This database schema is newer than the release supports. Do not downgrade without restoring a compatible backup.`);
-  if (!runningAsSea && manifest.minimumNodeVersion && compareVersions(process.versions.node, manifest.minimumNodeVersion) < 0) compatibilityWarnings.push(`Source installs require Node.js ${manifest.minimumNodeVersion} or newer for this release.`);
-  return {
-    currentVersion: APP_VERSION,
-    latestVersion,
-    updateAvailable: compareVersions(latestVersion, APP_VERSION) > 0,
-    downloadUrl: manifest.downloadUrl || null,
-    releasePageUrl: manifest.releasePageUrl || null,
-    releaseNotes: manifest.releaseNotes || null,
-    publishedAt: manifest.publishedAt || null,
-    source,
-    warning,
-    compatibilityWarnings,
-    checkedAt: isoNow(),
-  };
+  if (updateCheckTask) { await updateCheckTask; return updateCheckSnapshot(); }
+  if (Date.now()<updateRetryAfter) return updateCheckSnapshot();
+  updateCheckTask=(async () => {
+    const attempted=isoNow();
+    try {
+      const manifest=await readUpdateManifest();
+      if (!manifest) {
+        updateStatus={...updateStatus,verified:false,warning:'Online update checks are disabled.',lastAttemptAt:attempted,nextCheckAt:null};
+        return updateCheckSnapshot();
+      }
+      const versionNewer=compareReleaseVersions(manifest.latestVersion,RUNNING_BUILD.version)>0;
+      const updateAvailable=compareVersions(manifest.latestVersion,APP_VERSION)>=0 && (RUNNING_BUILD.channel === 'dev' && manifest.comparison
+        ? manifest.comparison === 'ahead' || manifest.comparison === 'unknown' && versionNewer
+        : versionNewer);
+      const compatibilityWarnings=[];
+      if (Number(manifest.latestVersion.split('.')[0])>Number(APP_VERSION.split('.')[0])) compatibilityWarnings.push('This is a major-version update. Review migration and rollback notes before continuing.');
+      if (manifest.minimumSchemaVersion && schemaVersion()<manifest.minimumSchemaVersion) compatibilityWarnings.push(`The release requires database schema v${manifest.minimumSchemaVersion}; GearBeacon will create a validated backup before migration.`);
+      if (manifest.maximumSchemaVersion && schemaVersion()>manifest.maximumSchemaVersion) compatibilityWarnings.push('This database is newer than the release supports. Do not downgrade without restoring a compatible backup.');
+      if (!runningAsSea && manifest.minimumNodeVersion && compareVersions(process.versions.node,manifest.minimumNodeVersion)<0) compatibilityWarnings.push(`Source installs require Node.js ${manifest.minimumNodeVersion} or newer for this release.`);
+      updateStatus={...manifest,currentVersion:RUNNING_BUILD.version,currentCommit:RUNNING_BUILD.commit,channel:RUNNING_BUILD.channel,updateAvailable,
+        verified:true,stale:false,compatibilityWarnings,checkedAt:isoNow(),lastAttemptAt:attempted,nextCheckAt:new Date(Date.now()+86400000).toISOString(),automatic:AUTO_UPDATE_CHECKS,
+        warning:manifest.comparison === 'unknown' ? 'The installed commit could not be compared; only version changes can be detected.' : manifest.comparison === 'diverged' ? 'This checkout has diverged from dev; review its history before updating.' : manifest.warning || null};
+    } catch (error) {
+      const safeMessage=String(error?.message || '').startsWith('The ') || String(error?.message || '').startsWith('No ') || String(error?.message || '').startsWith('Update ') ? error.message : 'The update source could not be checked.';
+      updateStatus={...updateStatus,stale:true,warning:safeMessage,lastAttemptAt:attempted,nextCheckAt:new Date(Math.max(Date.now()+3600000,updateRetryAfter)).toISOString()};
+    }
+    return updateCheckSnapshot();
+  })();
+  try { await updateCheckTask; } finally { updateCheckTask=null; scheduleUpdateCheck(); }
+  return updateCheckSnapshot();
 }
 
 function isLoopbackHost(host) {
@@ -4159,7 +4667,7 @@ function listSessions(current) {
 function outboundConnections() {
   return [
     { name: 'UniFi Store', enabled: true, required: true, destination: [...new Set(ACTIVE_REGIONS.map((region) => REGIONS[region].origin))].join(', '), purpose: 'Inventory checks' },
-    { name: 'GitHub Releases', enabled: Boolean(GITHUB_RELEASE_API || UPDATE_MANIFEST_URL), required: false, destination: UPDATE_MANIFEST_URL || GITHUB_RELEASE_API || null, purpose: 'Manual update checks' },
+    { name: 'GitHub Releases', enabled: Boolean(GITHUB_RELEASE_API || UPDATE_MANIFEST_URL), required: false, destination: UPDATE_MANIFEST_URL || GITHUB_RELEASE_API || null, purpose: AUTO_UPDATE_CHECKS ? 'Startup, daily, and manual update checks for the running channel' : 'Manual update checks for the running channel' },
     { name: 'ntfy', enabled: channelConfigured('ntfy'), required: false, destination: NTFY_TOPIC ? NTFY_BASE_URL : null, purpose: 'Notifications' },
     { name: 'Discord', enabled: channelConfigured('discord'), required: false, destination: DISCORD_WEBHOOK_URL ? 'Configured webhook' : null, purpose: 'Notifications' },
     { name: 'Generic webhook', enabled: channelConfigured('webhook'), required: false, destination: GENERIC_WEBHOOK_URL ? 'Configured webhook' : null, purpose: 'Notifications' },
@@ -4173,6 +4681,7 @@ function apiStatus() {
   return {
     name: 'GearBeacon',
     version: APP_VERSION,
+    update: updateCheckSnapshot(),
     region: currentRegion(),
     regionLabel: REGIONS[currentRegion()].label,
     regions: ACTIVE_REGIONS.map((key) => ({ key, label: REGIONS[key].label })),
@@ -4583,6 +5092,21 @@ async function handleApi(req, res, url) {
 }
 
 async function handleRegionApi(req, res, url) {
+  const alertMatch = url.pathname.match(/^\/api\/(watch|collections)\/([^/]+)\/alerts$/);
+  if (alertMatch && req.method === 'GET') {
+    const id = decodeURIComponent(alertMatch[2]);
+    const product = alertMatch[1] === 'watch' && state.watchlist.includes(id) ? state.products[id] : null;
+    const collection = alertMatch[1] === 'collections' ? watchCollections().find(value => value.id === id) : null;
+    if (!product && !collection) return sendJson(res, 404, { error:'Watch or collection not found in this store.' });
+    return sendJson(res, 200, alertExplanation(product, collection));
+  }
+  if (url.pathname === '/api/views' && req.method === 'GET') return sendJson(res, 200, { views:savedViewsForRegion() });
+  const viewMatch = url.pathname.match(/^\/api\/views\/([a-zA-Z0-9-]{1,80})$/);
+  if ((url.pathname === '/api/views' && req.method === 'POST') || (viewMatch && ['PUT','DELETE'].includes(req.method))) {
+    const input = await readJsonBody(req, 32 * 1024);
+    try { return sendJson(res, 200, changeOwnerView(input, viewMatch?.[1], req.method === 'DELETE')); }
+    catch (err) { const expected=[400,404,409].includes(err.statusCode); return sendJson(res, expected ? err.statusCode : 500, { error:expected ? err.message : 'Unable to save the view. Try again or check Operations.' }); }
+  }
 
   if (req.method === 'GET' && url.pathname === '/api/status') {
     return sendJson(res, 200, apiStatus());
@@ -4706,7 +5230,7 @@ async function handleRegionApi(req, res, url) {
     return sendJson(res, 200, { products, count: products.length, ...watchWorkspace() });
   }
 
-  if (url.pathname === '/api/collections' && req.method === 'GET') return sendJson(res, 200, { ...watchWorkspace(), capabilities:{ memberEditing:true, purchasePlanning:true, watchWorkflow:true } });
+  if (url.pathname === '/api/collections' && req.method === 'GET') return sendJson(res, 200, { ...watchWorkspace(), capabilities:{ memberEditing:true, purchasePlanning:true, watchWorkflow:true, budgetAlerts:true, alertDelivery:true } });
   if (url.pathname === '/api/collections' && req.method === 'POST') {
     const body = await readJsonBody(req);
     let name, slugs, budget;
@@ -4771,13 +5295,15 @@ async function handleRegionApi(req, res, url) {
     }
     else {
       const body = await readJsonBody(req);
-      let name, slugs, budget;
-      const existing = db.prepare('SELECT name,notify_ready,budget,alerts_only,archived FROM watch_collections WHERE region=? AND id=?').get(currentRegion(), id);
+      let name, slugs, budget, delivery;
+      const existing = db.prepare('SELECT name,notify_ready,budget,alerts_only,archived,budget_required,delivery_json FROM watch_collections WHERE region=? AND id=?').get(currentRegion(), id);
       try {
+        delivery = normalizeAlertDelivery(body, normalizeAlertDelivery(safeJsonParse(existing.delivery_json, {})));
         name = collectionName(body?.name ?? existing.name);
         budget = collectionMoney(body?.budget === undefined ? existing.budget : body.budget, 'Budget');
         if (body?.archived !== undefined && typeof body.archived !== 'boolean') throw new Error('Collection archive setting must be true or false.');
         if (body?.alertsOnly !== undefined && typeof body.alertsOnly !== 'boolean') throw new Error('Collection alert mode must be true or false.');
+        if (body?.budgetRequired !== undefined && typeof body.budgetRequired !== 'boolean') throw new Error('Collection budget condition must be true or false.');
         if (body?.slugs !== undefined && body?.addSlugs !== undefined) throw new Error('Choose either replacement watches or watches to add.');
         if (body?.slugs !== undefined || body?.addSlugs !== undefined) slugs = collectionMembers(body.slugs ?? body.addSlugs);
         if (body?.addSlugs !== undefined) collectionMembers([...new Set([...collectionItemRows(id).map(item=>item.slug),...slugs])]);
@@ -4786,7 +5312,10 @@ async function handleRegionApi(req, res, url) {
       if (db.prepare('SELECT id FROM watch_collections WHERE region=? AND name=? COLLATE NOCASE AND id<>?').get(currentRegion(), name, id)) return sendJson(res, 409, { error:'A collection with that name already exists.' });
       db.exec('BEGIN IMMEDIATE');
       try {
-        db.prepare('UPDATE watch_collections SET name=?,budget=?,alerts_only=? WHERE region=? AND id=?').run(name,budget,body?.alertsOnly === undefined ? existing.alerts_only : body.alertsOnly ? 1 : 0,currentRegion(),id);
+        db.prepare('UPDATE watch_collections SET name=?,budget=?,alerts_only=?,budget_required=? WHERE region=? AND id=?').run(name,budget,body?.alertsOnly === undefined ? existing.alerts_only : body.alertsOnly ? 1 : 0,body?.budgetRequired === undefined ? existing.budget_required : body.budgetRequired ? 1 : 0,currentRegion(),id);
+        db.prepare('UPDATE watch_collections SET delivery_json=? WHERE region=? AND id=?').run(JSON.stringify(delivery), currentRegion(), id);
+        reconcileAlertDelivery(currentRegion(), id, true);
+        if (budget !== existing.budget || (body?.budgetRequired !== undefined && body.budgetRequired !== Boolean(existing.budget_required))) baselineCollections(currentRegion(),[id]);
         if (slugs !== undefined) saveCollectionMembers(id, slugs, body.addSlugs !== undefined);
         if (body?.notifyReady !== undefined && body.notifyReady !== Boolean(existing.notify_ready)) {
           db.prepare('UPDATE watch_collections SET notify_ready=? WHERE region=? AND id=?').run(body.notifyReady ? 1 : 0, currentRegion(), id);
@@ -4821,7 +5350,7 @@ async function handleRegionApi(req, res, url) {
     const description = rule.purchasedAt ? 'Purchased: alerts are stopped until you mark this watch as still wanted.' : rule.availableUnderTarget
       ? `Alert when ${product.name} becomes available at or below ${rule.targetPrice} ${REGIONS[currentRegion()].currency}, or its price reaches that target while available.`
       : `Watch ${product.name} using the selected event settings${rule.targetPrice !== null ? ` and a price-change target of ${rule.targetPrice} ${REGIONS[currentRegion()].currency}` : ''}.`;
-    return sendJson(res, 200, { description, decision, delivery:deliveryPlan(event, rule), copy:notificationCopy(event), configuredChannels:CHANNEL_NAMES.filter(channelConfigured), allActivity:notificationPreferences().allActivity });
+    return sendJson(res, 200, { description, decision, delivery:deliveryPlan(event, rule), copy:notificationCopy(event), configuredChannels:deliveryChannels(normalizeAlertDelivery(rule)), alertDelivery:normalizeAlertDelivery(rule), allActivity:notificationPreferences().allActivity });
   }
 
   if (req.method === 'GET' && url.pathname === '/api/watchlist') {
@@ -5096,7 +5625,7 @@ const server = http.createServer(async (req, res) => {
     const requestTarget = String(req.url || '/');
     if (!requestTarget.startsWith('/') || requestTarget.startsWith('//')) return sendJson(res, 400, { error: 'Request target is invalid.' });
     const url = new URL(requestTarget, `http://${requestHost}`);
-    if (url.pathname === '/healthz') return sendJson(res, 200, { ok: true, name: 'GearBeacon', version: APP_VERSION });
+    if (url.pathname === '/healthz') return sendJson(res, 200, { ok: true, name: 'GearBeacon', version: APP_VERSION, packageVersion: RUNNING_BUILD.version });
     if (url.pathname === '/readyz') {
       const ready = MOCK_MODE || ACTIVE_REGIONS.every((region) => {
         const item = monitors[region];
@@ -5177,10 +5706,12 @@ async function start() {
   })));
   scheduleBackups();
   scheduleNotificationWorker();
+  scheduleUpdateCheck();
   writeAppLog('info', 'app', `GearBeacon V${APP_VERSION} started.`, { regions: ACTIVE_REGIONS, accessMode: ACCESS_MODE, platform: `${process.platform}/${process.arch}` });
 }
 
 function shutdown(signal) {
+  if (updateCheckTimer) clearTimeout(updateCheckTimer);
   for (const timer of monitorTimers.values()) clearTimeout(timer);
   if (backupTimer) clearTimeout(backupTimer);
   if (notificationWorkerTimer) clearInterval(notificationWorkerTimer);

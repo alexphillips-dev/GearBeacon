@@ -16,6 +16,13 @@ const settingsPanels = [...html.matchAll(/\bdata-settings-panel="([^"]+)"/g)].ma
 if (settingsTabs.length < 2 || settingsTabs.join('|') !== settingsPanels.join('|')) {
   throw new Error(`Web contract failed. Settings tabs (${settingsTabs.join(', ')}) do not match panels (${settingsPanels.join(', ')}).`);
 }
+const settingsSubtabs = [...html.matchAll(/\bdata-settings-subtab="([^"]+)"/g)].map((match) => match[1]);
+const settingsSections = [...html.matchAll(/\bdata-settings-section="([^"]+)"/g)].map((match) => match[1]);
+if (settingsSubtabs.join('|') !== settingsSections.join('|') || new Set(settingsSubtabs).size !== settingsSubtabs.length
+  || settingsTabs.some((tab) => settingsSubtabs.filter((section) => section.startsWith(`${tab}/`)).length < 2)
+  || settingsSubtabs.some((section) => !settingsTabs.includes(section.split('/')[0]))) {
+  throw new Error('Web contract failed. Each Settings category needs matching, unique section tabs and panels.');
+}
 if (/\son(?:load|error)\s*=/i.test(javascript) || !javascript.includes('data-product-image')) {
   throw new Error('Web contract failed. Product images must use CSP-safe JavaScript load handling.');
 }

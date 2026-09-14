@@ -1,0 +1,2 @@
+# Shell scripts must run unchanged from Windows checkouts and release archives.
+*.sh text eol=lf

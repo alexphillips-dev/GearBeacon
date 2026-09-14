@@ -42,7 +42,15 @@ jobs:
         run: node --no-warnings scripts/collections-test.mjs
       - name: Watchlist overview, collection destinations, archiving and undo
         run: node --no-warnings scripts/watch-workflow-test.mjs
-      - name: Verify update helpers refuse unsafe updates
+      - name: Saved views and effective alert explanations
+        run: node --no-warnings scripts/views-alerts-test.mjs
+      - name: Collection budget alerts and stable Activity pages
+        run: node --no-warnings scripts/budget-alerts-test.mjs
+      - name: Alert delivery and freshness tests
+        run: node --no-warnings scripts/alert-delivery-test.mjs
+      - name: Activity context and branch-aware update checks
+        run: node --no-warnings scripts/activity-context-test.mjs && node --no-warnings scripts/update-notice-test.mjs
+      - name: Verify update helper safety, startup and recovery
         run: npm run test:update-helpers
       - name: Verify source launchers from outside the checkout
         run: npm run test:launchers
@@ -100,11 +108,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0
       - name: Build source image
-        run: docker compose build --build-arg VCS_REF="$GITHUB_SHA"
+        run: docker compose build --build-arg VCS_REF="$GITHUB_SHA" --build-arg BUILD_BRANCH="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
       - name: Start the real Compose stack
         env:
           MOCK_MODE: '1'
           GEARBEACON_SETUP_TOKEN: compose-test-token
+          GEARBEACON_GITHUB_RELEASE_API: ''
         run: docker compose up -d --no-build --pull never
       - name: Wait for health and test setup gate
         run: |
@@ -143,10 +152,10 @@ jobs:
       - uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
       - name: Build ${{ matrix.name }} image
-        run: docker buildx build --platform '${{ matrix.platform }}' --load --build-arg VCS_REF="$GITHUB_SHA" -t 'gearbeacon:${{ matrix.name }}' .
+        run: docker buildx build --platform '${{ matrix.platform }}' --load --build-arg VCS_REF="$GITHUB_SHA" --build-arg BUILD_BRANCH="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}" -t 'gearbeacon:${{ matrix.name }}' .
       - name: Run ${{ matrix.name }} image
         run: |
-          docker run -d --name 'gearbeacon-${{ matrix.name }}' --platform '${{ matrix.platform }}' -e MOCK_MODE=1 -e GEARBEACON_SETUP_TOKEN=container-test-token 'gearbeacon:${{ matrix.name }}'
+          docker run -d --name 'gearbeacon-${{ matrix.name }}' --platform '${{ matrix.platform }}' -e MOCK_MODE=1 -e GEARBEACON_GITHUB_RELEASE_API= -e GEARBEACON_SETUP_TOKEN=container-test-token 'gearbeacon:${{ matrix.name }}'
           for _ in $(seq 1 90); do docker exec 'gearbeacon-${{ matrix.name }}' node -e "fetch('http://127.0.0.1:8787/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" && break; sleep 1; done
           test "$(docker inspect --format='{{.State.Running}}' 'gearbeacon-${{ matrix.name }}')" = true
       - if: failure()
@@ -188,4 +197,4 @@ jobs:
         shell: bash
         env:
           EXPECTED_BUILD_COMMIT: ${{ github.sha }}
-        run: node scripts/standalone-smoke.mjs dist/standalone/GearBeacon-v1.2.0-*/
+        run: node scripts/standalone-smoke.mjs dist/standalone/GearBeacon-v1.3.0-*/
