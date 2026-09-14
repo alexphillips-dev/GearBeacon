@@ -2,9 +2,11 @@
 
 The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. The first release promoted to `main` is V1.0.0.
 
-## V1.2.0 — Stock insights and collection readiness
+## V1.3.0 — Live Activity, flexible alerts, and easier settings
 
-### Unreleased development updates
+Released September 14, 2026. Includes every development change since v1.2.0. See the [complete release notes](RELEASE_NOTES.md).
+
+- Release validation now runs Activity context and update-channel tests across the CI platform matrix. Corrected the delayed-delivery restart fixture to capture startup deliveries and assert that a due job resumes with its original context.
 
 - Added a compact blue `update available · vX.Y.Z` button below the main header on every tab. It opens matching release notes in a new tab, or Settings > General > Application when no notes link is available, and preserves Activity reading position and keyboard focus when it appears.
 - Update checks now run on server startup and daily, with shared results across browsers and retry/rate-limit handling. Main installations follow published stable releases; dev installations compare the running commit with dev, including newer commits with the same version. Source, packaged, and container builds retain channel/commit identity. Downloads and installation remain owner-initiated. See [update checks and channels](UPDATES.md).
@@ -41,14 +43,15 @@ The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. 
 - Hardened owner-initiated updates: persist the Docker version in project `.env`, verify the running image, check local startup health and the expected application version, retain native build metadata, and report recovery instructions after failed restarts. Native helpers support custom ports; all helpers retain mandatory backup confirmation. Rollback requires a compatible pre-update database and matching key. No schema or export-format change.
 - Added deterministic view/recovery/alert tests, mobile/light/dark/keyboard browser coverage, and isolated Windows, Linux/macOS and Docker updater success/failure fixtures. Updated the Wiki for usage, API details, and recovery limitations.
 
-### Existing 1.2.0 history
-
-See the [complete 1.2.0 release notes](RELEASE_NOTES.md) for Features, UI/UX, Fixes, Security, and upgrade guidance covering every change since the published 1.0.0 release, including the intervening 1.0.1 and 1.1.0 development updates.
-
 - Shortened the README into an overview and setup guide, with complete platform, feature, configuration, API, security, recovery, and release documentation in the navigable GitHub Wiki. Updated deployment and offline quick-start links and clarified source archive layouts, saved-setting precedence, Windows task management, and Docker update pinning.
 - Organized the repository root into `docs/` for release history and getting-started guidance, `launchers/` for source startup scripts, and `.github/` for contribution and security policies. Updated launch paths, documentation, CI, and release packaging; standalone downloads retain their top-level getting-started file.
 - Removed local agent instructions from Git tracking and expanded ignore rules for editor files, local environment/Compose overrides, credentials, SQLite state, backups, exports, logs, and generated release artifacts.
 - Made real-host installation, upgrade, rollback, manual accessibility, and soak testing optional release recommendations. Automated CI, security, packaging, checksum, SBOM, attestation, and protected-branch requirements remain mandatory.
+
+## V1.2.0 — Stock insights and collection readiness
+
+See the [published 1.2.0 release notes](https://github.com/alexphillips-dev/GearBeacon/releases/tag/v1.2.0) for changes since 1.0.0.
+
 - Corrected the release manifest and standalone validation to use schema v11, added schema/curated-note consistency checks, and included purchase-plan and Watchlist-workflow tests in the Windows/macOS/Linux CI matrix. GitHub release publication now uses the curated release notes.
 - Fixed browser persistence checks racing page reloads by waiting for a new document before inspecting restored navigation and filters.
 - Removed dynamic browser-test code construction from collection persistence and Activity pagination assertions flagged by CodeQL; browser-returned identifiers are compared outside the browser expression.

@@ -48,6 +48,8 @@ jobs:
         run: node --no-warnings scripts/budget-alerts-test.mjs
       - name: Alert delivery and freshness tests
         run: node --no-warnings scripts/alert-delivery-test.mjs
+      - name: Activity context and branch-aware update checks
+        run: node --no-warnings scripts/activity-context-test.mjs && node --no-warnings scripts/update-notice-test.mjs
       - name: Verify update helper safety, startup and recovery
         run: npm run test:update-helpers
       - name: Verify source launchers from outside the checkout
@@ -195,4 +197,4 @@ jobs:
         shell: bash
         env:
           EXPECTED_BUILD_COMMIT: ${{ github.sha }}
-        run: node scripts/standalone-smoke.mjs dist/standalone/GearBeacon-v1.2.0-*/
+        run: node scripts/standalone-smoke.mjs dist/standalone/GearBeacon-v1.3.0-*/

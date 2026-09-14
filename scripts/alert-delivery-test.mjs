@@ -205,7 +205,12 @@ try {
   assert.ok(received.length===1 && received[0].body.event.type==='sold_out','Expiry discarded ordinary sellout history or retained the expired restock');
   await rules(black,{maxAlertAgeMinutes:null,soldOut:false});
   await restock(); agePending(2); const beforeRestart=pending()[0];
-  await stop(); await start(); received.length=0; await deliver();
+  await stop(); received.length=0;
+  // Startup may deliver due jobs before start() returns; retain that evidence.
+  edit("UPDATE notification_queue SET next_attempt_at=? WHERE id=?",new Date(Date.now()-1000).toISOString(),beforeRestart.id);
+  await start();
+  await waitFor(()=>queue().find(row=>row.id===beforeRestart.id)?.status==='sent','Startup did not resume the queued delivery');
+  await deliver();
   assert.ok(received.some(item=>item.body.event.id===beforeRestart.event_id && item.body.event.deliveryContext),'Delayed pending delivery lost its snapshot across restart');
   const project=(await request('/api/collections',{name:'Delivery test',slugs:[black]})).id;
   const projectUrl=`/api/collections/${project}`;

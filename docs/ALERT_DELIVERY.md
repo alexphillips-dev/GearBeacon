@@ -1,6 +1,6 @@
 # Delivery channels, delayed alerts, and product freshness
 
-These features are available in the current development checkout. Monitoring and external delivery continue on the GearBeacon server when the browser is closed.
+These features are included in GearBeacon 1.3.0. Monitoring and external delivery continue on the GearBeacon server when the browser is closed.
 
 ## Choose channels for a watch
 

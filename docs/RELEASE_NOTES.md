@@ -1,102 +1,72 @@
-# GearBeacon 1.2.0 — Smarter watches, collections, and browsing
+# GearBeacon 1.3.0 — Live Activity, flexible alerts, and easier settings
 
-This update brings together **everything added since the last published release, 1.0.0**, including the 1.0.1 security improvements and 1.1.0 precision-watch features developed on `dev`.
+This release includes **all development changes since the last published main release, 1.2.0**. It improves everyday monitoring with automatic Activity arrivals, more useful event details, saved views, flexible delivery rules, shorter Settings pages, and update notices for the installed branch.
 
-GearBeacon remains a private, single-owner, self-hosted UniFi Store monitor. Monitoring and notifications run on your server, and you manage them through a desktop or mobile browser.
+GearBeacon remains a private, single-owner, self-hosted UniFi Store monitor. Monitoring and external notifications run on your server, even when the browser is closed.
 
-## Features
+## Activity
 
-### Exact products and smarter alerts
+- **Automatic arrivals:** the visible Activity tab checks for new cards every second. At the top, new events appear immediately; when scrolled down, the card being read and keyboard focus stay in place. No button click is required to reveal arrivals.
+- **Stable history and pagination:** retain filters and the selected historical page while newer events appear above it. Bounded batches handle large bursts without skipping events; reconnects and expired reading boundaries recover automatically. The 20/50/100 page sizes remain available.
+- **Individual events:** every event remains its own compact card, including separate parent products and exact variants. Events are never combined or collapsed into groups.
+- **Current status beside original evidence:** see current availability and check freshness, current Watchlist and collection membership, exact variant identity, and the event price compared with the current target. Original detection snapshots remain unchanged.
+- **Observed price context:** a 30-day observed-low indicator requires sufficient retained history for that Store and exact item, ending at the event. Limited history is not presented as a proven low.
+- **Clear delivery outcomes:** badges identify successful channels and suppression reasons. Delivery outcomes refresh automatically; details retain the underlying evidence.
+- **Dates and totals:** Today, Yesterday, and date separators help navigation without combining cards. Totals cover all matching events across pages, and calendar filters and headings follow the configured timezone.
+- **Consistent colors:** price decreases use blue for the icon and savings amount/percentage; increases retain amber. Sold out text matches the red icon, and In stock text matches green. Both themes retain readable text, arrows, and before/after values.
 
-- **Watch exact variants:** track a particular SKU, color, or pack option with its own availability, price history, image, and regional Store link. Existing watches keep their **Any variant** behavior.
-- **Import exact variants:** pasted Store links retain their selected variant, and SKU imports match exact options. An unknown explicit variant produces an error instead of silently adding a different product.
-- **Combine availability and price:** choose to alert only when an item is in stock at or below your target. For Any variant watches, the same variant must satisfy both conditions.
-- **Preview before saving:** see how a rule would behave and what its notification would contain, including regional currency, configured delivery channels, and any All activity override.
-- **Track purchased watches:** Purchased stops individual alerts while retaining the watch, rules, and history. Still wanted enables the saved rules again.
+## Watches, views, and collections
 
-### Collections and project planning
+- **Saved views:** save, rename, replace, and delete named Watchlist and Browse views per regional Store. Views are stored on the installation for use across browsers and are included in recovery data. Revision checks prevent conflicting edits from silently overwriting a newer view.
+- **Compact lists:** choose Cards or Compact list while retaining product images, prices, availability, collection memberships, and actions.
+- **Simpler Watchlist controls:** search, status, collection, and sorting share one primary row. View options contains category, layout, optional Watchlist collection grouping, and saved views; Manage contains collection management, imports, and bulk selection. Browse saved views use the same dropdown styling.
+- **Budget-aware readiness:** optionally require a collection to be within budget before it can send a ready alert. Qualification combines recorded spending, remaining quantities, and confirmed qualifying prices; unknown costs and pending prices block qualification. Cards and explanations identify the blocker. This condition defaults off for existing collections.
+- **Safer collection rule changes:** budget and rule edits establish a new baseline and cancel obsolete pending deliveries. Existing item-alert overrides, quantities, recorded payments, and purchased state are preserved.
 
-- **Organize watches into regional collections:** create projects, select members with a searchable picker, and add selected watches in bulk. A watch can belong to multiple collections without duplicating its individual notification jobs.
-- **Add directly from Browse:** choose Watchlist, an existing collection, or a new collection while adding a product. Select an exact variant and a desired quantity for the project.
-- **Reuse existing watches:** adding a watched product to a collection preserves its alert rules. Re-adding an existing membership preserves its quantities and recorded spending.
-- **Plan quantities and partial purchases:** record desired units, purchased units, and the total actually paid for each collection item. Purchase records belong to the project; per-unit target prices remain shared watch settings.
-- **Set a project budget:** see recorded spending, estimated remaining cost, estimated project total, and how far the project is over or under budget. Unknown costs are identified so an incomplete subtotal is not presented as a complete total.
-- **Monitor collection readiness:** see which remaining items qualify, which are waiting, and which have unknown monitoring coverage.
-- **Receive collection-ready alerts:** opt in to one notification when all remaining items meet their availability and individual target-price conditions. These alerts use GearBeacon's existing channels, quiet hours, grouping, digests, and durable delivery queue.
-- **Use Collection alerts only:** optionally suppress members' individual notifications while an active collection alert is enabled. Saved item rules remain intact, and overlapping collection overrides are identified.
-- **Archive completed or paused projects:** retain items, quantities, spending, and saved alert settings while keeping the project out of active readiness summaries. Restoring a collection starts a fresh alert baseline.
-- **Undo item removal:** restore a removed collection membership, including its quantity and purchase record, during the current page session. Undo remains available after closing and reopening collection management until dismissed or the page is refreshed.
+## Notifications and monitoring evidence
 
-### Stock insights and Watchlist overview
+- **Choose delivery channels per watch or collection:** use the configured defaults or select ntfy, Discord, Gotify, Webhook, and Email. Previews explain disabled or unconfigured selections. Collection routes apply to collection-ready events; member watches keep their own routes. Browser popups remain controlled separately.
+- **Apply route changes to queued work:** removing a channel cancels its pending and failed jobs. Adding a channel affects future events and does not resend earlier alerts. An in-progress delivery cannot be recalled.
+- **Optional alert expiry:** set a time limit for restock, target-price, price-drop, and collection-ready alerts, including time spent in quiet hours, digests, and retries. Queued jobs retain their original expiry ceiling; shorter current limits apply immediately. Expired alerts remain visible in Activity and cannot be revived with Retry failed. Existing rules default to no expiry.
+- **Context for delayed alerts:** messages delayed by at least one minute show the original detection time alongside separately labeled current confirmed or last-known status. Exact-variant context remains tied to the triggering SKU. Supported server channels, email, and grouped/digest messages include this context without rewriting the original event.
+- **Product freshness:** Watchlist cards and compact lists, Browse, and product details distinguish confirmed checks, pending changes, delayed checks, and unknown coverage. Freshness labels update without rebuilding the card or discarding an open rule form. Monitoring gaps never count as confirmation.
+- **Explain effective rules:** item and collection summaries describe inherited settings, target conditions, pauses, purchased state, collection-only overrides, channels, scheduling, and cooldowns. Actual notification jobs are shown separately from hypothetical delivery timing.
 
-- **Observed availability timelines:** review recorded restocks, observed available durations, and explicit gaps caused by outages, restarts, overdue checks, partial catalogs, or pending confirmation.
-- **Price insights:** compare the lowest recorded prices over 7, 30, and 90 days, including the lowest price observed while available and comparisons with your watch target. Comparisons stay within the same variant, region, and currency.
-- **Actionable Watchlist summaries:** select Ready to buy, At target price, or Collections ready to open the matching products or projects. Counts account for remaining quantities in active projects and exclude stale or relevant unconfirmed observations.
+## Settings, accessibility, and interface fixes
 
-## UI / UX
+- **Shorter Settings pages:** each existing category has section tabs. General separates Application from Stores & access; Notifications separates Alert types, Channels, Delivery, and Email; Data separates Schedule & retention from Backups & transfer; Security separates Overview, Password, and Sessions; Privacy separates Catalog & updates from Notifications; Operations separates Overview, Monitoring, Delivery, Backups, Diagnostics, and Logs.
+- **Remember navigation and preserve drafts:** each Settings category remembers its last section in this browser. Switching tabs preserves unsaved inputs; explicit Save controls still apply changes. Passwords and drafts are not stored as navigation preferences.
+- **Accessible section navigation:** scoped arrow-key/Home/End handling, visible focus, responsive wrapping, and deep links reveal the relevant section. Operations remains the final Settings category, including compatibility with old Operations links.
+- **Compact help controls:** card and rule explanation buttons now display a question mark with descriptive labels and tooltips. The explanation dialog has padded content, a contained sticky header, and wrapping long titles. Empty results no longer leave an extra bar, and horizontal overflow is removed.
+- **Stores & access spacing:** Store choices, field rows, and access options have consistent vertical gaps, including stacked mobile fields, so labels no longer crowd the controls above them.
+- **Smoother refreshes:** unchanged product, collection, and Activity nodes and dropdown options are reused. Overlapping refreshes are coalesced and stale responses after edits or region changes are rejected. Unsaved rules and notification preferences remain intact. Hidden tabs defer expensive rendering while server monitoring and delivery continue.
 
-- **Store-inspired Browse:** illustrated category tiles, larger product previews, separated cards, blue action accents, clearer model/SKU labels, and a prominent Watchlist/collection action.
-- **Browse filters and sorting:** combine availability, Watching / Not watched, category, and search; sort by name, price, or availability. Filters and sorting are remembered in the browser and can be reset together.
-- **Variant-aware Browse cards:** search exact SKUs, see variant counts, and recognize a parent product as watched when an exact variant is watched. Multi-variant cards show a From price when every current variant has a known price.
-- **Mobile Browse:** filters fold into a compact expandable panel, categories scroll within their own navigation strip, and cards reflow to preserve readable names, prices, and controls.
-- **Collection cards:** collections use the same grid as individual watches, preview up to four product images, indicate additional members, and show the estimated project total in the normal price position.
-- **Optional folder-style grouping:** collected watches appear inside their collection cards without duplicate individual cards in the default Watchlist view. Open a collection to see its items; search also finds matching members.
-- **Focused collection management:** a dedicated dialog includes a guided empty state, Active / Archived / All views, thumbnail member selection, and accessible editing controls.
-- **Always-visible collection items:** thumbnail rows show product names, variant/SKU details, prices, and readiness, with Edit item, Record purchase, Store, and Remove actions.
-- **Accessible collection alerts:** Alerts actions are available from collection cards, management, details, and the bottom of the editor. Returning from alerts preserves unsaved selections and keyboard focus.
-- **Clear membership badges:** item badges now explicitly read Collection: followed by the collection name.
-- **Activity pagination:** choose 20 entries per page by default, or 50 or 100. Additional entries appear on subsequent pages, and the selected size is remembered.
-- **Collection activity:** filter collection-ready events, inspect their details, follow links back to the project, and receive collection details in email notifications.
-- **Keyboard and theme support:** category arrow-key navigation, focus restoration, live status announcements, image retry behavior, dark/light contrast, mobile reflow, and 200% equivalent zoom coverage extend across the new workflows.
+## Updates and deployment
 
-## Fixes and reliability
+- **Update button:** a compact blue `update available · vX.Y.Z` button appears below the header on every tab. It opens matching release notes in a new tab, or the local update details when a notes link is unavailable. Its arrival preserves Activity reading position and focus.
+- **Branch-aware checks:** main follows newer published stable releases and excludes drafts and prereleases. Dev compares the running commit with the dev branch, detecting newer commits even when the version number is unchanged. It opens matching prerelease notes when available, otherwise the changelog for that commit.
+- **Automatic checking:** the server checks at startup and daily, sharing cached results across browsers. Manual checks remain in Settings. Offline failures preserve the last confirmed result; retries respect rate limits. Automatic checking can be disabled, and downloads and installation remain owner-initiated.
+- **Build identity:** packaged source archives, standalone packages, and container builds retain branch, version, and commit metadata so update checks can identify the installed build.
+- **Verified updates:** native helpers check local startup health and the expected version after restart, support custom ports, retain build metadata, and report recovery steps if verification fails. Docker updates persist the selected image tag in the Compose project `.env`, preserve other settings, and verify the resolved and running image. All helpers retain mandatory backup confirmation.
 
-- **Verified collection saves:** name and membership changes save together. The UI checks server capabilities and returned membership data before reporting success, preventing false Collection updated messages against an older running backend.
-- **Predictable deletion:** deleting a collection returns to the Watchlist instead of reopening an empty Manage collections window.
-- **Preserved purchase records:** membership edits retain existing plans; archived spending is preserved when shared watches are marked Purchased or Still wanted; recorded payments remain fixed when catalog prices change.
-- **Safe Undo behavior:** restoring a removed membership never overwrites a newer membership or recreates a deleted watch or collection.
-- **Correct alert transitions:** qualifying state survives restarts, enabling or editing conditions establishes a baseline, and empty or fully purchased collections do not alert. Restore does not replay past collection-ready notifications.
-- **Delivery cancellation:** disabling, archiving, deleting, or changing relevant collection conditions cancels obsolete pending/failed jobs. Delivery checks active collection-only suppression before sending individual alerts.
-- **Reliable catalog evidence:** incomplete or invalid variant catalogs cannot advance destructive-change confirmation. Insights show unknown periods instead of inventing availability during missing coverage.
-- **Honest variant pricing:** missing prices display Prices vary, unknown prices sort after known values, zero prices remain valid, and retired variants are excluded from current variant price summaries.
-- **Correct standalone validation:** package startup checks now use the release manifest's application version and schema rather than an outdated schema assertion. Identity mismatches are reported separately from startup timeouts.
+## Documentation, privacy, and maintenance
 
-## Security and self-hosting
+- Reorganized release history and getting-started guidance under `docs/`, source startup scripts under `launchers/`, and contribution/security guidance under `.github/`. Standalone packages retain their top-level getting-started file and appropriate service helpers.
+- Simplified the README and deployment overview, connected the complete Wiki, and added badges for releases, main CI, license, platforms, Docker, and documentation. Clarified source archive layout, saved-setting precedence, Windows Scheduled Task management, Docker version pinning, configuration, and recovery.
+- Removed local agent instructions from tracked files and expanded ignore rules for editor state, environment overrides, credentials, databases, exports, logs, and generated packages. Delayed-delivery product context stays redacted from support diagnostics.
+- Added deterministic coverage for saved views, routing, expiry, freshness, collection budgets, migration/recovery, Activity evidence, timezone boundaries, refresh races, large lists, update channels, and updater success/failure behavior. Browser coverage includes mobile, both themes, keyboard/focus, Settings drafts, dialogs, and live Activity anchoring.
+- Corrected the notification restart test to retain alerts sent during startup and explicitly verify that due jobs resume with their original delayed context.
+- Candidate packages and releases retain required automated platform, security, checksum, SBOM, and attestation checks. Real-host installation, rollback, manual accessibility, and soak testing are documented as recommended additional validation, without weakening automated release requirements.
 
-- **Stricter host validation:** validate Host and forwarded-host authorities before routing, enforce loopback-only local mode, and require explicit reverse-proxy authority settings to resist DNS rebinding.
-- **Stronger password hashing:** new owner passwords use a stronger versioned scrypt profile; valid older hashes are upgraded after successful sign-in.
-- **Bounded HTTP resources:** apply header, request, keep-alive, header-count, and per-socket request limits while retaining no-store API responses.
-- **Lower-privilege services:** Windows and macOS service installation uses dedicated restricted identities; Linux keeps application files root-owned and applies additional systemd sandboxing.
-- **Hardened Docker isolation:** Compose runs with a read-only root filesystem, dropped capabilities, no-new-privileges, a process limit, and constrained temporary storage while preserving writable application data.
-- **Privacy-preserving diagnostics:** support bundles exclude product identities, variant metadata, collection contents, and pending product observations while retaining useful operational counts.
-- **Repository safeguards:** security contracts check service identities, container isolation, HTTP/password settings, dependency-update targeting, and pinned actions. Dependency updates target dev, and repository secret scanning was expanded.
+## Upgrading from 1.2.0
 
-## Maintenance and support
+1. Create a backup and use the restore-test controls before updating. Keep the compatible pre-upgrade database and its matching encryption key for rollback.
+2. Follow the update procedure for your installation type. Source installations require Node.js 22.13 or newer; standalone packages include their runtime. Source checkout launchers now live under `launchers/`; older 1.2.0 source archives keep their launchers at the root.
+3. Restart the GearBeacon process after replacing the application files, then hard-refresh the browser to load the matching interface.
+4. Startup creates and validates a safety backup before migrating the 1.2.0 database from **schema v11 to v13**. Existing watches, rules, collections, quantities, spending, history, settings, encrypted secrets, and owner access are retained.
 
-- Added structured GitHub forms for bugs, feature requests, deployment issues, monitoring issues, and notification problems, with guidance to avoid sharing private data.
-- Expanded deterministic coverage for variants, conditions, collection readiness, purchase plans, budgets, archive/restore, Undo, migrations, and recovery, plus browser accessibility and focus checks.
-- Added collection purchase-plan and Watchlist-workflow suites to the Windows, macOS, and Linux CI matrix.
-- Made browser reload checks wait for a new document before checking restored state, preventing stale-page passes and timing-related failures during navigation.
-- Moved browser-returned collection and Activity identifiers into test-side comparisons so those values are not interpolated into executable browser expressions.
-- Updated the release manifest to schema v11 and added consistency checks so source, generated server output, manifest, and curated release notes remain aligned.
-- GitHub release publication now uses these sectioned notes for new or refreshed draft releases.
+Recovery exports now use **format v9**, preserving saved views, collection budget conditions, delivery channel choices, and expiry. Previous supported formats remain importable. Existing watches and collections retain default channels, no expiry, and no budget-based readiness requirement until you change those settings.
 
-## Upgrading from 1.0.0
+Older application versions cannot open a schema-v13 database or format-v9 export. Rollback requires the compatible pre-upgrade database, matching key, and application version; update helpers do not automatically restore a database.
 
-1. Create a backup and use GearBeacon's restore-test controls before updating. Keep the compatible pre-upgrade database and its matching encryption key for rollback.
-2. Follow the update instructions for your installation type. Restart the GearBeacon process after replacing the application files, then hard-refresh the browser to load the matching interface.
-3. Startup creates and validates a safety backup before migrating to **database schema v11**. Existing regional watches, rules, history, settings, encrypted secrets, and owner access are retained.
-
-Recovery exports now use **format v7** and preserve exact variants, condition state, insights, collections, purchase plans, budgets, alert modes, and archive state. Older supported export formats remain importable. Earlier application versions cannot open a schema-v11 database or format-v7 export; rollback requires the compatible pre-upgrade backup and matching application version.
-
-Existing product watches remain Any variant watches. Collection alerts, collection-only mode, budgets, and grouping are opt-in. Older collection records receive compatible defaults; historical purchase amounts that were never recorded remain unknown.
-
-## Notes
-
-- Stock insights begin with complete observations after upgrading. Earlier activity cannot reconstruct unobserved availability, and partial history is labeled. GearBeacon does not predict future restocks.
-- Catalog prices are regional display prices. They do not calculate shipping, additional taxes, or checkout surcharges. Collection quantities express purchase plans, not the number of units physically available in the Store.
-- Item-removal Undo is retained only in the current browser page session. Removing a watch globally also removes its collection memberships, including archived ones.
-- An alert already being delivered may finish even if it is disabled or cancelled in the meantime.
-- GearBeacon remains independent software, unaffiliated with Ubiquiti Inc. Ubiquiti and UniFi are trademarks of their respective owner.
-
-[Installation, updates, and recovery documentation](https://github.com/alexphillips-dev/GearBeacon/blob/main/README.md) · [All changes since 1.0.0](https://github.com/alexphillips-dev/GearBeacon/compare/v1.0.0...main)
+Stock freshness and observed price history describe monitoring evidence, not a promise of checkout availability or a prediction of future restocks. GearBeacon remains independent from Ubiquiti. UniFi and Ubiquiti are trademarks of Ubiquiti Inc.
