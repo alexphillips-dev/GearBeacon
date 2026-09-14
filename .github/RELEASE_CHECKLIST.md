@@ -12,7 +12,12 @@ Use the required sections after a manually dispatched candidate-package run and 
 
 ## Required: promotion and publication
 
-- [ ] Create a release pull request from `dev` to protected `main`; do not force-push or bypass required checks.
+- [ ] Confirm `main` permits merge commits: repository merge commits are enabled and the branch's Require linear history setting is disabled. Retain required CI/security checks, pull requests, conversation resolution, administrator enforcement, and restrictions on force pushes and branch deletion.
+- [ ] Pause new commits to `dev` during promotion and branch synchronization. Create a release pull request from `dev` to protected `main`; do not force-push or bypass required checks.
+- [ ] Merge the release PR with **Create a merge commit**. Never squash or rebase a `dev`-to-`main` release: both branches must retain the same development commit ancestry.
+- [ ] Verify the merged `main` tree matches the reviewed candidate and that CI and Security scanning pass on the exact merge commit.
+- [ ] Before resuming development, fetch both branches, bring local `dev` up to date with `origin/dev`, then fast-forward it to `origin/main` with `git merge --ff-only origin/main` and push `dev` normally. Do not create another merge commit. If a fast-forward fails, stop and reconcile intervening work without resetting or force-pushing.
+- [ ] Fetch again and confirm both remote branches point to the same commit: `git rev-list --left-right --count origin/main...origin/dev` must report `0 0`. Matching files alone is not sufficient.
 - [ ] After merge and green checks on the exact `main` SHA, place the owner-authorized stable `vMAJOR.MINOR.PATCH` tag on that SHA.
 - [ ] Keep the GitHub release as a draft until archives, checksums, SBOMs, amd64/arm64 container images, and attestations all succeed.
 - [ ] Verify the published release, curated notes, downloads, checksums, provenance, and container tags against the reviewed commit.

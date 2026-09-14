@@ -39,9 +39,18 @@ requireMatch(linuxInstaller, /chown -R root:root \/opt\/gearbeacon/, 'Linux appl
 
 const devTargets = dependabot.match(/target-branch:\s*dev/g) || [];
 if (devTargets.length !== 3) throw new Error('Every Dependabot ecosystem must target the development branch.');
+const actionsUpdates = dependabot.split(/\r?\n  - package-ecosystem:/).find((section) => /^\s*github-actions\s*\r?\n/.test(section)) || '';
+requireMatch(actionsUpdates, /    groups:\s*\r?\n      codeql:\s*\r?\n        patterns:\s*\r?\n          - ['"]github\/codeql-action\/\*['"]/, 'Dependabot must group CodeQL actions so initialization, analysis, and SARIF upload update together.');
 requireMatch(securityWorkflow, /repository-secret-scan:[\s\S]*scan-type:\s*fs[\s\S]*scanners:\s*secret[\s\S]*exit-code:\s*'1'/, 'Security CI must fail closed on repository filesystem secret findings.');
+const securityCodeqlActions = [...securityWorkflow.matchAll(/^\s*(?:-\s+)?uses:\s*github\/codeql-action\/([^@\s]+)@/gm)].map((match) => match[1]);
+for (const action of ['init', 'analyze', 'upload-sarif']) {
+  if (securityCodeqlActions.filter((name) => name === action).length !== 1) {
+    throw new Error(`Security CI must contain exactly one active CodeQL ${action} action.`);
+  }
+}
 
 const workflowFiles = (await readdir('.github/workflows')).filter((file) => /\.ya?ml$/i.test(file));
+const codeqlRevisions = new Set();
 for (const file of workflowFiles) {
   const workflow = await read(`.github/workflows/${file}`);
   for (const match of workflow.matchAll(/\buses:\s*([^\s#]+)/g)) {
@@ -49,7 +58,9 @@ for (const file of workflowFiles) {
     if (reference.startsWith('./')) continue;
     const revision = reference.split('@')[1] || '';
     if (!/^[a-f0-9]{40}$/i.test(revision)) throw new Error(`${file} contains an action that is not pinned to a full commit SHA: ${reference}`);
+    if (reference.startsWith('github/codeql-action/')) codeqlRevisions.add(revision.toLowerCase());
   }
 }
+if (codeqlRevisions.size !== 1) throw new Error('CodeQL actions must use the same commit SHA. Update initialization, analysis, and SARIF upload together.');
 
 console.log('Security hardening contract OK.');
