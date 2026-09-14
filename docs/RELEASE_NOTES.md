@@ -47,6 +47,7 @@ GearBeacon remains a private, single-owner, self-hosted UniFi Store monitor. Mon
 - **Branch-aware checks:** main follows newer published stable releases and excludes drafts and prereleases. Dev compares the running commit with the dev branch, detecting newer commits even when the version number is unchanged. It opens matching prerelease notes when available, otherwise the changelog for that commit.
 - **Automatic checking:** the server checks at startup and daily, sharing cached results across browsers. Manual checks remain in Settings. Offline failures preserve the last confirmed result; retries respect rate limits. Automatic checking can be disabled, and downloads and installation remain owner-initiated.
 - **Build identity:** packaged source archives, standalone packages, and container builds retain branch, version, and commit metadata so update checks can identify the installed build.
+- **Prerelease channels:** candidate packages follow dev even when the package workflow is dispatched from main; stable packages built from main keep the stable channel.
 - **Verified updates:** native helpers check local startup health and the expected version after restart, support custom ports, retain build metadata, and report recovery steps if verification fails. Docker updates persist the selected image tag in the Compose project `.env`, preserve other settings, and verify the resolved and running image. All helpers retain mandatory backup confirmation.
 
 ## Documentation, privacy, and maintenance

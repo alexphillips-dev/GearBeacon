@@ -110,6 +110,8 @@ try {
   const built=buildMetadata(checkout,'1.3.0',{});assert.equal(built.branch,'dev');assert.match(built.commit,/^[a-f0-9]{40}$/);
   assert.equal(result.currentCommit,built.commit,'Source commit did not override stale package metadata');
   assert.equal(buildMetadata(checkout,'1.3.0-rc.1',{GITHUB_REF:'refs/tags/v1.3.0-rc.1'}).branch,'dev');
+  assert.equal(buildMetadata(checkout,'1.3.0-rc.1',{GITHUB_REF:'refs/heads/main'}).branch,'dev','A candidate dispatched from main followed stable updates');
+  assert.equal(buildMetadata(checkout,'1.3.0',{GITHUB_REF:'refs/heads/main'}).branch,'main');
   assert.equal(buildMetadata(checkout,'1.3.0',{GITHUB_REF:'refs/tags/v1.3.0'}).branch,'main');
   assert.throws(()=>buildMetadata(checkout,'../unsafe',{}));
   const staged=join(scratch,'source-package');await mkdir(staged);

@@ -15,7 +15,7 @@ export function buildMetadata(root, packageVersion, env = process.env) {
   const explicit=String(env.GEARBEACON_BUILD_BRANCH || '');
   if (explicit && !['main','dev'].includes(explicit)) throw new Error('Build branch must be main or dev.');
   const ref=String(env.GITHUB_HEAD_REF || env.GITHUB_REF || git(['symbolic-ref','--short','HEAD'])).replace(/^refs\/heads\//,'');
-  const branch=explicit || (['main','dev'].includes(ref) ? ref : packageVersion.split('+')[0].includes('-') ? 'dev' : 'main');
+  const branch=explicit || (packageVersion.split('+')[0].includes('-') ? 'dev' : ['main','dev'].includes(ref) ? ref : 'main');
   const commit=env.GEARBEACON_BUILD_COMMIT || env.GITHUB_SHA || git(['rev-parse','HEAD']);
   return {name:'GearBeacon',version,packageVersion,branch,commit:/^[a-f0-9]{40}$/i.test(commit) ? commit.toLowerCase() : null,builtAt:new Date().toISOString()};
 }

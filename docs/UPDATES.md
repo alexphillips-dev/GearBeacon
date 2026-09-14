@@ -17,6 +17,8 @@ An identical or locally ahead dev checkout does not show an update. A diverged c
 
 The running source checkout supplies its Git branch and commit. Packaged source archives and standalone builds include `build-info.json`; container builds record the branch, commit, and package version in the image. Identity is captured at server startup, so restart GearBeacon after changing the installed code. Older packages or raw source archives with no branch metadata default to `main`, unless a prerelease version or a `dev` image tag identifies development.
 
+Prerelease source and standalone packages follow `dev` even when Candidate packages is dispatched from `main`. An explicitly configured build-channel override still takes precedence.
+
 ## Configuration
 
 These are server environment settings. Restart GearBeacon after changing them. The supplied Compose file passes the update settings into the container.
