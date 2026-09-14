@@ -8,15 +8,18 @@ import { createHash } from 'node:crypto';
 const root=resolve(import.meta.dirname,'..');
 const bash=process.platform==='win32' ? join(process.env.ProgramFiles || 'C:/Program Files','Git/bin/bash.exe') : 'sh';
 if (process.platform==='win32' && !existsSync(bash)) throw new Error('Git Bash is needed to run the Unix updater fixtures on Windows.');
-const fixture=mkdtempSync(join(tmpdir(),'gearbeacon-unix-update-'));
+const fixture=mkdtempSync(join(tmpdir(),"gearbeacon-unix-update-space & quote'-"));
+const runner=join(fixture,'run-updater.sh');
 const bin=join(fixture,'bin'); const project=join(fixture,'compose'); const install=join(fixture,'gearbeacon');
 const unix=value=>value.replaceAll('\\','/');
 const executable=(name,body)=>{ const file=join(bin,name); writeFileSync(file,'#!/usr/bin/env sh\nset -eu\n'+body); chmodSync(file,0o755); };
-const run=(script,args=[],scenario='success',platform='Linux')=>spawnSync(bash,['-c','export PATH="$(cd "$1" && pwd -P):$PATH"; shift; exec sh "$@"','fixture',unix(bin),unix(join(root,script)),...args],{cwd:project,encoding:'utf8',timeout:15000,windowsHide:true,env:{...process.env,TEST_ROOT:unix(fixture),TEST_CASE:scenario,TEST_PLATFORM:platform,COMPOSE_ENV_FILES:'',COMPOSE_DISABLE_ENV_FILE:'0',COMPOSE_FILE:'',GEARBEACON_IMAGE_TAG:''}});
+const run=(script,args=[],scenario='success',platform='Linux')=>spawnSync(bash,[unix(runner),unix(bin),unix(join(root,script)),...args],{cwd:project,encoding:'utf8',timeout:15000,windowsHide:true,env:{...process.env,TEST_ROOT:unix(fixture),TEST_CASE:scenario,TEST_PLATFORM:platform,COMPOSE_ENV_FILES:'',COMPOSE_DISABLE_ENV_FILE:'0',COMPOSE_FILE:'',GEARBEACON_IMAGE_TAG:''}});
 const output=result=>`${result.stdout || ''}\n${result.stderr || ''}`;
 const check=(result,success)=>assert.equal(result.status===0,success,output(result));
 try {
   for (const dir of [bin,project,install]) mkdirSync(dir);
+  // Keep shell source literal and pass every filesystem path as a separate argument.
+  writeFileSync(runner,'#!/usr/bin/env sh\nset -eu\nexport PATH="$(cd "$1" && pwd -P):$PATH"\nshift\nexec sh "$@"\n');
   writeFileSync(join(project,'compose.yaml'),'services:\n  gearbeacon:\n    image: mock\n');
   executable('uname','if test "$1" = -s; then echo "$TEST_PLATFORM"; else echo x86_64; fi\n');
   executable('sudo',String.raw`printf '%s\n' "$*" >> "$TEST_ROOT/actions"

@@ -58,6 +58,7 @@ GearBeacon remains a private, single-owner, self-hosted UniFi Store monitor. Mon
 - Corrected the notification restart test to retain alerts sent during startup and explicitly verify that due jobs resume with their original delayed context.
 - Updated source-package rehearsal to validate the full installed version, including prerelease suffixes, and confirm that disabled update checks remain unverified.
 - Made the imported-history duration test account for the API's actual rolling window, preserving exact duration assertions on slower runners.
+- Removed inline-shell invocation from updater fixtures and exercised paths containing spaces, ampersands, and quotes, addressing the CodeQL finding in that test helper.
 - Candidate packages and releases retain required automated platform, security, checksum, SBOM, and attestation checks. Real-host installation, rollback, manual accessibility, and soak testing are documented as recommended additional validation, without weakening automated release requirements.
 
 ## Upgrading from 1.2.0
