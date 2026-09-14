@@ -117,8 +117,13 @@ export async function testSettingsNavigation({ evaluate, waitForBrowser, reloadB
       api=async(path,options)=>{if(path==='/api/operations') throw new Error('Mock Operations connection failure');return originalApi(path,options);};
       activateSettingsTab('operations'); activateSettingsSection('operations','delivery'); await refreshOperations();
       const visibleError=document.getElementById('operationsError').getClientRects().length>0 && document.getElementById('operationsError').textContent.includes('Mock Operations connection failure');
+      let releaseOlder;
+      api=async(path,options)=>path==='/api/operations' ? new Promise(resolve=>{releaseOlder=resolve;}) : originalApi(path,options);
+      const olderRefresh=refreshOperations();
       api=async(path,options)=>path==='/api/operations' ? {...snapshot,securityWarnings:[{severity:'warn',code:'smtp-certificates',settingsTab:'notifications',message:'Mock SMTP certificate warning'}]} : originalApi(path,options);
       await refreshOperations();
+      releaseOlder({...snapshot,securityWarnings:[{severity:'warn',code:'old-response',settingsTab:'general',message:'Stale warning'}]});
+      await olderRefresh;
       const recovered=document.getElementById('operationsError').classList.contains('hidden');
       activateSettingsSection('operations','overview'); document.querySelector('#securityWarnings [data-settings-link]').click();
       const warningTarget=document.activeElement.dataset.settingsSubtab;

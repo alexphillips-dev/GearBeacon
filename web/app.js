@@ -1963,9 +1963,13 @@ async function refreshLogs() {
   } catch (err) { $('operationsLogs').textContent = err.message; }
 }
 
+let operationsRefreshVersion = 0;
 async function refreshOperations() {
+  const requestVersion = ++operationsRefreshVersion;
   try {
-    const ops = await api('/api/operations'); app.operations = ops;
+    const ops = await api('/api/operations');
+    if (requestVersion !== operationsRefreshVersion) return;
+    app.operations = ops;
     app.lastOperationsRefresh = Date.now();
     $('operationsError').classList.add('hidden');
     $('runtimeBadge').textContent = `${ops.runtime.platform} · ${ops.runtime.standalone ? 'standalone' : ops.runtime.node}`;
@@ -1987,6 +1991,7 @@ async function refreshOperations() {
     renderAttentionBanner();
     await refreshLogs();
   } catch (err) {
+    if (requestVersion !== operationsRefreshVersion) return;
     $('operationsError').textContent = `Operations unavailable: ${err.message}`;
     $('operationsError').classList.remove('hidden');
   }

@@ -40,6 +40,7 @@ GearBeacon remains a private, single-owner, self-hosted UniFi Store monitor. Mon
 - **Compact help controls:** card and rule explanation buttons now display a question mark with descriptive labels and tooltips. The explanation dialog has padded content, a contained sticky header, and wrapping long titles. Empty results no longer leave an extra bar, and horizontal overflow is removed.
 - **Stores & access spacing:** Store choices, field rows, and access options have consistent vertical gaps, including stacked mobile fields, so labels no longer crowd the controls above them.
 - **Smoother refreshes:** unchanged product, collection, and Activity nodes and dropdown options are reused. Overlapping refreshes are coalesced and stale responses after edits or region changes are rejected. Unsaved rules and notification preferences remain intact. Hidden tabs defer expensive rendering while server monitoring and delivery continue.
+- **Current Operations data:** older Operations responses and errors cannot overwrite a newer result, keeping warning shortcuts and recovery status consistent during overlapping refreshes.
 
 ## Updates and deployment
 
