@@ -14,6 +14,8 @@ Only a cart containing the one authorized exact SKU/variant and quantity is acce
 
 During automated checkout, unrecognized Ubiquiti write endpoints are blocked. The companion also checks the total returned when the Store creates the order before letting its browser payment flow continue. A changed total can leave an unpaid order requiring owner reconciliation; it does not trigger another submission.
 
+Cart creation and cart updates remain available during setup. The request guard inspects the executed mutation fields, so payment-provider or supplemental-purchase information returned with a cart does not count as submitting an order. Unsupported mutation documents stop rather than bypassing the submission check.
+
 ## Install the companion
 
 Use the `checkout` directory from the same GearBeacon source checkout or source package. The base server and Docker image do not download Chromium or gain a browser dependency. The optional companion requires Node.js 22.13 or newer and runs on Windows, macOS, or Linux. For a NAS, Docker, or headless server, run it on a separate computer that can reach GearBeacon through HTTPS. HTTP is accepted only for a loopback dashboard on the same computer. Keep the computer awake while purchases are armed.

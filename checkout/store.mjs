@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
+import { graphqlOperation } from './graphql.mjs';
 
 export const STORES = {
   us:{ origin:'https://store.ui.com', path:'/us/en', currency:'USD' },
@@ -51,6 +52,7 @@ export class StoreBrowser {
       const knownGraphql = this.fixtureOrigin ? url.origin === this.origin && url.pathname === '/graphql'
         : url.origin === 'https://ecomm.svc.ui.com' && url.pathname === '/graphql';
       const operations = Array.isArray(body) ? body : [body];
+      const parsedOperations = knownGraphql && request.method() === 'POST' ? operations.map(graphqlOperation) : [];
       const storeHost = this.fixtureOrigin ? url.origin === this.origin : url.hostname === 'ui.com' || url.hostname.endsWith('.ui.com');
       const changesState = !['GET','HEAD','OPTIONS'].includes(request.method());
       // A renamed REST/RPC endpoint must not escape the recognized CreateOrder gate.
@@ -58,13 +60,16 @@ export class StoreBrowser {
       if (!this.submitted && changesState && storeHost && !knownGraphql && (this.automating || /order|payment|purchase|charge/i.test(url.pathname))) {
         this.gateRejected = true; return route.abort('blockedbyclient');
       }
-      if (knownGraphql && changesState && operations.some(op=>!op || typeof op.operationName !== 'string' && typeof op.query !== 'string')) {
+      if (knownGraphql && changesState && (request.method() !== 'POST' || !parsedOperations.length || parsedOperations.some(op=>!op))) {
         this.gateRejected = true; return route.abort('blockedbyclient');
       }
-      const createsOrder = knownGraphql && operations.some(op=>op?.operationName === 'CreateOrder' || /\bmutation\s+CreateOrder\b/.test(op?.query || ''));
+      const createsOrder = parsedOperations.some(op=>op?.type === 'mutation' && op.fields.some(field=>field.name === 'createOrder'));
       if (createsOrder) {
         try {
           if (operations.length !== 1 || this.submitted || !this.allowSubmission) throw new CheckoutAttention('cart');
+          const operation = parsedOperations[0], field = operation.fields[0];
+          if (operation.name !== 'CreateOrder' || operation.fields.length !== 1 || field.responseName !== 'createOrder'
+            || field.argumentsText !== '( input : $ input )') throw new CheckoutAttention('cart');
           const input = body.variables?.input;
           if (input?.checkoutId !== this.checkout?.id || String(input?.paymentMethod).toLowerCase() !== 'card') throw new CheckoutAttention('cart');
           await this.allowSubmission(input);
@@ -82,8 +87,10 @@ export class StoreBrowser {
           return route.fulfill({ response });
         } catch { this.gateRejected = true; return route.abort('blockedbyclient'); }
       }
-      // Before authorization, block order/payment mutations even if the Store changes button behavior.
-      const orderMutation = knownGraphql && operations.some(op=>(/\bmutation\b/.test(op?.query || '') || !op?.query && !/^Get/.test(op?.operationName || '')) && /Order|Payment|Purchase|Charge/.test(`${op?.operationName || ''} ${op?.query || ''}`));
+      // Cart requests contain payment/purchase words in variables and response fragments.
+      // Classify what the mutation executes, not the data it asks the Store to return.
+      const orderMutation = parsedOperations.some(op=>op?.type === 'mutation'
+        && /order|payment|purchase|charge/i.test(`${op.name || ''} ${op.fields.map(field=>field.name).join(' ')}`));
       const confirmsPayment = /(?:^|\.)stripe\.com$/.test(url.hostname) && /\/confirm(?:$|\?)/.test(url.pathname);
       if (!this.submitted && (orderMutation || confirmsPayment)) return route.abort('blockedbyclient');
       if (request.isNavigationRequest() && request.frame() === this.page.mainFrame() && url.protocol !== 'https:' && url.origin !== this.fixtureOrigin) return route.abort('blockedbyclient');
