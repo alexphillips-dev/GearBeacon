@@ -5,12 +5,18 @@ let autoBuyDraft = null;
 let autoBuyFocus = null;
 let autoBuyDialogRequest = 0;
 let autoBuyUiEpoch = 0;
+let autoBuyGuidePaired = null;
+let autoBuyPairingTimer = null;
 const autoBuyLabels = { armed:'Auto-buy armed', paused:'Auto-buy paused', attention:'Needs attention', expired:'Authorization expired', purchased:'Purchased', queued:'Waiting for checkout', preparing:'Preparing checkout', submitting:'Submitting order', unknown:'Check Store orders', cancelled:'Cancelled' };
 const autoBuyMoney = (minor,currency) => new Intl.NumberFormat(undefined,{ style:'currency',currency }).format(minor/100);
+function clearAutoBuyPairing() {
+  clearTimeout(autoBuyPairingTimer); autoBuyPairingTimer = null;
+  $('autoBuyPairing').value = ''; $('autoBuyPairing').hidden = true;
+}
 function clearAutoBuyUi() {
   autoBuyUiEpoch++; autoBuyDialogRequest++; autoBuyDraft = null; autoBuyState = null; autoBuyFocus = null;
   $('autoBuyDialog').close(); $('autoBuyDialogBody').textContent = ''; $('autoBuyDialogResult').textContent = '';
-  $('autoBuyPairing').textContent = ''; $('autoBuyPairing').hidden = true;
+  clearAutoBuyPairing(); autoBuyGuidePaired = null; $('autoBuyGuide').open = false;
 }
 function autoBuyCard(product) {
   const rule = product.autoBuy;
@@ -36,6 +42,10 @@ async function refreshAutoBuy() {
     if (epoch !== autoBuyUiEpoch || $('appShell').classList.contains('hidden')) return;
     autoBuyState = state;
     const connection = state.connection;
+    const paired = Boolean(connection);
+    // Only change the default when pairing changes, preserving manual toggles during polling.
+    if (autoBuyGuidePaired !== paired) { $('autoBuyGuide').open = !paired; autoBuyGuidePaired = paired; }
+    if (paired) clearAutoBuyPairing();
     autoBuyMarkup($('autoBuyConnection'),`<p><strong>${state.mode === 'mock' ? 'Mock mode · simulated purchases only. ' : ''}${connection?.connected ? 'Checkout companion connected' : connection ? 'Checkout companion offline' : 'No checkout companion connected'}</strong></p>${connection ? Object.entries(connection.profiles).map(([region,p])=>`<p>${escapeHtml(region.toUpperCase())} · ${escapeHtml(p.addressLabel)} · ${escapeHtml(p.paymentLabel)} · ${p.state === 'ready' ? 'Ready' : 'Reconnect Store'}</p>`).join('') : '<p>Pair the companion to connect your Store session and saved checkout choices.</p>'}`);
     $('autoBuyPair').disabled = Boolean(connection || state.blocked);
     $('autoBuyDisconnect').disabled = !connection;
@@ -133,11 +143,15 @@ document.addEventListener('click',event=>{
   });
 });
 $('autoBuyPair').addEventListener('click',event=>autoBuyAction(event.currentTarget,async()=>{
+  const epoch = autoBuyUiEpoch;
   const result = await api('/api/auto-buy/pairing',{ method:'POST',body:'{}' });
+  if (epoch !== autoBuyUiEpoch || $('appShell').classList.contains('hidden')) return;
+  clearAutoBuyPairing();
   $('autoBuyPairing').hidden = false;
-  $('autoBuyPairing').textContent = `Pairing code (${result.mode} mode, expires in 5 minutes): ${result.code}`;
-  setTimeout(()=>{ $('autoBuyPairing').textContent = ''; $('autoBuyPairing').hidden = true; },300000);
+  $('autoBuyPairing').value = result.code;
+  autoBuyPairingTimer = setTimeout(clearAutoBuyPairing,300000);
 }));
+for (const event of ['focus','click']) $('autoBuyPairing').addEventListener(event,()=> $('autoBuyPairing').select());
 $('autoBuyDisconnect').addEventListener('click',event=>autoBuyAction(event.currentTarget,async()=>{
   await api('/api/auto-buy/disconnect',{ method:'POST',body:'{}' }); await refreshAutoBuy(); toast('Companion disconnected and auto-buy paused. Close its Store browser before resolving an uncertain order.');
 }));

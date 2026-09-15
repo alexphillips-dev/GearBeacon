@@ -6,6 +6,7 @@ The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. 
 
 Development additions after the stable release:
 
+- Auto-buy setup instructions now expand by default only when no companion is paired, preserving manual toggles during refreshes. The selectable pairing-code field contains only the code and clears after pairing.
 - Fixed auto-buy setup incorrectly blocking the Store's cart creation/update requests when their variables or response fragments contained purchase/payment names. Checkout guards now inspect the executed mutation fields; order submission still requires authorization.
 - Added optional auto-buy: exact-variant purchase instructions with quantity, final-total cap including tax/shipping/surcharges, expiry, explicit owner authorization, pause controls, and one successful order per authorization.
 - Added an optional Playwright checkout companion with sandboxed Chromium, one-time pairing, encrypted Store sessions and durable submission journals. Browser checkout validates the full cart, account session, saved address, selected masked card, shipping service, currency, and Store totals. Unknown order outcomes block further checkout and require reconciliation; challenges and unrecognized checkout details pause without bypasses.
