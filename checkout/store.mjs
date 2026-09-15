@@ -51,6 +51,16 @@ export class StoreBrowser {
       const knownGraphql = this.fixtureOrigin ? url.origin === this.origin && url.pathname === '/graphql'
         : url.origin === 'https://ecomm.svc.ui.com' && url.pathname === '/graphql';
       const operations = Array.isArray(body) ? body : [body];
+      const storeHost = this.fixtureOrigin ? url.origin === this.origin : url.hostname === 'ui.com' || url.hostname.endsWith('.ui.com');
+      const changesState = !['GET','HEAD','OPTIONS'].includes(request.method());
+      // A renamed REST/RPC endpoint must not escape the recognized CreateOrder gate.
+      // Interactive account sign-in remains available; automated checkout accepts only the observed GraphQL protocol.
+      if (!this.submitted && changesState && storeHost && !knownGraphql && (this.automating || /order|payment|purchase|charge/i.test(url.pathname))) {
+        this.gateRejected = true; return route.abort('blockedbyclient');
+      }
+      if (knownGraphql && changesState && operations.some(op=>!op || typeof op.operationName !== 'string' && typeof op.query !== 'string')) {
+        this.gateRejected = true; return route.abort('blockedbyclient');
+      }
       const createsOrder = knownGraphql && operations.some(op=>op?.operationName === 'CreateOrder' || /\bmutation\s+CreateOrder\b/.test(op?.query || ''));
       if (createsOrder) {
         try {
@@ -73,7 +83,7 @@ export class StoreBrowser {
         } catch { this.gateRejected = true; return route.abort('blockedbyclient'); }
       }
       // Before authorization, block order/payment mutations even if the Store changes button behavior.
-      const orderMutation = knownGraphql && operations.some(op=>/\bmutation\b/.test(op?.query || '') && /Order|Payment/.test(`${op?.operationName || ''} ${op?.query || ''}`));
+      const orderMutation = knownGraphql && operations.some(op=>(/\bmutation\b/.test(op?.query || '') || !op?.query && !/^Get/.test(op?.operationName || '')) && /Order|Payment|Purchase|Charge/.test(`${op?.operationName || ''} ${op?.query || ''}`));
       const confirmsPayment = /(?:^|\.)stripe\.com$/.test(url.hostname) && /\/confirm(?:$|\?)/.test(url.pathname);
       if (!this.submitted && (orderMutation || confirmsPayment)) return route.abort('blockedbyclient');
       if (request.isNavigationRequest() && request.frame() === this.page.mainFrame() && url.protocol !== 'https:' && url.origin !== this.fixtureOrigin) return route.abort('blockedbyclient');
@@ -169,6 +179,7 @@ export class StoreBrowser {
       taxCalculated:true, shippingSelected:true, addressVerified:true, paymentVerified:true, hasCustomer:true, externalItemCount:0, observedAt:new Date(this.observedAt).toISOString() };
   }
   async prepare(attempt, profile) {
+    this.automating = true;
     const url = new URL(attempt.url);
     if (url.origin !== this.store.origin || url.username || url.password || !url.pathname.startsWith(`${this.store.path}/`) || !url.pathname.includes('/products/')) throw new CheckoutAttention('cart');
     await this.visitCheckout(); await this.challenges();

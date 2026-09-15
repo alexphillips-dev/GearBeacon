@@ -19,6 +19,7 @@ const total={amount:32900,currency:'USD'};
 function checkout() { return {id:'fixture-checkout',store:{id:'us'},email:'owner@example.invalid',hasCustomer:true,taxCalculated:true,items:cart,externalItems:[],shippingAddress:address,billingAddress:address,shippingOption:shipping,totals:{summary:{total}},orderId:null}; }
 const server=http.createServer(async(req,res)=>{
   res.setHeader('Content-Type',req.url==='/graphql'?'application/json':'text/html; charset=utf-8');
+  if(req.url==='/unexpected-order') { orders++;res.setHeader('Content-Type','application/json');res.end('{}');return; }
   if(req.url==='/graphql') {
     const chunks=[];for await(const chunk of req)chunks.push(chunk);const body=JSON.parse(Buffer.concat(chunks).toString());let data;
     if(body.operationName==='AddItem'){cart=[{...item,quantity:body.variables.quantity}];data={storefrontCreateCheckout:{checkout:checkout()}};}
@@ -30,7 +31,7 @@ const server=http.createServer(async(req,res)=>{
     else {res.statusCode=400;data={};}
     res.end(JSON.stringify({data}));return;
   }
-  const script=`const gql=async(operationName,variables={})=>(await fetch('/graphql',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({operationName,variables,query:operationName==='CreateOrder'?'mutation CreateOrder { createOrder }':'query '+operationName+' { fixture }'})})).json();`;
+  const script=`const gql=async(operationName,variables={})=>(await fetch(${JSON.stringify(mode==='changed-endpoint')}&&operationName==='CreateOrder'?'/unexpected-order':'/graphql',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({operationName,variables,query:operationName==='CreateOrder'?'mutation CreateOrder { createOrder }':'query '+operationName+' { fixture }'})})).json();`;
   if(req.url.includes('/products/'))res.end(`<!doctype html><html lang="en"><title>Fixture product</title><label>Quantity<input type="number" value="1" id="quantity"></label><button id="add">Add to Cart</button><script>${script}add.onclick=async()=>{await gql('AddItem',{quantity:Number(quantity.value)});add.textContent='Added to Cart';};</script></html>`);
   else res.end(`<!doctype html><html lang="en"><title>Fixture checkout</title>${cart.length ? '<h1>Order review</h1><label><input type="radio" name="payment" checked>Visa •••• 4242</label><button id="place">Place Order</button>' : '<h1>Your cart is empty</h1>'}<script>${script}gql('GetCheckout');const place=document.getElementById('place');if(place)place.onclick=async()=>{try{await gql('CreateOrder',{input:{checkoutId:'fixture-checkout',paymentMethod:'Card'}});await gql('GetStorefrontOrder');}catch{}};</script></html>`);
 });
@@ -81,5 +82,10 @@ try {
   await runAttempt({client,vault:journalVault,state,attempt:{...attempt,id:'changed-total',authorization:'changed-total'},makeStore});
   assert.equal(orders,3);assert.equal(state.journal['changed-total'].state,'unknown');
   assert.equal(state.journal['changed-total'].receipt,undefined,'A changed order total reached the paid-order flow');
+  profile.state='ready';cart=[];mode='changed-endpoint';
+  const previousAuthorizations=authorizationCount;
+  await runAttempt({client,vault:journalVault,state,attempt:{...attempt,id:'changed-endpoint',authorization:'changed-endpoint'},makeStore});
+  assert.equal(orders,3,'An unrecognized checkout endpoint bypassed the order gate');
+  assert.equal(authorizationCount,previousAuthorizations);assert.equal(state.journal['changed-endpoint'].state,'attention');
   console.log('AUTO-BUY BROWSER TEST PASSED: saved profile capture, setup submission blocking, full mock checkout, durable encrypted journaling, duplicate protection, foreign carts, lost authorization and uncertain payment.');
 }finally{await browser?.close();await new Promise(done=>server.close(done));await rm(testDir,{recursive:true,force:true});}
