@@ -1433,6 +1433,8 @@ try {
     activateTab('watchlist'); resetWatchFilters(); document.getElementById('groupCollectedWatches').checked=false;
     const saved={products:app.products,collections:app.collections,variants:app.catalogVariants,selected:app.selectedWatch};
     const template=app.products.find(product=>product.watched);
+    // Keep relative-time labels stable while measuring DOM reuse; performance.now remains live.
+    const originalNow=Date.now; const fixtureNow=originalNow(); Date.now=()=>fixtureNow;
     try {
       app.collections=[]; app.catalogVariants=[]; app.selectedWatch=new Set(['scale-0']);
       app.products=Array.from({length:500},(_,i)=>({...template,slug:'scale-'+i,name:'Scale product '+i,imageUrl:null,collections:[],watched:true}));
@@ -1459,7 +1461,7 @@ try {
       app.collections[0]={...app.collections[0],pricing:{...app.collections[0].pricing,total:12345}};
       renderProducts(); const retainedProjects=projects.filter(node=>node.isConnected).length;
       return {fullMs,unchangedMs,singleMs,unchanged,retained,retainedProjects,optionsPreserved,focusPreserved,changedFocus,selected:document.querySelector('[data-watch-select="scale-0"]')?.checked};
-    } finally { app.products=saved.products; app.collections=saved.collections; app.catalogVariants=saved.variants; app.selectedWatch=saved.selected; renderProducts(true); }
+    } finally { Date.now=originalNow; app.products=saved.products; app.collections=saved.collections; app.catalogVariants=saved.variants; app.selectedWatch=saved.selected; renderProducts(true); }
   })()`);
   assert(scale.unchanged && scale.retained===499 && scale.retainedProjects===49 && scale.optionsPreserved && scale.focusPreserved && scale.changedFocus && scale.selected, `Large-list refresh lost state: ${JSON.stringify(scale)}`);
   console.log(`BROWSER SCALE: 500 watches · full ${scale.fullMs.toFixed(1)}ms · unchanged ${scale.unchangedMs.toFixed(1)}ms · one price ${scale.singleMs.toFixed(1)}ms · ${scale.retained}/500 cards retained`);
