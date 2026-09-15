@@ -117,6 +117,12 @@ export async function testProfileSetup() {
     }}),/cancellation/);
     assert.deepEqual(await readFile(join(directory,'vault.checkout-state')),snapshot);
     assert.equal(state.profiles.us,saved);
+    let entryPrompts=0;
+    await assert.rejects(setupProfile({store:{...store,inspectProfile:async()=>({checks:[{name:'Selected saved card',ok:false,help:'Card-entry forms cannot be saved.'}],profile:null,paymentStatus:'card-entry'})},
+      region:'us',addressLabel:'Home',state,vault:checkedVault,terminal:capture(()=>{}),ask:async prompt=>{
+        if(++entryPrompts===2){assert.match(prompt,/no reusable saved card, press Ctrl\+C to exit/);throw Error('Fixture unsupported payment cancellation');}return '';
+      }}),/unsupported payment cancellation/);
+    assert.deepEqual(await readFile(join(directory,'vault.checkout-state')),snapshot,'An unsupported card-entry form changed the saved profile');
     const failedSaveLogs = [];
     await assert.rejects(setupProfile({store,region:'us',addressLabel:'Replacement',state,
       vault:{read:vault.read,write:()=>{throw Error('Fixture disk failure');}},terminal:capture(line=>failedSaveLogs.push(line)),ask:async()=>''}),/disk failure/);

@@ -83,8 +83,44 @@ try {
   assert.equal(await store.page.locator('#update').textContent(),'Delivery updated','Setup blocked the Store cart-update mutation');
   assert.equal(cartUpdates,1);
   const profile=await store.captureProfile('Test home');attempt.profileId=profile.id;
+  // Stripe's passive helper can occupy a 1px frame that Playwright calls visible.
+  // Serve all provider frames locally; these tests never contact Stripe or use real payment data.
+  await store.context.route('https://js.stripe.com/**',route=>route.fulfill({contentType:'text/html',body:'<!doctype html><html lang="en"><title>Provider fixture</title><body>Fixture</body></html>'}));
+  await store.page.evaluate(()=>{
+    const frame=document.createElement('iframe');frame.id='passive-provider';
+    frame.src='https://js.stripe.com/v3/hcaptcha-invisible-fixture.html';
+    frame.style.cssText='position:fixed;width:1px;height:1px;border:0;opacity:0;left:0;top:0';document.body.append(frame);
+  });
+  await store.page.waitForFunction(()=>document.getElementById('passive-provider').contentWindow!==null);
+  await store.waitFor(()=>store.page.frames().some(frame=>frame.url().includes('hcaptcha-invisible-fixture')));
+  assert.equal(await store.page.locator('#passive-provider').isVisible(),true,'Fixture did not reproduce the passive-frame visibility trap');
+  assert.equal((await store.inspectProfile('Test home')).checks.find(check=>check.name==='Signed-in Store account').ok,true,'A passive payment helper was reported as a signed-out Store account');
+  await assert.doesNotReject(()=>store.challenges(),'Passive verification was treated as a visible challenge');
+  await store.page.locator('#passive-provider').evaluate(node=>{node.style.cssText='width:300px;height:200px;border:0';});
+  await assert.rejects(()=>store.challenges(),err=>err.code==='session','An expanded helper must still stop for owner attention');
+  await store.page.locator('#passive-provider').evaluate(node=>node.remove());
+  await store.page.evaluate(()=>{
+    const frame=document.createElement('iframe');frame.id='active-provider';frame.src='https://js.stripe.com/v3/three-ds-2-challenge-fixture.html';
+    frame.style.cssText='width:300px;height:200px;border:0';document.body.append(frame);
+  });
+  await store.waitFor(()=>store.page.frames().some(frame=>frame.url().includes('three-ds-2-challenge-fixture')));
+  await assert.rejects(()=>store.challenges(),err=>err.code==='session');
+  const challengeReport=await store.inspectProfile('Test home');
+  assert.equal(challengeReport.checks.find(check=>check.name==='Signed-in Store account').ok,true,'A payment challenge was confused with account sign-in');
+  assert.equal(challengeReport.checks.find(check=>check.name==='Checkout security challenge').ok,false);
+  assert.equal(challengeReport.profile,null,'An active payment challenge allowed profile capture');
+  await assert.rejects(()=>store.proof(attempt,profile),err=>err.code==='session','The order authorization proof ignored a visible challenge');
+  await store.page.locator('#active-provider').evaluate(node=>node.remove());
+  await store.context.route('https://provider.example.invalid/**',route=>route.fulfill({contentType:'text/html',body:'<!doctype html><title>Unknown provider fixture</title>'}));
+  await store.page.evaluate(()=>{
+    const frame=document.createElement('iframe');frame.id='unknown-provider';frame.src='https://provider.example.invalid/v3/hcaptcha-invisible-fixture.html';
+    frame.style.cssText='width:1px;height:1px;border:0';document.body.append(frame);
+  });
+  await store.waitFor(()=>store.page.frames().some(frame=>frame.url().includes('provider.example.invalid')));
+  await assert.rejects(()=>store.challenges(),err=>err.code==='session','A different origin inherited the Stripe helper exception');
+  await store.page.locator('#unknown-provider').evaluate(node=>node.remove());
   const completeCheckout=structuredClone(store.checkout);
-  for(const [field,name] of [['shippingAddress','Shipping address'],['billingAddress','Billing address'],['shippingOption','Shipping service'],['email','Signed-in Store account'],['taxCalculated','Final total and tax']]) {
+  for(const [field,name] of [['shippingAddress','Shipping address'],['billingAddress','Billing address'],['shippingOption','Shipping service'],['email','Signed-in Store account'],['hasCustomer','Signed-in Store account'],['taxCalculated','Final total and tax']]) {
     store.checkout={...completeCheckout,[field]:null};
     const report=await store.inspectProfile('Test home');
     assert.equal(report.profile,null);assert.equal(report.checks.find(check=>check.name===name).ok,false);
@@ -93,6 +129,24 @@ try {
   store.checkout=completeCheckout;
   await store.page.locator('input[name=payment]').evaluate(node=>node.checked=false);
   const noCard=await store.inspectProfile('Test home');assert.equal(noCard.profile,null);assert.equal(noCard.checks.find(check=>check.name==='Selected saved card').ok,false);
+  await store.page.evaluate(()=>{
+    const frame=document.createElement('iframe');frame.id='card-entry';frame.src='https://js.stripe.com/v3/elements-inner-payment-fixture.html';document.body.append(frame);
+  });
+  await store.waitFor(()=>store.page.frames().some(frame=>frame.url().includes('elements-inner-payment-fixture')));
+  const cardFrame=store.page.frames().find(frame=>frame.url().includes('elements-inner-payment-fixture'));
+  await cardFrame.setContent('<!doctype html><label>Card number<input autocomplete="cc-number" name="cardnumber"></label><label>Security code<input autocomplete="cc-csc"></label>');
+  await cardFrame.evaluate(()=>{
+    window.fixturePaymentReads=0;
+    for(const input of document.querySelectorAll('input'))Object.defineProperty(input,'value',{get(){window.fixturePaymentReads++;throw Error('Do not read payment field values');}});
+  });
+  const entryReport=await store.inspectProfile('Test home');
+  assert.equal(entryReport.paymentStatus,'card-entry');assert.equal(entryReport.profile,null);
+  assert.match(entryReport.checks.find(check=>check.name==='Selected saved card').help,/cannot be saved for unattended auto-buy/);
+  assert.equal(await cardFrame.evaluate(()=>window.fixturePaymentReads),0,'Diagnostics read raw payment fields');
+  await cardFrame.locator('input[autocomplete="cc-number"]').evaluate(node=>{node.removeAttribute('autocomplete');node.removeAttribute('name');});
+  assert.equal((await store.inspectProfile('Test home')).paymentStatus,'card-entry','A labelled card-entry field was not identified');
+  assert.equal(await cardFrame.evaluate(()=>window.fixturePaymentReads),0,'Label-based diagnostics read raw payment fields');
+  await store.page.locator('#card-entry').evaluate(node=>node.remove());
   await store.page.locator('input[name=payment]').check();
   assert.equal(await store.confirmEmptyCart(),false,'A setup item was mistaken for an empty cart');
   const blocked=await store.page.evaluate(async bodies=>{
@@ -145,5 +199,5 @@ try {
   await runAttempt({client,vault:journalVault,state,attempt:{...attempt,id:'changed-endpoint',authorization:'changed-endpoint'},makeStore});
   assert.equal(orders,3,'An unrecognized checkout endpoint bypassed the order gate');
   assert.equal(authorizationCount,previousAuthorizations);assert.equal(state.journal['changed-endpoint'].state,'attention');
-  console.log('AUTO-BUY BROWSER TEST PASSED: Store-shaped cart creation/update, GraphQL mutation classification, saved profile capture, setup submission blocking, full mock checkout, durable encrypted journaling, duplicate protection, foreign carts, lost authorization and uncertain payment.');
+  console.log('AUTO-BUY BROWSER TEST PASSED: passive Stripe helper vs active challenges, separate account proof, private card-entry diagnostics, Store-shaped cart creation/update, GraphQL mutation classification, saved profile capture, setup submission blocking, full mock checkout, durable encrypted journaling, duplicate protection, foreign carts, lost authorization and uncertain payment.');
 }finally{await browser?.close();await new Promise(done=>server.close(done));await rm(testDir,{recursive:true,force:true});}

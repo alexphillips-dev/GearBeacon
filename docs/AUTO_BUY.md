@@ -8,6 +8,8 @@ Monitoring and notifications work without a Store account or checkout companion.
 
 ## Current support and verification
 
+**Check payment compatibility before continuing:** if checkout only offers card-number/expiry/security-code fields and **Use saved payment** offers no existing reusable card, the current companion cannot complete unattended auto-buy setup. Signing into Ubiquiti and filling every card field does not make that form a reusable payment method. The companion saves the browser session and checkout profile, not the contents of payment inputs. Do not place an order just to try to finish setup; monitoring and alerts remain available.
+
 The companion uses the English US, EU, UK, or Canada Store browser interface. It observes the Store's checkout responses and drives ordinary page controls. It does not use a documented public ordering API. Its Store integration was built from the public checkout structure and tested end to end against an isolated browser fixture. **Authenticated live Ubiquiti checkout, regional account behavior, and unattended payment compatibility have not been verified with a real owner account.** A successful mock test does not establish live compatibility.
 
 Setup requires an authenticated Store checkout, a saved shipping and billing address, a selected shipping service, a calculated final total, and a visibly selected saved Visa, Mastercard, American Express, or Discover card with a masked last-four label. The companion does not collect a password or raw card number, fill payment forms, solve CAPTCHAs, bypass MFA/3-D Secure, or automate PayPal, ACH, invoice, bank-transfer, or wallet payment choices. If the Store does not expose a verifiable selected saved card, setup cannot finish and unattended auto-buy is unavailable for that session. Changed or ambiguous page controls stop the attempt.
@@ -69,14 +71,14 @@ A dedicated browser opens. Keep both this browser and the terminal open.
 2. Add one available setup item to the cart, without extras or subscriptions.
 3. Continue to checkout and select or enter the intended shipping address in the Store's address controls. Confirm it, including the country and postal code.
 4. Select the billing address and a shipping service. Confirm billing even if it is the same as shipping.
-5. Select an **existing saved card** with a visible masked card label. A new-card entry form is not a saved card. Wallets, PayPal, bank transfers, and unrecognized saved-card controls cannot be verified.
+5. Select an **existing saved card** with a visible masked card label. A new-card entry form is not a saved card, even after you fill it. If **Use saved payment** offers no existing usable card, stop setup with Ctrl+C; there is no companion step that saves the entered card or enables unattended payment from that form. Wallets, PayPal, bank transfers, and unrecognized saved-card controls cannot be verified.
 6. Reach final checkout review and wait for shipping, taxes, and the final total.
 
 Do not click Place Order. Order submission is blocked during Connect and Verify. Do not make a purchase just to try to finish setup.
 
 ### 4. Return to the terminal and press Enter
 
-The terminal checks the checkout page and response, Store region, signed-in account, setup cart, shipping address, billing address, shipping service, final total/tax, and selected saved card.
+The terminal checks the checkout page and response, Store region, signed-in account, visible security challenges, setup cart, shipping address, billing address, shipping service, final total/tax, and selected saved card. Account confirmation and security challenges have separate results. A challenge does not by itself mean you are signed out. The known Stripe background helper is allowed only at its one-pixel background size; an expanded helper or visible challenge still requires owner attention.
 
 Each attempt has a numbered **Checkout check** heading and a passed/total summary. Failed checks appear first under **NEEDS ATTENTION**, marked `[FIX]`, with the corrective instructions indented beneath them. Passed checks follow in a compact `[PASS]` list. If a check fails, the same browser stays open. Correct that step in the browser, then return to the terminal and press Enter again. Each retry gets a new heading, and earlier attempts stay in terminal scrollback.
 
@@ -179,9 +181,11 @@ Verify checks the checkout in that browser **at that moment**. It does not place
 |---|---|
 | Generic “Checkout companion stopped” after the first Enter on an older companion | Update the companion from current dev and rerun Connect. Earlier versions hid the checkout-validation error behind this generic message; current versions show the failed checks and keep the browser open. |
 | `[FIX] Checkout response` | Wait for checkout to finish loading or reload its page. A blocked request or changed Store response cannot be used as proof. If cart creation fails, also ensure the companion includes the current dev cart-request fix. |
+| `[FIX] Signed-in Store account` | Read the specific explanation: checkout has not confirmed a signed-in customer, has not reported its account email, or is still on a login page. Return to checkout after signing in and reload it. A saved address alone does not prove the current login. |
+| `[FIX] Checkout security challenge` | Complete the visible verification in the Store browser and retry. This is separate from account sign-in; the companion does not solve or bypass it. Update an older companion if it mislabels a background Stripe helper as a sign-in failure. |
 | `[FIX] Shipping address` | Choose and confirm the real address in Store checkout. Entering `Home` in the terminal only names the profile. |
 | `[FIX] Billing address` | Confirm a billing address in checkout, even when using the shipping address for billing. |
-| `[FIX] Selected saved card` | Select an existing supported saved card with a masked last-four label. A card-entry form, wallet, or a saved card that the Store does not expose as selected cannot complete setup. |
+| `[FIX] Selected saved card` | If only card entry is available, the current unattended flow is unsupported. Filling those fields does not save them in the companion. If **Use saved payment** offers no existing usable card, exit with Ctrl+C; do not place an order to try to save it. A wallet or card that the Store does not expose as visibly selected also cannot complete setup. |
 | `[FIX] Final total and tax` | Finish address and shipping selection and wait for the Store's calculated total. |
 | Profile matched, but setup did not finish | Empty the cart and complete the second Enter prompt. The first check alone does not save it. |
 | No address profile is saved | Run Connect and wait for `SAVED`. Check that you are using the same operating-system user and the same `GEARBEACON_CHECKOUT_DATA_DIR` override, if any. Do not delete the vault to troubleshoot. |

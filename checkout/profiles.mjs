@@ -52,6 +52,7 @@ export function savedProfileReport(state) {
 export async function setupProfile({ store, region, addressLabel, saved, state, vault, ask, signal, terminal = createTerminal() }) {
   let candidate;
   let attempt = 0;
+  let cardEntryOnly = false;
   const verifying = Boolean(saved);
   terminal.section('2. Prepare checkout in the browser');
   terminal.text(verifying ? 'Verification only. Your saved profile and purchase rules stay unchanged.'
@@ -66,12 +67,17 @@ export async function setupProfile({ store, region, addressLabel, saved, state, 
   terminal.blank();
   terminal.text('Do not place an order. Submission is blocked during setup and verification.',{ tone:'attention' });
   for (;;) {
-    await ask(attempt ? 'Correct the checks above in the browser. Press Enter to check again, or Ctrl+C to cancel.'
+    await ask(cardEntryOnly ? 'If the Store offers no reusable saved card, press Ctrl+C to exit. Press Enter to retry only after selecting a supported saved card.'
+      : attempt ? 'Correct the checks above in the browser. Press Enter to check again, or Ctrl+C to cancel.'
       : 'Press Enter when checkout review and the selected saved card are visible. Ctrl+C cancels.');
     if (signal?.aborted) throw new Error('Cancelled');
     const report = await store.inspectProfile(addressLabel);
+    cardEntryOnly = report.paymentStatus === 'card-entry';
     terminal.checks(`Checkout check ${++attempt}`,report.checks);
-    if (!report.profile) { terminal.text(verifying ? 'Saved profile unchanged. Fix the checks marked [FIX] above.' : 'Nothing saved. Fix the checks marked [FIX] above.',{ tone:'attention' }); continue; }
+    if (!report.profile) {
+      terminal.text(verifying ? 'Saved profile unchanged.' : 'Nothing saved.',{ tone:'attention' });
+      terminal.text(cardEntryOnly ? 'Unattended auto-buy needs a reusable saved-card selection.' : 'Fix the checks marked [FIX] above.',{ tone:'attention' }); continue;
+    }
     if (verifying) {
       const matches = profileMatches(saved,report.profile);
       terminal.checks(`Saved profile comparison ${attempt}`,matches,{ comparison:true });

@@ -9,7 +9,7 @@ export const STORES = {
   ca:{ origin:'https://ca.store.ui.com', path:'/ca/en', currency:'CAD' },
 };
 export class CheckoutAttention extends Error {
-  constructor(code = 'unavailable') { super('The Store checkout needs owner attention.'); this.name = 'CheckoutAttention'; this.code = code; }
+  constructor(code = 'unavailable', reason = null) { super('The Store checkout needs owner attention.'); this.name = 'CheckoutAttention'; this.code = code; this.reason = reason; }
 }
 const fingerprint = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const addressKeys = ['type','firstName','lastName','businessName','address1','address2','city','country','province','postalCode','phoneNumber','taxId'];
@@ -138,11 +138,19 @@ export class StoreBrowser {
   }
   async challenges() {
     const url = this.page.url();
-    if (/\/(?:login|signin|sign-in)(?:[/?]|$)/i.test(url)) throw new CheckoutAttention('session');
+    if (/\/(?:login|signin|sign-in)(?:[/?]|$)/i.test(url)) throw new CheckoutAttention('session','login');
     for (const frame of this.page.frames()) {
       // Invisible anti-abuse code remains part of the normal Store flow. Visible challenges need the owner.
       const element = await frame.frameElement().catch(()=>null);
-      if (element && /recaptcha.*(?:bframe|challenge)|hcaptcha|3d.?secure|challenge/i.test(frame.url()) && await element.isVisible()) throw new CheckoutAttention('session');
+      if (!element || !/recaptcha.*(?:bframe|challenge)|hcaptcha|3d.?secure|challenge/i.test(frame.url()) || !await element.isVisible()) continue;
+      // Stripe's named background helper uses a transparent 1px iframe. Playwright's
+      // visibility check includes transparent elements, so its presence alone is not a challenge.
+      // Inspect descendants independently and still stop if this helper expands to show UI.
+      const location = new URL(frame.url()), box = await element.boundingBox();
+      const passiveHelper = location.origin === 'https://js.stripe.com'
+        && /^\/v3\/hcaptcha-invisible-[a-z0-9]+\.html$/i.test(location.pathname);
+      if (passiveHelper && box && box.width <= 1 && box.height <= 1) continue;
+      throw new CheckoutAttention('session','challenge');
     }
   }
   async selectedPayment() {
@@ -164,32 +172,51 @@ export class StoreBrowser {
     if (unique.length !== 1) throw new CheckoutAttention('session');
     return unique[0];
   }
+  async inspectPayment() {
+    try { return { kind:'saved-card', payment:await this.selectedPayment() }; }
+    catch (err) { if (!(err instanceof CheckoutAttention)) throw err; }
+    for (const frame of this.page.frames()) {
+      let location; try { location = new URL(frame.url()); } catch { continue; }
+      if (location.origin !== this.origin && !['https://js.stripe.com','https://hooks.stripe.com','https://checkout.link.com'].includes(location.origin)) continue;
+      // Detect the form using field metadata only. Never read card numbers, expiry, or CVC values.
+      const fields = frame.locator('input[autocomplete="cc-number"], input[name="cardnumber"], input[name="cardNumber"]');
+      for (const field of await fields.all()) if (await field.isVisible()) return { kind:'card-entry', payment:null };
+      const labelledField = frame.getByRole('textbox',{ name:/^card number$/i });
+      for (const field of await labelledField.all()) if (await field.isVisible()) return { kind:'card-entry', payment:null };
+    }
+    return { kind:'unavailable', payment:null };
+  }
   async inspectProfile(addressLabel) {
     await this.settle();
-    let challengeFree = true;
-    try { await this.challenges(); } catch (err) { if (!(err instanceof CheckoutAttention)) throw err; challengeFree = false; }
+    let barrier = null;
+    try { await this.challenges(); } catch (err) { if (!(err instanceof CheckoutAttention)) throw err; barrier = err.reason || 'challenge'; }
     const location = new URL(this.page.url());
     const atCheckout = location.origin === this.origin && location.pathname.startsWith(`${this.store.path}/checkout`);
     const checkout = this.checkout, shipping = addressHash(checkout?.shippingAddress), billing = addressHash(checkout?.billingAddress), delivery = shippingHash(checkout?.shippingOption);
-    let payment = null;
-    try { payment = await this.selectedPayment(); } catch (err) { if (!(err instanceof CheckoutAttention)) throw err; }
+    const { payment, kind:paymentStatus } = await this.inspectPayment();
     const total = checkout?.totals?.summary?.total;
     const checks = [
       { name:'Store checkout page', ok:atCheckout, help:'Return to the checkout review page for the selected region.' },
       { name:'Checkout response', ok:Boolean(checkout), help:'Wait for checkout to load. If needed, reload the checkout page; a blocked or changed Store response cannot be verified.' },
       { name:'Store region', ok:checkout?.store?.id?.toLowerCase() === this.region, help:'Use the Store region selected in the terminal.' },
-      { name:'Signed-in Store account', ok:Boolean(challengeFree && checkout?.hasCustomer && checkout?.email), help:'Sign in directly in this browser and finish any visible account or payment challenge.' },
+      { name:'Signed-in Store account', ok:Boolean(barrier !== 'login' && checkout?.hasCustomer && checkout?.email), help:barrier === 'login'
+        ? 'Finish signing in directly in the Store browser, then return to checkout.'
+        : !checkout?.hasCustomer ? 'The checkout response has not confirmed a signed-in customer. After signing in, return to checkout and reload it. A saved address alone does not confirm the current login.'
+        : 'The checkout response has not reported the account email. Finish the contact step in the Store, then reload checkout.' },
+      { name:'Checkout security challenge', ok:barrier !== 'challenge', help:'Complete the visible account or payment verification in the Store browser, then retry. The companion cannot complete or bypass a challenge.' },
       { name:'Setup cart', ok:Array.isArray(checkout?.items) && checkout.items.length === 1 && Array.isArray(checkout.externalItems) && !checkout.externalItems.length && !checkout.orderId, help:'Use one setup item without accessories, subscriptions, or an existing order.' },
       { name:'Shipping address', ok:Boolean(shipping), help:'Select and confirm a shipping address, including its country and postal code, in checkout. The nickname entered in the terminal does not create an address.' },
       { name:'Billing address', ok:Boolean(billing), help:'Select and confirm the billing address in checkout, including when it is the same as shipping.' },
       { name:'Shipping service', ok:Boolean(delivery), help:'Select a delivery service and continue to order review.' },
       { name:'Final total and tax', ok:Boolean(checkout?.taxCalculated && Number.isSafeInteger(total?.amount) && total.amount > 0 && total.currency === this.store.currency), help:'Wait for shipping, taxes, and a final total in the selected Store currency.' },
-      { name:'Selected saved card', ok:Boolean(payment), help:'Select an existing saved Visa, Mastercard, Amex, or Discover card with a visible masked last-four label. New-card forms and wallets cannot be verified; do not place an order to save a card.' },
+      { name:'Selected saved card', ok:Boolean(payment), help:paymentStatus === 'card-entry'
+        ? 'This card-entry form cannot be saved for unattended auto-buy. Entered card details do not persist in the companion session. If Use saved payment offers no existing card, setup cannot finish here. Do not place an order to finish setup.'
+        : 'Select a reusable saved card with a visibly selected masked label. If the Store offers only card entry or an unsupported wallet, unattended auto-buy is unavailable for this checkout. Do not place an order to finish setup.' },
     ];
-    if (checks.some(check=>!check.ok)) return { checks, profile:null };
+    if (checks.some(check=>!check.ok)) return { checks, profile:null, paymentStatus };
     const profile = { id:crypto.randomUUID(), region:this.region, state:'ready', addressLabel, paymentLabel:`${payment.split(':')[0]} ···· ${payment.split(':')[1]}`,
       shipping, billing, delivery, payment, customer:fingerprint(checkout.email), storageState:await this.context.storageState() };
-    return { checks, profile };
+    return { checks, profile, paymentStatus };
   }
   async captureProfile(addressLabel) {
     const { profile } = await this.inspectProfile(addressLabel);
