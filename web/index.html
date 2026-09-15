@@ -305,7 +305,10 @@
             <p>Authorize one order for an exact variant, within your quantity, final-total limit, and expiry. The checkout companion must stay running; your dashboard can be closed.</p>
             <div id="autoBuyConnection" role="status" aria-live="polite">Checking checkout companion…</div>
             <div class="settings-actions"><button id="autoBuyPair" type="button">Pair checkout companion</button><button id="autoBuyDisconnect" type="button">Disconnect &amp; pause</button><button type="button" data-auto-purchases>Purchase history</button></div>
-            <input id="autoBuyPairing" class="settings-result" type="text" readonly autocomplete="off" spellcheck="false" aria-label="One-time pairing code" hidden />
+            <div id="autoBuyPairingRow" class="auto-buy-pairing-row" hidden>
+              <label id="autoBuyPairingLabel" for="autoBuyPairing"></label>
+              <input id="autoBuyPairing" class="settings-result" type="text" readonly autocomplete="off" spellcheck="false" hidden />
+            </div>
             <details id="autoBuyGuide" class="auto-buy-guide"><summary>Connect your Store checkout</summary><ol><li>Install the optional checkout companion on a computer with a browser. For NAS or Docker installs, it can run on a separate computer connected to your HTTPS dashboard.</li><li>Pair it using the one-time code above, then run its Connect command. Sign in directly in its dedicated Store browser.</li><li>At checkout review, select a saved card, shipping address, and shipping service. The companion validates the profile with order submission blocked. Empty the setup cart afterwards.</li><li>Leave the companion running, then choose Set up auto-buy on a watched product. Select an exact variant and authorize its limits.</li></ol><p>Login expiry, an unrecognized saved card, a changed cart, or a payment challenge pauses checkout. After an uncertain submission, check Store orders before allowing another purchase.</p><a href="https://github.com/alexphillips-dev/GearBeacon/blob/dev/docs/AUTO_BUY.md" target="_blank" rel="noopener noreferrer">Companion installation &amp; recovery guide</a></details>
           </article>
         </section>

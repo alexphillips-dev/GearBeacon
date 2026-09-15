@@ -12,6 +12,7 @@ const autoBuyMoney = (minor,currency) => new Intl.NumberFormat(undefined,{ style
 function clearAutoBuyPairing() {
   clearTimeout(autoBuyPairingTimer); autoBuyPairingTimer = null;
   $('autoBuyPairing').value = ''; $('autoBuyPairing').hidden = true;
+  $('autoBuyPairingRow').hidden = true; $('autoBuyPairingLabel').textContent = '';
 }
 function clearAutoBuyUi() {
   autoBuyUiEpoch++; autoBuyDialogRequest++; autoBuyDraft = null; autoBuyState = null; autoBuyFocus = null;
@@ -147,6 +148,8 @@ $('autoBuyPair').addEventListener('click',event=>autoBuyAction(event.currentTarg
   const result = await api('/api/auto-buy/pairing',{ method:'POST',body:'{}' });
   if (epoch !== autoBuyUiEpoch || $('appShell').classList.contains('hidden')) return;
   clearAutoBuyPairing();
+  $('autoBuyPairingLabel').textContent = `Pairing code (${result.mode} mode, expires in 5 minutes):`;
+  $('autoBuyPairingRow').hidden = false;
   $('autoBuyPairing').hidden = false;
   $('autoBuyPairing').value = result.code;
   autoBuyPairingTimer = setTimeout(clearAutoBuyPairing,300000);

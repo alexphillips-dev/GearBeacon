@@ -950,7 +950,10 @@ button.watch-import-backdrop:hover { border:0; background:rgba(0,0,0,.64); trans
 .auto-buy-attempt button { flex-shrink:0; }
 .auto-buy-guide { margin-top:20px; line-height:1.6; }
 .auto-buy-guide li { margin:10px 0; }
-#autoBuyPairing { width:100%; min-width:0; color:var(--text); font-family:ui-monospace,SFMono-Regular,Consolas,monospace; }
+.auto-buy-pairing-row { display:flex; align-items:center; flex-wrap:wrap; gap:8px 12px; margin-top:12px; }
+.auto-buy-pairing-row[hidden] { display:none; }
+.auto-buy-pairing-row label { color:var(--muted); font-size:12px; }
+#autoBuyPairing { width:calc(32ch + 28px); max-width:100%; min-width:0; margin:0; color:var(--text); font-family:ui-monospace,SFMono-Regular,Consolas,monospace; }
 .compact-list .watch-card>.auto-buy-card { grid-column:2; grid-row:auto; margin-top:6px; }
 @media(max-width:640px) {
   .auto-buy-dialog .form-row { grid-template-columns:minmax(0,1fr); gap:0; }

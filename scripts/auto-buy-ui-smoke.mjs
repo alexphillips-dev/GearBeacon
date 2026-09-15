@@ -11,6 +11,7 @@ export async function testAutoBuyUi({ evaluate,waitForBrowser,assertAccessible,a
   assert(await evaluate("!document.getElementById('autoBuyGuide').open"),'Background polling reopened manually collapsed setup instructions');
   await evaluate("document.querySelector('#autoBuyGuide summary').click();document.getElementById('autoBuyPair').click()");
   await waitForBrowser("!document.getElementById('autoBuyPairing').hidden && /^[A-Za-z0-9_-]{32}$/.test(document.getElementById('autoBuyPairing').value)",'Pairing field did not show only the one-time code');
+  assert(await evaluate("document.getElementById('autoBuyPairing').labels[0]?.textContent==='Pairing code (mock mode, expires in 5 minutes):'"),'The pairing mode and expiry label is missing or not associated with the code');
   await evaluate("document.querySelector('#settingsGeneralAutoBuyPanel [data-auto-purchases]').focus()");
   await cdp.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
   await cdp.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
@@ -21,6 +22,7 @@ export async function testAutoBuyUi({ evaluate,waitForBrowser,assertAccessible,a
     await evaluate(`applyTheme('${theme}')`);await delay(300);
     await cdp.send('Emulation.setDeviceMetricsOverride',{width,height:width===640?450:900,deviceScaleFactor:width===640?2:1,mobile:false});
     assert(await evaluate("document.documentElement.scrollWidth<=innerWidth+1 && document.getElementById('autoBuyPairing').scrollWidth<=document.getElementById('autoBuyPairing').clientWidth+1"),`Pairing setup overflowed in ${theme} at ${width}px`);
+    if(width===1280)assert(await evaluate("(() => {const label=document.getElementById('autoBuyPairingLabel').getBoundingClientRect(),field=document.getElementById('autoBuyPairing').getBoundingClientRect();return field.width<320 && field.left>=label.right+8 && Math.abs(field.top+field.height/2-label.top-label.height/2)<1;})()"),'The code field was not compact and aligned to the right of its label');
     await assertAccessible(`Auto-buy pairing ${theme} ${width}px`);
   }
   await evaluate(`(async()=>{
@@ -33,7 +35,7 @@ export async function testAutoBuyUi({ evaluate,waitForBrowser,assertAccessible,a
     window.autoBuyUiHeartbeat=()=>fetch('/api/auto-buy/worker/heartbeat',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+paired.token},body:JSON.stringify({protocol:1,mode:'mock',profiles:{us:{id:'ui-profile',state:'ready',addressLabel:'Home <test>',paymentLabel:'Visa ···· 4242'}}})});
   })()`);
   await waitForBrowser("autoBuyState?.connection && !document.getElementById('autoBuyGuide').open",'Pairing did not collapse the setup instructions');
-  assert(await evaluate("document.getElementById('autoBuyPairing').hidden && !document.getElementById('autoBuyPairing').value"),'The consumed pairing code remained visible');
+  assert(await evaluate("document.getElementById('autoBuyPairingRow').hidden && !document.getElementById('autoBuyPairingLabel').textContent && document.getElementById('autoBuyPairing').hidden && !document.getElementById('autoBuyPairing').value"),'The consumed pairing code or its label remained visible');
   await waitForBrowser('!autoBuyLoading','Paired auto-buy status did not settle');
   assert(await evaluate(`(async()=>{
     const originalFetch=window.fetch;
