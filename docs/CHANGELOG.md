@@ -6,6 +6,7 @@ The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. 
 
 Development additions after the stable release:
 
+- Made companion setup output easier to scan with numbered steps and retries, failed checks and indented guidance first, aligned status labels, word wrapping, and separate save/verification/cancellation summaries. Supported terminals use color; redirected output and `NO_COLOR` remain plain text. Previous attempts remain in scrollback.
 - Clarified address-profile setup with individual checkout checks, retry in the same browser, and an explicit SAVED confirmation after emptying the cart. Fixed validation errors falling through to a generic installation error. Added local `profiles` inspection and a `verify` browser comparison that preserves saved profiles and purchase rules. Settings now distinguishes pairing from a reported saved profile; the Auto-buy wiki includes setup, verification, and troubleshooting steps.
 - Auto-buy setup instructions now expand by default only when no companion is paired, preserving manual toggles during refreshes. Pairing shows its mode and expiry label beside a compact field containing only the selectable code; both clear after pairing.
 - Fixed auto-buy setup incorrectly blocking the Store's cart creation/update requests when their variables or response fragments contained purchase/payment names. Checkout guards now inspect the executed mutation fields; order submission still requires authorization.

@@ -1,5 +1,7 @@
 // Only fixed check names and nicknames/masked card labels are used in terminal reports.
 // Never print browser state, account identifiers, address values, or fingerprints.
+import { createTerminal } from './terminal.mjs';
+
 export const PROFILE_FIELDS = {
   shipping:'Shipping address', billing:'Billing address', delivery:'Shipping service',
   payment:'Saved card', customer:'Store account',
@@ -47,35 +49,56 @@ export function savedProfileReport(state) {
 }
 
 // The caller owns the browser and vault lock. A failed check or cancellation never writes a profile.
-export async function setupProfile({ store, region, addressLabel, saved, state, vault, ask, log, signal }) {
+export async function setupProfile({ store, region, addressLabel, saved, state, vault, ask, signal, terminal = createTerminal() }) {
   let candidate;
+  let attempt = 0;
   const verifying = Boolean(saved);
-  log(verifying ? 'Verification only: the saved profile and purchase rules will not be changed.'
-    : 'The address nickname is only a name in GearBeacon. Choose the actual address in the Store browser.');
-  log('In this dedicated browser, sign in, add one setup item, and reach checkout review. Select the shipping address, billing address, shipping service, and a saved card. Wait for the final total. Do not place an order; submission is blocked.');
+  terminal.section('2. Prepare checkout in the browser');
+  terminal.text(verifying ? 'Verification only. Your saved profile and purchase rules stay unchanged.'
+    : 'Your nickname only names the profile. Choose the actual address in the Store browser.');
+  terminal.blank();
+  terminal.list([
+    'Sign in to your Store account in the dedicated browser.',
+    'Add one setup item and continue to checkout review.',
+    'Select shipping and billing addresses, a shipping service, and a saved card.',
+    'Wait for the final total, then return to this terminal.',
+  ]);
+  terminal.blank();
+  terminal.text('Do not place an order. Submission is blocked during setup and verification.',{ tone:'attention' });
   for (;;) {
-    await ask('Press Enter here when checkout review and the selected saved card are visible (Ctrl+C cancels). ');
+    await ask(attempt ? 'Correct the checks above in the browser. Press Enter to check again, or Ctrl+C to cancel.'
+      : 'Press Enter when checkout review and the selected saved card are visible. Ctrl+C cancels.');
     if (signal?.aborted) throw new Error('Cancelled');
     const report = await store.inspectProfile(addressLabel);
-    for (const check of report.checks) log(`${check.ok ? 'PASS' : 'NEEDS ATTENTION'} · ${check.name}${check.ok ? '' : ': ' + check.help}`);
-    if (!report.profile) { log('Nothing saved. Correct the checks above in the same browser, then try again.'); continue; }
+    terminal.checks(`Checkout check ${++attempt}`,report.checks);
+    if (!report.profile) { terminal.text(verifying ? 'Saved profile unchanged. Fix the checks marked [FIX] above.' : 'Nothing saved. Fix the checks marked [FIX] above.',{ tone:'attention' }); continue; }
     if (verifying) {
       const matches = profileMatches(saved,report.profile);
-      for (const check of matches) log(`${check.ok ? 'MATCH' : 'DIFFERENT'} · ${check.name}`);
-      if (!matches.every(check=>check.ok)) { log('The checkout does not match the saved profile. Select the original choices and retry, or cancel and use npm run connect to replace it.'); continue; }
+      terminal.checks(`Saved profile comparison ${attempt}`,matches,{ comparison:true });
+      if (!matches.every(check=>check.ok)) {
+        terminal.text('Saved profile unchanged. Select the original choices and retry.');
+        terminal.text('To replace the saved choices, cancel and run npm run connect.'); continue;
+      }
     }
     candidate = report.profile; break;
   }
-  log(verifying ? 'Saved choices match this checkout. Remove the setup item to finish verification.'
-    : 'Checkout checks passed. NOT SAVED YET: remove the setup item from the Store cart, then complete the next prompt.');
+  terminal.section('3. Empty the setup cart');
+  terminal.text(verifying ? 'Saved choices match this checkout.' : 'Checkout checks passed. NOT SAVED YET.',{ tone:verifying ? 'success' : 'attention' });
+  terminal.text('Remove every setup item from the Store cart, then return here.');
   for (;;) {
-    await ask('Press Enter AFTER the Store cart is empty (Ctrl+C cancels). ');
+    await ask('Press Enter AFTER the Store cart is empty. Ctrl+C cancels.');
     if (signal?.aborted) throw new Error('Cancelled');
     if (await store.confirmEmptyCart()) break;
-    log('An empty cart could not be confirmed. Remove all items in the same browser and try again. Nothing has been saved.');
+    terminal.notice('Cart still needs attention',[
+      'An empty cart could not be confirmed. Remove all items in the same browser and try again.',
+      verifying ? 'Saved profile unchanged.' : 'Nothing has been saved.',
+    ]);
   }
   if (verifying) {
-    log('VERIFIED: shipping address, billing address, shipping service, saved card, and Store account match. Cart is empty. No order was submitted; saved profile and rules are unchanged.');
+    terminal.notice('VERIFIED',[
+      'Shipping address, billing address, shipping service, saved card, and Store account match.',
+      'Cart is empty. No order was submitted. Saved profile and rules are unchanged.',
+    ],'success');
     return saved;
   }
   candidate.storageState = await store.context.storageState();
@@ -87,7 +110,10 @@ export async function setupProfile({ store, region, addressLabel, saved, state, 
   const persisted = vault.read().profiles?.[region];
   if (!persisted || JSON.stringify(persisted) !== JSON.stringify(candidate)) throw new Error('Profile read-back failed');
   state.profiles = next.profiles;
-  log(`SAVED: ${terminalLabel(addressLabel)} (${region.toUpperCase()}) address profile and browser session are encrypted locally. You can close this setup terminal now.`);
-  log('Run npm run profiles to inspect it, or npm run verify to compare it with Store checkout.');
+  terminal.notice('SAVED',[
+    `${terminalLabel(addressLabel)} (${region.toUpperCase()}) address profile and browser session are encrypted locally.`,
+    'You can close this setup terminal now.',
+    'Run npm run profiles to inspect it, or npm run verify to compare it with Store checkout.',
+  ],'success');
   return candidate;
 }

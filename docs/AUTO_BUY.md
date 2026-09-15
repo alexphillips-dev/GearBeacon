@@ -78,12 +78,16 @@ Do not click Place Order. Order submission is blocked during Connect and Verify.
 
 The terminal checks the checkout page and response, Store region, signed-in account, setup cart, shipping address, billing address, shipping service, final total/tax, and selected saved card.
 
-Each check shows `PASS` or `NEEDS ATTENTION` with an explanation. If a check fails, the same browser stays open. Correct that step in the browser, then return to the terminal and press Enter again. If everything looks correct but a check still fails, the Store interface or response may be unsupported; the companion must be able to verify it before setup can succeed.
+Each attempt has a numbered **Checkout check** heading and a passed/total summary. Failed checks appear first under **NEEDS ATTENTION**, marked `[FIX]`, with the corrective instructions indented beneath them. Passed checks follow in a compact `[PASS]` list. If a check fails, the same browser stays open. Correct that step in the browser, then return to the terminal and press Enter again. Each retry gets a new heading, and earlier attempts stay in terminal scrollback.
+
+Setup uses separate numbered steps, short prompts, and word wrapping for narrow terminals. Supported terminals show headings in cyan, passed checks in green, and items needing attention in yellow. The text labels work without color; redirected output, `TERM=dumb`, and the `NO_COLOR` environment variable use plain text.
+
+If everything looks correct but a check still fails, the Store interface or response may be unsupported; the companion must be able to verify it before setup can succeed.
 
 After the checks pass, you will see:
 
 ```text
-Checkout checks passed. NOT SAVED YET: remove the setup item from the Store cart, then complete the next prompt.
+Checkout checks passed. NOT SAVED YET.
 ```
 
 ### 5. Empty the cart, then press Enter a second time
@@ -93,7 +97,12 @@ In the same browser, remove the setup item and all other cart items. Return to t
 The companion confirms the empty cart, saves the encrypted profile/session, and reads the saved profile back. **Setup is complete only when this appears:**
 
 ```text
-SAVED: Home (US) address profile and browser session are encrypted locally. You can close this setup terminal now.
+SAVED
+--------------------------------------------------------------------------------
+
+  Home (US) address profile and browser session are encrypted locally.
+
+  You can close this setup terminal now.
 ```
 
 If the cart cannot be confirmed empty, the browser remains open so you can correct it and retry.
@@ -146,14 +155,20 @@ npm --prefix checkout run verify
 1. Choose the region whose profile you want to check.
 2. The dedicated browser opens using its saved session. If you have to sign in again, the saved login may need refreshing with Connect afterwards.
 3. Add one setup item and reach checkout review. Select the same address, billing address, shipping service, and saved card as the existing profile.
-4. Press Enter in the terminal. The normal checkout checks run, followed by `MATCH` or `DIFFERENT` for each saved choice and the Store account. No address values or account identifiers are printed.
+4. Press Enter in the terminal. The normal checkout checks run, followed by a saved-profile comparison with `[MATCH]` or `[DIFF]` for each saved choice and the Store account. Differences appear first with instructions. No address values or account identifiers are printed.
 5. For a mismatch, select the original choice in the browser and retry. To deliberately change a saved choice, cancel Verify and run Connect.
 6. Once everything matches, remove the setup item and press Enter again.
 
 Success is explicit:
 
 ```text
-VERIFIED: shipping address, billing address, shipping service, saved card, and Store account match. Cart is empty. No order was submitted; saved profile and rules are unchanged.
+VERIFIED
+--------------------------------------------------------------------------------
+
+  Shipping address, billing address, shipping service, saved card, and Store
+  account match.
+
+  Cart is empty. No order was submitted. Saved profile and rules are unchanged.
 ```
 
 Verify checks the checkout in that browser **at that moment**. It does not place an order, replace the profile, persist a refreshed login, clear an attention state, or rearm an instruction. Use Connect to refresh an expired session or change the saved choices. Restart the worker only when the Store cart is empty and any uncertain orders have been resolved.
@@ -163,16 +178,16 @@ Verify checks the checkout in that browser **at that moment**. It does not place
 | What you see | What to do |
 |---|---|
 | Generic “Checkout companion stopped” after the first Enter on an older companion | Update the companion from current dev and rerun Connect. Earlier versions hid the checkout-validation error behind this generic message; current versions show the failed checks and keep the browser open. |
-| `NEEDS ATTENTION · Checkout response` | Wait for checkout to finish loading or reload its page. A blocked request or changed Store response cannot be used as proof. If cart creation fails, also ensure the companion includes the current dev cart-request fix. |
-| `NEEDS ATTENTION · Shipping address` | Choose and confirm the real address in Store checkout. Entering `Home` in the terminal only names the profile. |
-| `NEEDS ATTENTION · Billing address` | Confirm a billing address in checkout, even when using the shipping address for billing. |
-| `NEEDS ATTENTION · Selected saved card` | Select an existing supported saved card with a masked last-four label. A card-entry form, wallet, or a saved card that the Store does not expose as selected cannot complete setup. |
-| `NEEDS ATTENTION · Final total and tax` | Finish address and shipping selection and wait for the Store's calculated total. |
+| `[FIX] Checkout response` | Wait for checkout to finish loading or reload its page. A blocked request or changed Store response cannot be used as proof. If cart creation fails, also ensure the companion includes the current dev cart-request fix. |
+| `[FIX] Shipping address` | Choose and confirm the real address in Store checkout. Entering `Home` in the terminal only names the profile. |
+| `[FIX] Billing address` | Confirm a billing address in checkout, even when using the shipping address for billing. |
+| `[FIX] Selected saved card` | Select an existing supported saved card with a masked last-four label. A card-entry form, wallet, or a saved card that the Store does not expose as selected cannot complete setup. |
+| `[FIX] Final total and tax` | Finish address and shipping selection and wait for the Store's calculated total. |
 | Profile matched, but setup did not finish | Empty the cart and complete the second Enter prompt. The first check alone does not save it. |
 | No address profile is saved | Run Connect and wait for `SAVED`. Check that you are using the same operating-system user and the same `GEARBEACON_CHECKOUT_DATA_DIR` override, if any. Do not delete the vault to troubleshoot. |
 | Profile exists locally, but Settings has no profile or says offline | Start the companion and check that it can reach the paired dashboard. Pairing and a saved local profile do not keep a stopped worker online. |
 | A companion is already using this vault | Stop its worker with Ctrl+C before Connect or Verify. The Profiles command works while it is running. |
-| `DIFFERENT` during Verify | Select the original choices and Store account, or cancel and use Connect to replace the profile intentionally. |
+| `[DIFF]` during Verify | Select the original choices and Store account, or cancel and use Connect to replace the profile intentionally. |
 | `Missing script: profiles` or `verify` | Update the companion source, and run the commands from the GearBeacon folder with `--prefix checkout`. |
 
 If a check continues to fail, report **only the check name and its fixed explanation**. Do not share addresses, account emails, pairing codes, browser storage, or the companion vault.

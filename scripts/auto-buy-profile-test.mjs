@@ -5,10 +5,59 @@ import { mkdtemp, readFile, readdir, rm, writeFile, chmod } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stripVTControlCharacters } from 'node:util';
 import { openVault, VaultError } from '../checkout/vault.mjs';
 import { PROFILE_FIELDS, profileMatches, savedProfileReport, setupProfile } from '../checkout/profiles.mjs';
+import { createTerminal } from '../checkout/terminal.mjs';
+
+async function testSetupOutput() {
+  const checks = [
+    { name:'Shipping address',ok:true },
+    { name:'Signed-in Store account',ok:false,help:'Sign in directly in the dedicated browser, finish any account challenge, and return to checkout review before trying again.' },
+    { name:'Selected saved card',ok:false,help:'Select a saved card with a visible masked last-four label. New-card forms and wallets cannot be verified.' },
+  ];
+  for (const columns of [40,80,120]) for (const color of [false,true]) {
+    const lines = [], output = createTerminal({ write:line=>lines.push(line),columns:()=>columns,color });
+    output.checks('Checkout check 1',checks);
+    output.checks('Checkout check 2',checks.map(check=>({...check,ok:true})));
+    output.notice('SAVED',['Home (US) address profile and browser session are encrypted locally.'],'success');
+    const prompt = await output.prompt(async value=>{ assert.equal(value,'  > ');return 'fixture answer'; },'Correct the checks above in the browser. Press Enter to check again, or Ctrl+C to cancel.');
+    assert.equal(prompt,'fixture answer');
+    const plain = lines.map(stripVTControlCharacters), text = plain.join('\n');
+    assert.ok(plain.every(line=>line.length<=Math.min(columns,88)),`Terminal output overflowed ${columns} columns`);
+    assert.match(text.replace(/\s+/g,' '),/1 of 3 checks passed \| 2 need attention/);
+    assert.ok(text.indexOf('[FIX]')<text.indexOf('[PASS]'),'Failed checks were buried under passed checks');
+    assert.ok(plain.includes('  [FIX]  Signed-in Store account'));
+    assert.ok(plain.includes('  [PASS] Shipping address'),'Check labels were not aligned');
+    for (const title of ['Checkout check 1','Checkout check 2','SAVED']) {
+      const index=plain.indexOf(title);assert.ok(index>0 && plain[index-1]==='' && /^-+$/.test(plain[index+1]) && plain[index+2]==='','A retry or final result was not clearly separated');
+    }
+    assert.ok(text.replace(/\s+/g,' ').includes(checks[1].help),'Wrapping dropped or changed a help instruction');
+    assert.equal(lines.some(line=>line.includes('\x1b[')),color);
+    assert.ok(!lines.some(line=>/\x1b\[(?:2J|H|\d*A)/.test(line)),'Setup erased prior output or moved the cursor');
+    const longLines=[];
+    createTerminal({write:line=>longLines.push(line),columns:()=>columns,color:false}).text('x'.repeat(180));
+    assert.equal(longLines.map(line=>line.trim()).join(''),'x'.repeat(180),'A long nickname was truncated');
+    assert.ok(longLines.every(line=>line.length<=Math.min(columns,88)));
+  }
+  const previousNoColor=process.env.NO_COLOR;
+  const previousTerm=process.env.TERM;
+  try {
+    process.env.NO_COLOR='1';
+    const lines=[];
+    createTerminal({stream:{isTTY:true,columns:80},write:line=>lines.push(line)}).checks('Checkout check 1',checks);
+    assert.ok(!lines.join('').includes('\x1b'),'NO_COLOR was ignored');
+    delete process.env.NO_COLOR;process.env.TERM='dumb';lines.length=0;
+    createTerminal({stream:{isTTY:true,columns:80},write:line=>lines.push(line)}).checks('Checkout check 1',checks);
+    assert.ok(!lines.join('').includes('\x1b'),'TERM=dumb was ignored');
+  } finally {
+    if(previousNoColor===undefined) delete process.env.NO_COLOR; else process.env.NO_COLOR=previousNoColor;
+    if(previousTerm===undefined) delete process.env.TERM; else process.env.TERM=previousTerm;
+  }
+}
 
 export async function testProfileSetup() {
+  await testSetupOutput();
   const root = await mkdtemp(join(tmpdir(),'gearbeacon-profile-test-'));
   const directory = join(root,'vault'), missing = join(root,'missing');
   const secret = 'fixture-session-must-stay-private';
@@ -29,6 +78,7 @@ export async function testProfileSetup() {
     const oldBytes = await readFile(join(directory,'vault.checkout-state'));
     let writes = 0, prompts = 0, inspections = 0, emptyChecks = 0;
     const logs = [];
+    const capture = write=>createTerminal({write,columns:()=>80,color:false});
     const checkedVault = { read:vault.read,write:value=>{ writes++;vault.write(value); } };
     const store = {
       inspectProfile:async()=>++inspections === 1 ? { checks:[{name:'Shipping address',ok:false,help:'Select the address in checkout.'}],profile:null }
@@ -36,14 +86,15 @@ export async function testProfileSetup() {
       confirmEmptyCart:async()=>++emptyChecks > 1,
       context:{storageState:async()=>structuredClone(storageState)},
     };
-    await setupProfile({store,region:'us',addressLabel:'Home',state,vault:checkedVault,log:line=>logs.push(line),ask:async()=>{
+    await setupProfile({store,region:'us',addressLabel:'Home',state,vault:checkedVault,terminal:capture(line=>logs.push(line)),ask:async()=>{
       prompts++;assert.equal(writes,0,'Profile saved before the final empty-cart check');
       if(prompts > 2) assert.ok(logs.some(line=>line.includes('NOT SAVED YET')));
       return '';
     }});
     assert.equal(prompts,4);assert.equal(writes,1);assert.equal(vault.read().profiles.us.id,profile.id);
     assert.ok(Number.isFinite(Date.parse(vault.read().profiles.us.savedAt)));
-    assert.ok(logs.some(line=>line.startsWith('SAVED: Home (US)')));
+    assert.ok(logs.includes('SAVED'));assert.ok(logs.some(line=>line.includes('Home (US) address profile')));
+    assert.ok(logs.includes('Checkout check 1') && logs.includes('Checkout check 2'),'Retry headings were missing from the setup flow');
     assert.ok(!logs.join('\n').includes(secret));
     assert.notDeepEqual(await readFile(join(directory,'vault.checkout-state')),oldBytes);
     const saved = state.profiles.us;
@@ -61,24 +112,24 @@ export async function testProfileSetup() {
     assert.throws(()=>openVault(directory,{readOnly:true}).write(state),err=>err.code === 'read-only');
     // Cancellation after successful checkout validation preserves an earlier profile.
     let cancelPrompts = 0;
-    await assert.rejects(setupProfile({store,region:'us',addressLabel:'Replacement',state,vault:checkedVault,log:()=>{},ask:async()=>{
+    await assert.rejects(setupProfile({store,region:'us',addressLabel:'Replacement',state,vault:checkedVault,terminal:capture(()=>{}),ask:async()=>{
       if(++cancelPrompts === 2) throw Error('Fixture cancellation');return '';
     }}),/cancellation/);
     assert.deepEqual(await readFile(join(directory,'vault.checkout-state')),snapshot);
     assert.equal(state.profiles.us,saved);
     const failedSaveLogs = [];
     await assert.rejects(setupProfile({store,region:'us',addressLabel:'Replacement',state,
-      vault:{read:vault.read,write:()=>{throw Error('Fixture disk failure');}},log:line=>failedSaveLogs.push(line),ask:async()=>''}),/disk failure/);
-    assert.ok(!failedSaveLogs.some(line=>line.startsWith('SAVED:')),'An unsuccessful write was reported as saved');
+      vault:{read:vault.read,write:()=>{throw Error('Fixture disk failure');}},terminal:capture(line=>failedSaveLogs.push(line)),ask:async()=>''}),/disk failure/);
+    assert.ok(!failedSaveLogs.includes('SAVED'),'An unsuccessful write was reported as saved');
     assert.equal(state.profiles.us,saved);
     assert.deepEqual(await readFile(join(directory,'vault.checkout-state')),snapshot);
     // Verify must compare each saved choice, allow correction, and never replace the profile.
     let comparisons = 0;const verificationLogs = [];
     const verifier = { ...store,inspectProfile:async()=>({checks:[{name:'Checkout',ok:true}],profile:{...profile,shipping:++comparisons === 1 ? 'e'.repeat(64) : profile.shipping}}) };
-    await setupProfile({store:verifier,region:'us',addressLabel:'Home',saved,state,vault:checkedVault,log:line=>verificationLogs.push(line),ask:async()=>''});
+    await setupProfile({store:verifier,region:'us',addressLabel:'Home',saved,state,vault:checkedVault,terminal:capture(line=>verificationLogs.push(line)),ask:async()=>''});
     assert.equal(comparisons,2);assert.equal(writes,1);assert.equal(state.profiles.us,saved);
     assert.deepEqual(await readFile(join(directory,'vault.checkout-state')),snapshot);
-    assert.ok(verificationLogs.includes('DIFFERENT · Shipping address'));assert.ok(verificationLogs.some(line=>line.startsWith('VERIFIED:')));
+    assert.ok(verificationLogs.includes('  [DIFF] Shipping address'));assert.ok(verificationLogs.includes('VERIFIED'));
     for(const [field,name] of Object.entries(PROFILE_FIELDS)) {
       const checks=profileMatches(profile,{...profile,[field]:'different-fixture-value'});
       assert.deepEqual(checks.filter(check=>!check.ok).map(check=>check.name),[name]);
@@ -100,6 +151,6 @@ export async function testProfileSetup() {
     await rm(join(directory,'checkout.key'));
     const noKey = await cli(directory);
     assert.equal(noKey.code,1);assert.deepEqual(await readdir(directory),['vault.checkout-state'],'Inspection generated a replacement encryption key');
-    console.log('AUTO-BUY PROFILE TEST PASSED: retry, save confirmation, cancellation, verification mismatch, no profile replacement, read-only CLI alongside worker, legacy profiles, and private output.');
+    console.log('AUTO-BUY PROFILE TEST PASSED: readable terminal output, narrow wrapping, color/plain text, retry, save confirmation, cancellation, verification mismatch, no profile replacement, read-only CLI alongside worker, legacy profiles, and private output.');
   } finally { await rm(root,{recursive:true,force:true}); }
 }
