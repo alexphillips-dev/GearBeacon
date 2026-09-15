@@ -26,6 +26,8 @@ npm run pair
 
 On Linux, install the browser's operating-system libraries using `npx playwright install --with-deps chromium` with the required local administrative access. Browser downloads and dependency installation are explicit owner actions. An installed browser can alternatively be selected with `GEARBEACON_CHECKOUT_BROWSER_CHANNEL=chrome` or `msedge`; omit it to use Playwright Chromium.
 
+Chromium's sandbox is explicitly enabled. Run the companion as a regular user on a host that supports the browser sandbox.
+
 1. In GearBeacon, open **Settings > General > Auto-buy** and choose **Pair checkout companion**.
 2. Enter the dashboard origin and one-time code into the companion's pairing prompt. Choose `live` for the normal installation. The code expires after five minutes and works once. The bearer credential returned to the companion is encrypted locally and never printed or sent to another service.
 3. Run `npm run connect`. Choose a Store region and an address label such as `Home`.

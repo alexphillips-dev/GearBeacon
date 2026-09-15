@@ -13,7 +13,7 @@ const questions = ['pair','connect'].includes(command) ? createInterface({ input
 const abort = new AbortController();
 let browser;
 for (const signal of ['SIGINT','SIGTERM']) process.on(signal,()=>{ abort.abort(); browser?.close().catch(()=>{}); });
-const launch = async headless => chromium.launch({ headless, ...(process.env.GEARBEACON_CHECKOUT_BROWSER_CHANNEL ? { channel:process.env.GEARBEACON_CHECKOUT_BROWSER_CHANNEL } : {}) });
+const launch = async headless => chromium.launch({ headless, chromiumSandbox:true, ...(process.env.GEARBEACON_CHECKOUT_BROWSER_CHANNEL ? { channel:process.env.GEARBEACON_CHECKOUT_BROWSER_CHANNEL } : {}) });
 try {
   if (command === 'pair') {
     const base = validateDashboardUrl(await questions.question('GearBeacon dashboard origin (HTTPS, or HTTP on this computer): '));

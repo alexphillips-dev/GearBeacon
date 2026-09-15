@@ -43,7 +43,7 @@ try {
   assert.throws(()=>validateDashboardUrl('http://example.com'),/HTTPS/);
   assert.throws(()=>validateDashboardUrl('https://user:secret@example.com'),/HTTPS/);
   assert.equal(validateDashboardUrl('https://dashboard.example.com'),'https://dashboard.example.com');
-  browser=await chromium.launch({headless:true,...(executable?{executablePath:executable}:{})});
+  browser=await chromium.launch({headless:true,chromiumSandbox:true,...(executable?{executablePath:executable}:{})});
   cart=[item];let store=await new StoreBrowser(browser,{region:'us',fixtureOrigin:origin}).start();await store.visitCheckout();
   const profile=await store.captureProfile('Test home');attempt.profileId=profile.id;
   await store.page.getByRole('button',{name:'Place Order'}).click();await store.page.waitForTimeout(200);assert.equal(orders,0,'Setup allowed an order');await store.close();

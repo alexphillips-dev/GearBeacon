@@ -5,6 +5,8 @@ const requireMatch = (text, pattern, message) => {
   if (!pattern.test(text)) throw new Error(message);
 };
 
+requireMatch(await read('checkout/companion.mjs'), /chromium\.launch\(\{\s*headless,\s*chromiumSandbox:true/, 'The checkout companion must explicitly enable the Chromium sandbox.');
+
 const [backend, dockerfile, compose, windowsInstaller, macInstaller, linuxInstaller, dependabot, securityWorkflow] = await Promise.all([
   read('backend/src/index.ts'),
   read('Dockerfile'),
