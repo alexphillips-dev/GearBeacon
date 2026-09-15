@@ -4,6 +4,13 @@ The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. 
 
 ## V1.3.0 — Live Activity, flexible alerts, and easier settings
 
+Development additions after the stable release:
+
+- Added optional auto-buy: exact-variant purchase instructions with quantity, final-total cap including tax/shipping/surcharges, expiry, explicit owner authorization, pause controls, and one successful order per authorization.
+- Added an optional Playwright checkout companion with one-time pairing, encrypted Store sessions and durable submission journals. Browser checkout validates the full cart, account session, saved address, selected masked card, shipping service, currency, and Store totals. Unknown order outcomes block further checkout and require reconciliation; challenges and unrecognized checkout details pause without bypasses.
+- Added Watchlist setup/status UI, General > Auto-buy, Operations > Purchases, and scoped purchase accounting. Added schema-v14 migration and format-v10 exports; SQLite backups and JSON restores cannot reactivate old purchase instructions or companion tokens. Monitoring remains credential-free.
+- Added backend and real-browser mock checkout tests, including authorization, duplicate claims, paused/stale rules, restart uncertainty, recovery, privacy, and responsive accessible setup. Real Ubiquiti authenticated checkout and unattended saved-payment compatibility still require owner setup and verification; no real order was placed during development.
+
 Released September 14, 2026. Includes every development change since v1.2.0. See the [complete release notes](RELEASE_NOTES.md).
 
 - Release validation now runs Activity context and update-channel tests across the CI platform matrix. Corrected the delayed-delivery restart fixture to capture startup deliveries and assert that a due job resumes with its original context.

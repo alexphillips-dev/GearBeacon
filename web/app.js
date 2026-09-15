@@ -484,6 +484,7 @@ async function authRequest(path, options = {}) {
 
 function showAuth(setup = false) {
   $('appShell').classList.add('hidden');
+  if (typeof clearAutoBuyUi === 'function') clearAutoBuyUi();
   $('authGate').classList.remove('hidden');
   $('setupTokenField').classList.toggle('hidden', !setup);
   $('confirmPasswordField').classList.toggle('hidden', !setup);
@@ -714,6 +715,7 @@ function watchCard(p) {
     <div class="detail">${escapeHtml(productDetail(p))}${changedRecently ? ' · changed recently' : ''}</div>
     ${freshnessMarkup(p)}
     ${alertSummaryMarkup(p)}
+    ${autoBuyCard(p)}
     <div class="rule-chips">${(p.collections || []).map((id) => app.collections.find((collection) => collection.id === id)).filter(Boolean).map((collection) => `<span class="rule-chip">Collection: ${escapeHtml(collection.name)}</span>`).join('')}</div>
     <div class="card-actions">
       <button data-product-detail="${escapeHtml(p.slug)}">Alert rules</button>
@@ -894,7 +896,7 @@ function renderProducts(force = false) {
   const watched = filteredWatchlist();
   $('watchCount').textContent = allWatched.length;
   if ($('settingsWatchCount')) $('settingsWatchCount').textContent = `${allWatched.length} product${allWatched.length === 1 ? '' : 's'}`;
-  const watchKey = JSON.stringify([watched.map((p) => [p.slug,p.name,p.imageUrl,p.sku,p.variantTitle,p.category,p.status,p.inStock,p.unlisted,p.price,p.lastChangedAt,p.watchRule,p.collections,p.alertSummary]), app.collections.map(({ id,name,notifyReady,alertsOnly,archived,alertSummary }) => [id,name,notifyReady,alertsOnly,archived,alertSummary]), [...app.selectedWatch]]);
+  const watchKey = JSON.stringify([watched.map((p) => [p.slug,p.name,p.imageUrl,p.sku,p.variantTitle,p.category,p.status,p.inStock,p.unlisted,p.price,p.lastChangedAt,p.watchRule,p.collections,p.alertSummary,p.autoBuy]), app.collections.map(({ id,name,notifyReady,alertsOnly,archived,alertSummary }) => [id,name,notifyReady,alertsOnly,archived,alertSummary]), [...app.selectedWatch]]);
   if (force || watchKey !== app.watchRenderKey) {
     reconcileList($('watchGrid'), watched, 'data-product-card', watchCard);
     app.watchRenderKey = watchKey;

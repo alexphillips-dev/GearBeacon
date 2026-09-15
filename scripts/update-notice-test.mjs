@@ -52,7 +52,7 @@ async function waitFor(check,message) {
 async function start({channel='main',automatic=false,metadata={},env={},gitBranch=null}={}) {
   await stop();calls.length=0;output='';
   const appRoot=join(scratch,`app-${++instance}`);await mkdir(join(appRoot,'backend','dist'),{recursive:true});
-  for(const file of ['index.js','email.js']) await copyFile(join(root,'backend','dist',file),join(appRoot,'backend','dist',file));
+  for(const file of ['index.js','email.js','autobuy.js']) await copyFile(join(root,'backend','dist',file),join(appRoot,'backend','dist',file));
   await copyFile(join(root,'release-manifest.json'),join(appRoot,'release-manifest.json'));
   await copyFile(join(root,'backend','package.json'),join(appRoot,'backend','package.json'));
   await writeFile(join(appRoot,'build-info.json'),JSON.stringify({version:'1.3.0',packageVersion:'1.3.0',branch:channel,commit:current,...metadata}));

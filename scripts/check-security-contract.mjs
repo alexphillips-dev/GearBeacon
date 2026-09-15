@@ -38,7 +38,9 @@ requireMatch(linuxInstaller, /User=gearbeacon[\s\S]*CapabilityBoundingSet=[\s\S]
 requireMatch(linuxInstaller, /chown -R root:root \/opt\/gearbeacon/, 'Linux application files must remain root-owned.');
 
 const devTargets = dependabot.match(/target-branch:\s*dev/g) || [];
-if (devTargets.length !== 3) throw new Error('Every Dependabot ecosystem must target the development branch.');
+const dependencyUpdates = dependabot.split(/\r?\n  - package-ecosystem:/).slice(1);
+if (dependencyUpdates.length !== 4 || devTargets.length !== dependencyUpdates.length || dependencyUpdates.some(section=>!/^\s+target-branch:\s*dev\s*$/m.test(section))) throw new Error('Every Dependabot ecosystem must target the development branch.');
+if (!dependencyUpdates.some(section=>/^\s*npm\s*\r?\n/.test(section) && /^\s+directory:\s*\/checkout\s*$/m.test(section))) throw new Error('The optional checkout companion must receive dependency updates.');
 const actionsUpdates = dependabot.split(/\r?\n  - package-ecosystem:/).find((section) => /^\s*github-actions\s*\r?\n/.test(section)) || '';
 requireMatch(actionsUpdates, /    groups:\s*\r?\n      codeql:\s*\r?\n        patterns:\s*\r?\n          - ['"]github\/codeql-action\/\*['"]/, 'Dependabot must group CodeQL actions so initialization, analysis, and SARIF upload update together.');
 requireMatch(securityWorkflow, /repository-secret-scan:[\s\S]*scan-type:\s*fs[\s\S]*scanners:\s*secret[\s\S]*exit-code:\s*'1'/, 'Security CI must fail closed on repository filesystem secret findings.');

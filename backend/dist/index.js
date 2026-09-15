@@ -13,8 +13,9 @@ const { URL } = require('node:url');
 const { execFileSync } = require('node:child_process');
 const { DatabaseSync } = require('node:sqlite');
 const { renderEmail, buildMimeEmail, numericPrice } = require('./email');
+const { createAutoBuy, AUTO_BUY_SCHEMA, neutralizeAutoBuyBackup } = require('./autobuy');
 const APP_VERSION = '1.3.0';
-const DATABASE_SCHEMA_VERSION = 13;
+const DATABASE_SCHEMA_VERSION = 14;
 const STORE_BASE = 'https://store.ui.com';
 const REGIONS = {
     us: { label: 'United States', path: 'us/en', currency: 'USD', origin: STORE_BASE },
@@ -636,6 +637,13 @@ function createDatabaseBackup(reason = 'manual') {
         const destination = path.join(BACKUP_DIR, filename);
         db.exec('PRAGMA wal_checkpoint(FULL)');
         db.exec(`VACUUM INTO '${sqliteQuote(destination)}'`);
+        const backupDb = new DatabaseSync(destination);
+        try {
+            neutralizeAutoBuyBackup(backupDb);
+        }
+        finally {
+            backupDb.close();
+        }
         const backupIntegrity = databaseIntegrity(destination);
         if (!backupIntegrity.ok) {
             try {
@@ -913,6 +921,7 @@ MIGRATIONS.push({ version: 12, name: 'collection-budget-alerts', sql: `
 MIGRATIONS.push({ version: 13, name: 'alert-routing-and-expiry', sql: `
   ALTER TABLE watch_collections ADD COLUMN delivery_json TEXT NOT NULL DEFAULT '{}';
 ` });
+MIGRATIONS.push({ version: 14, name: 'authorized-auto-buy', sql: AUTO_BUY_SCHEMA });
 function runMigrations() {
     // Bootstrap the migration ledger before querying it on a brand-new database.
     if (!tableExists('schema_migrations')) {
@@ -1504,6 +1513,41 @@ function contextualProxy(values) {
     });
 }
 const state = contextualProxy(states);
+const autoBuy = createAutoBuy({
+    db, regions: REGIONS, mock: MOCK_MODE,
+    getProduct: (region, slug) => {
+        const product = states[region]?.products[slug];
+        return product ? { ...product, autoBuyFresh: productFreshness(product, region).state === 'confirmed' } : null;
+    },
+    eligible: (region, slug, collectionId, quantity) => {
+        if (!states[region]?.watchlist.includes(slug) || watchRule(slug, region).purchasedAt)
+            return false;
+        if (!collectionId)
+            return true;
+        const member = db.prepare(`SELECT m.quantity,m.purchased_quantity,c.archived FROM watch_collection_members m
+      JOIN watch_collections c ON c.region=m.region AND c.id=m.collection_id WHERE m.region=? AND m.slug=? AND m.collection_id=?`).get(region, slug, collectionId);
+        return Boolean(member && !member.archived && member.quantity - member.purchased_quantity >= quantity);
+    },
+    purchased: (region, slug, config, receipt) => {
+        if (!states[region]?.watchlist.includes(slug))
+            return;
+        if (config.collectionId) {
+            // Only the selected project receives the purchased quantity. Other projects remain wanted.
+            db.prepare(`UPDATE watch_collection_members SET purchased_quantity=purchased_quantity+?,
+        paid_total=CASE WHEN purchased_quantity=0 THEN ? WHEN paid_total IS NOT NULL THEN paid_total+? ELSE NULL END
+        WHERE region=? AND slug=? AND collection_id=? AND quantity-purchased_quantity>=?`)
+                .run(config.quantity, receipt.totalMinor / 100, receipt.totalMinor / 100, region, slug, config.collectionId, config.quantity);
+            baselineCollections(region, [config.collectionId]);
+        }
+        else {
+            const rule = { ...watchRule(slug, region), purchasedAt: isoNow() };
+            db.prepare(`INSERT INTO watch_rules(region,slug,rule_json,updated_at) VALUES(?,?,?,?)
+        ON CONFLICT(region,slug) DO UPDATE SET rule_json=excluded.rule_json,updated_at=excluded.updated_at`).run(region, slug, JSON.stringify(rule), isoNow());
+            db.prepare("UPDATE notification_queue SET status='cancelled',updated_at=? WHERE region=? AND status IN ('pending','failed') AND json_extract(payload_json,'$.slug')=?").run(isoNow(), region, slug);
+        }
+    },
+    notify: (region, title, detail) => regionContext.run(region, () => enqueueOperationalAlert('auto-buy', title, detail, region)),
+});
 const saveTimers = new Map();
 function saveStateSoon() {
     const region = currentRegion();
@@ -3388,6 +3432,8 @@ async function checkStore(reason = 'timer') {
         for (const event of notifications)
             enqueueAlert(event);
         if (!monitor.partialErrors.length)
+            autoBuy.observe(currentRegion(), state.products);
+        if (!monitor.partialErrors.length)
             evaluateCollectionAlerts();
         try {
             const stat = typeof fs.statfsSync === 'function' ? fs.statfsSync(USER_DATA_DIR) : null;
@@ -3459,7 +3505,7 @@ function productForApi(product) {
     const watched = state.watchlist.includes(product.slug);
     const watch = watched ? db.prepare('SELECT created_at FROM watchlist WHERE region=? AND slug=?').get(currentRegion(), product.slug) : null;
     const collections = watched ? db.prepare('SELECT collection_id FROM watch_collection_members WHERE region=? AND slug=?').all(currentRegion(), product.slug).map((row) => row.collection_id) : [];
-    return { ...product, freshness: productFreshness(product), watched, watchedAt: watch?.created_at || null, watchRule: watched ? watchRule(product.slug) : null, collections, alertSummary: watched ? alertConfiguration(product) : null };
+    return { ...product, freshness: productFreshness(product), watched, watchedAt: watch?.created_at || null, watchRule: watched ? watchRule(product.slug) : null, collections, alertSummary: watched ? alertConfiguration(product) : null, autoBuy: watched ? autoBuy.rule(currentRegion(), product.slug) : null };
 }
 function collectionAlertActive(id, region = currentRegion()) {
     const value = db.prepare('SELECT notify_ready,archived FROM watch_collections WHERE region=? AND id=?').get(region, id);
@@ -4429,13 +4475,14 @@ function exportSnapshot() {
     }
     return {
         format: 'GearBeaconBackup',
-        formatVersion: 9,
+        formatVersion: 10,
         exportedAt: isoNow(),
         appVersion: APP_VERSION,
         schemaVersion: schemaVersion(),
         defaultRegion: DEFAULT_REGION,
         activeRegions: [...ACTIVE_REGIONS],
         regions: regionData,
+        autoBuy: autoBuy.exportData(),
         settings,
     };
 }
@@ -4484,8 +4531,9 @@ function normalizeImportedSnapshot(snapshot) {
     const isLegacy = !snapshot.format && (Array.isArray(snapshot.watchlist) || snapshot.products || Array.isArray(snapshot.events));
     if (!isBackup && !isLegacy)
         throw new Error('This file is not a GearBeacon backup or legacy GearBeacon state file.');
-    if (isBackup && Number(snapshot.formatVersion || 0) > 9)
+    if (isBackup && Number(snapshot.formatVersion || 0) > 10)
         throw new Error(`This backup format (${snapshot.formatVersion}) is newer than GearBeacon ${APP_VERSION} supports.`);
+    autoBuy.validateImport(snapshot.autoBuy);
     const normalizeRegion = (value) => ({
         watchlist: Array.isArray(value?.watchlist) ? value.watchlist.map(String).filter(Boolean) : [],
         watchCreatedAt: value?.watchCreatedAt && typeof value.watchCreatedAt === 'object' && !Array.isArray(value.watchCreatedAt) ? value.watchCreatedAt : {},
@@ -4593,6 +4641,7 @@ function importSnapshot(snapshot) {
     for (const region of ACTIVE_REGIONS)
         flushState(region);
     const safety = createDatabaseBackup('pre-import');
+    autoBuy.restore();
     let watchCount = 0;
     let eventCount = 0;
     const importedRegions = [];
@@ -4672,6 +4721,7 @@ function importSnapshot(snapshot) {
         applyAppConfig(storedAppConfig(), storedSecrets());
         scheduleBackups();
     }
+    autoBuy.importData(snapshot.autoBuy);
     setMeta('last_import_at', isoNow());
     return { ok: true, watchCount, eventCount, importedRegions, safetyBackup: safety };
 }
@@ -5415,6 +5465,44 @@ function contentType(file) {
 async function handleApi(req, res, url) {
     if (req.method === 'OPTIONS')
         return sendJson(res, 204, {});
+    // Companion credentials are narrowly scoped to checkout operations. They never grant owner API access.
+    if (url.pathname.startsWith('/api/auto-buy/worker/')) {
+        try {
+            const action = url.pathname.slice('/api/auto-buy/worker/'.length);
+            if (req.method === 'POST' && action === 'pair') {
+                assertLoginAllowed(req);
+                const body = await readJsonBody(req);
+                try {
+                    return sendJson(res, 200, autoBuy.pair(body));
+                }
+                catch (err) {
+                    recordLoginFailure(req);
+                    throw err;
+                }
+            }
+            const c = autoBuy.authenticate(String(req.headers.authorization || '').match(/^Bearer (\S+)$/)?.[1]);
+            const match = action.match(/^attempts\/([a-f0-9-]{36})(?:\/(authorize|complete|report))?$/);
+            if (req.method === 'GET' && match && !match[2])
+                return sendJson(res, 200, { attempt: autoBuy.attempt(c, match[1]) });
+            if (req.method !== 'POST')
+                return sendJson(res, 405, { error: 'Method not allowed.' });
+            const body = await readJsonBody(req);
+            if (action === 'heartbeat')
+                return sendJson(res, 200, autoBuy.heartbeat(c, body));
+            if (action === 'claim')
+                return sendJson(res, 200, autoBuy.claim(c));
+            if (match?.[2] === 'authorize')
+                return sendJson(res, 200, autoBuy.authorize(c, match[1], body));
+            if (match?.[2] === 'complete')
+                return sendJson(res, 200, autoBuy.complete(c, match[1], body));
+            if (match?.[2] === 'report')
+                return sendJson(res, 200, autoBuy.report(c, match[1], body));
+            return sendJson(res, 404, { error: 'Checkout operation not found.' });
+        }
+        catch (err) {
+            return sendJson(res, err.statusCode || 400, { error: err.statusCode ? err.message : 'Invalid checkout request.' });
+        }
+    }
     if (req.method === 'GET' && url.pathname === '/api/auth/status') {
         return sendJson(res, 200, authStatus(req));
     }
@@ -5479,6 +5567,35 @@ async function handleApi(req, res, url) {
     const changesState = !['GET', 'HEAD', 'OPTIONS'].includes(req.method || 'GET');
     if (changesState && authenticationRequired() && !safeEqualText(req.headers['x-csrf-token'] || '', session.csrf_token || '')) {
         return sendJson(res, 403, { error: 'The security token is missing or invalid. Refresh the page and try again.' });
+    }
+    if (url.pathname.startsWith('/api/auto-buy')) {
+        try {
+            if (req.method === 'GET' && url.pathname === '/api/auto-buy')
+                return sendJson(res, 200, autoBuy.status());
+            const body = changesState ? await readJsonBody(req) : {};
+            if (req.method === 'POST' && url.pathname === '/api/auto-buy/pairing')
+                return sendJson(res, 200, autoBuy.startPairing());
+            if (req.method === 'POST' && url.pathname === '/api/auto-buy/disconnect')
+                return sendJson(res, 200, autoBuy.disconnect());
+            if (req.method === 'POST' && url.pathname === '/api/auto-buy/pause-all')
+                return sendJson(res, 200, autoBuy.pauseAll());
+            if (req.method === 'PUT' && url.pathname === '/api/auto-buy/rules') {
+                const region = String(url.searchParams.get('region') || DEFAULT_REGION).toLowerCase();
+                if (!ACTIVE_REGIONS.includes(region))
+                    return sendJson(res, 400, { error: 'Choose an active Store region.' });
+                return sendJson(res, 200, { rule: autoBuy.save(region, String(body.slug || ''), body) });
+            }
+            const pause = url.pathname.match(/^\/api\/auto-buy\/rules\/([a-f0-9-]{36})\/pause$/);
+            if (req.method === 'POST' && pause)
+                return sendJson(res, 200, { rule: autoBuy.pause(pause[1]) });
+            const resolve = url.pathname.match(/^\/api\/auto-buy\/attempts\/([a-f0-9-]{36})\/resolve$/);
+            if (req.method === 'POST' && resolve)
+                return sendJson(res, 200, autoBuy.resolve(resolve[1], body));
+            return sendJson(res, 404, { error: 'Auto-buy operation not found.' });
+        }
+        catch (err) {
+            return sendJson(res, err.statusCode || 400, { error: err.statusCode ? err.message : 'Invalid purchase instruction.' });
+        }
     }
     if (req.method === 'POST' && url.pathname === '/api/auth/logout') {
         if (session.token_hash)

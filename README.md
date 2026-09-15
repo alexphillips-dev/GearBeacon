@@ -13,17 +13,18 @@
 
 GearBeacon is a private, self-hosted Ubiquiti and UniFi Store inventory monitor for Windows, macOS, Linux, NAS, and Docker. Watch exact products, plan purchases, and receive stock or price alerts through a responsive browser dashboard.
 
-One installation serves one owner. Monitoring and external notification delivery run on your server, even when the browser is closed. There is no GearBeacon cloud account, subscription, hosted database, analytics, or telemetry, and no Ubiquiti login is required.
+One installation serves one owner. Monitoring and external notification delivery run on your server, even when the browser is closed. There is no GearBeacon cloud account, subscription, hosted database, analytics, or telemetry, and monitoring requires no Ubiquiti login. Optional auto-buy uses your own Store session in a separate checkout companion.
 
 **Current version: 1.3.0** · [Downloads](https://github.com/alexphillips-dev/GearBeacon/releases) · [Release notes](docs/RELEASE_NOTES.md) · [Wiki](https://github.com/alexphillips-dev/GearBeacon/wiki)
 
-Save named views, use a compact Watchlist, receive budget-aware collection alerts, and read [live Activity cards](docs/ACTIVITY.md) with current availability, watch and price context, delivery explanations, and automatic arrivals that preserve your reading position. GearBeacon supports [per-watch and collection delivery channels, delayed-alert context and expiry, and product freshness](docs/ALERT_DELIVERY.md), [Settings section tabs](docs/SETTINGS.md), and [branch-aware update notices](docs/UPDATES.md). It uses schema v13 and recovery export format v9, with a validated backup before migration.
+Save named views, use a compact Watchlist, receive budget-aware collection alerts, and read [live Activity cards](docs/ACTIVITY.md) with current availability, watch and price context, delivery explanations, and automatic arrivals that preserve your reading position. GearBeacon supports [per-watch and collection delivery channels, delayed-alert context and expiry, and product freshness](docs/ALERT_DELIVERY.md), [Settings section tabs](docs/SETTINGS.md), and [branch-aware update notices](docs/UPDATES.md). It uses schema v14 and recovery export format v10, with a validated backup before migration.
 
 ## What it does
 
 - **Regional monitoring:** United States, Canada, Europe, and United Kingdom Stores, with separate watches, prices, activity, and health.
 - **Precise watches:** Any variant or an exact SKU, color, length, or pack size; import Store links and TXT/CSV/JSON lists with a review before saving.
 - **Purchase planning:** Collections with product previews, quantities, recorded spending, budgets, archive/undo, and optional grouping without duplicate item cards.
+- **Optional auto-buy:** Authorize one exact-variant order with a final-total cap and expiry. A separate browser companion verifies checkout, pauses for attention, and records outcomes. See [setup, supported checkout requirements, and recovery](docs/AUTO_BUY.md).
 - **Flexible alerts:** Restocks, price drops, available-at-target conditions, and collection readiness; per-item rules, pauses, quiet hours, digests, and collection-only overrides. Includes [delivery routes, optional expiry, and freshness indicators](docs/ALERT_DELIVERY.md).
 - **Multiple channels:** ntfy, Discord, Gotify, SMTP email, and signed webhooks, with durable delivery and bounded retries. Browser popups are also available while the page is running.
 - **Useful evidence:** Observed stock timelines, 7/30/90-day price insights, and searchable, paginated Activity with delivery outcomes and exports.
@@ -79,7 +80,7 @@ Local mode cannot expose an unauthenticated server beyond loopback. Keep remote 
 
 ## Keep your data recoverable
 
-Live data stays in the operating system's application-data directory or Docker `/data`, outside application files. SQLite backups and the separate `secrets.key` preserve saved state and encrypted integration credentials. Portable encrypted exports exclude owner credentials, sessions, and local integration secrets.
+Live data stays in the operating system's application-data directory or Docker `/data`, outside application files. SQLite backups and the separate `secrets.key` preserve saved state and encrypted integration credentials. Portable encrypted exports exclude owner credentials, sessions, and local integration secrets. Auto-buy instructions restore paused. Checkout sessions and their encryption key stay on the companion host and are excluded from GearBeacon backups.
 
 Use **Settings > Data** to configure backups and test primary/secondary recovery. Before updating, choose **Prepare safe update** and verify its backup. GearBeacon never installs updates automatically. Data paths, migration, encryption, and rollback procedures are in [Backups and recovery](https://github.com/alexphillips-dev/GearBeacon/wiki/Backups-and-Recovery) and [Updates and rollback](https://github.com/alexphillips-dev/GearBeacon/wiki/Updates-and-Rollback).
 

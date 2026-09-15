@@ -75,6 +75,7 @@ async function stop() {
 const { renderEmail } = createRequire(import.meta.url)('../backend/dist/email.js');
 function edit(sql, ...args) {
   const db = new DatabaseSync(join(dataDir, 'gearbeacon.mock.sqlite3'));
+  db.exec('PRAGMA busy_timeout=5000');
   try { return db.prepare(sql).run(...args); } finally { db.close(); }
 }
 const queue = () => query('SELECT * FROM notification_queue ORDER BY id');
@@ -95,7 +96,7 @@ function agePending(minutes) {
 async function restock() { await observe({status:'SoldOut'},2); await observe({status:'Available'}); }
 try {
   await start();
-  assert.equal((await request('/api/status')).storage.schemaVersion,13);
+  assert.equal((await request('/api/status')).storage.schemaVersion,14);
   assert.equal((await details()).product.freshness.state,'confirmed');
   const initial=(await details()).product.freshness.checkedAt;
   const config=(await request('/api/config')).config;
@@ -225,7 +226,7 @@ try {
   assert.equal(received[0].body.event.deliveryContext.status,'Not ready');
   await request(projectUrl,{maxAlertAgeMinutes:1},'PUT'); await restock(); agePending(2); received.length=0; await deliver(); assert.equal(received.length,0);
   // Routes and expiry survive restarts, exports and the v12 safety migration.
-  const snapshot=await request('/api/data/export'); assert.equal(snapshot.formatVersion,9);
+  const snapshot=await request('/api/data/export'); assert.equal(snapshot.formatVersion,10);
   await stop(); await start();
   assert.deepEqual((await collection(project)).channels,['webhook']); assert.equal((await collection(project)).maxAlertAgeMinutes,1);
   await request('/api/data/import',{backup:snapshot});
@@ -242,10 +243,10 @@ try {
   const support=JSON.stringify(await request('/api/operations/support-bundle'));
   assert.ok(!support.includes('Delivery test') && !support.includes(black));
   await stop();
-  edit('DELETE FROM schema_migrations WHERE version=13'); edit('ALTER TABLE watch_collections DROP COLUMN delivery_json');
+  for (const sql of ['DROP TABLE auto_buy_rules','DROP TABLE auto_buy_attempts','DROP TABLE auto_buy_connection','DELETE FROM schema_migrations WHERE version>=13','ALTER TABLE watch_collections DROP COLUMN delivery_json']) edit(sql);
   const backups=query('SELECT COUNT(*) AS count FROM backup_log')[0].count;
   await start();
-  assert.equal((await request('/api/status')).storage.schemaVersion,13);
+  assert.equal((await request('/api/status')).storage.schemaVersion,14);
   assert.equal((await collection(project)).channels,null);
   assert.ok(query('SELECT COUNT(*) AS count FROM backup_log')[0].count>backups,'Migration did not make a safety backup');
   console.log('ALERT DELIVERY TEST PASSED: routes/defaults/previews, cancellation, delayed snapshots and email/digests, expiry/retries, variant and regional freshness, collections, recovery and v12 migration.');

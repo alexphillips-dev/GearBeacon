@@ -5,6 +5,7 @@ dist/
 backend/dist/*
 !backend/dist/index.js
 !backend/dist/email.js
+!backend/dist/autobuy.js
 coverage/
 /build-info.json
 *.tsbuildinfo
@@ -67,3 +68,10 @@ GearBeacon-Logs-*
 *.log
 *.log.*
 /.gearbeacon-update.*
+
+# Dedicated checkout companion state must never enter a checkout or artifact.
+/checkout-data/
+**/playwright/.auth/
+*.checkout-state
+*.checkout-journal
+*.checkout-lock

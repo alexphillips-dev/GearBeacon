@@ -1,0 +1,14 @@
+{
+  "name": "gearbeacon-checkout-companion",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.13.0" },
+  "scripts": {
+    "start": "node companion.mjs run",
+    "pair": "node companion.mjs pair",
+    "connect": "node companion.mjs connect",
+    "test": "node ../scripts/auto-buy-browser-test.mjs"
+  },
+  "dependencies": { "playwright": "1.63.0" }
+}

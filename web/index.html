@@ -121,8 +121,10 @@
         <div><h2>Your watchlist</h2><p>Watch exact variants, set availability and price conditions, and organize your gear.</p></div>
         <button id="watchManageToggle" class="toolbar-toggle watch-management" type="button" data-toolbar-toggle="watchManageMenu" aria-controls="watchManageMenu" aria-expanded="false">Manage</button>
       </div>
+      <div id="autoBuyWatchStatus" class="auto-buy-watch-status" hidden><span id="autoBuyWatchSummary" role="status" aria-live="polite"></span><button type="button" data-auto-pause-all>Pause all auto-buy</button></div>
       <div id="watchManageMenu" class="toolbar-panel toolbar-actions hidden" data-toolbar-panel role="group" aria-label="Manage watchlist">
         <button id="openCollectionManager" type="button">Manage collections</button>
+        <button type="button" data-auto-settings>Auto-buy settings</button>
         <button id="openWatchImport" type="button">Import watchlist</button>
         <button id="selectVisibleWatches" type="button">Select visible watches</button>
       </div>
@@ -265,6 +267,7 @@
         <div class="settings-subtabs" role="tablist" aria-label="General sections">
           <button id="settingsGeneralApplicationTab" class="settings-subtab active" type="button" role="tab" aria-selected="true" aria-controls="settingsGeneralApplicationPanel" data-settings-subtab="general/application" tabindex="0">Application</button>
           <button id="settingsGeneralStoresTab" class="settings-subtab" type="button" role="tab" aria-selected="false" aria-controls="settingsGeneralStoresPanel" data-settings-subtab="general/stores" tabindex="-1">Stores &amp; access</button>
+          <button id="settingsGeneralAutoBuyTab" class="settings-subtab" type="button" role="tab" aria-selected="false" aria-controls="settingsGeneralAutoBuyPanel" data-settings-subtab="general/autobuy" tabindex="-1">Auto-buy</button>
         </div>
         <section id="settingsGeneralApplicationPanel" class="settings-section" role="tabpanel" aria-labelledby="settingsGeneralApplicationTab" data-settings-section="general/application">
           <article class="settings-card">
@@ -294,6 +297,16 @@
               <button class="primary" type="submit">Validate & save</button>
             </form>
             <div id="configResult" class="settings-result hidden"></div>
+          </article>
+        </section>
+        <section id="settingsGeneralAutoBuyPanel" class="settings-section" role="tabpanel" aria-labelledby="settingsGeneralAutoBuyTab" data-settings-section="general/autobuy" hidden>
+          <article class="settings-card wide-card">
+            <div class="settings-card-head"><div><span class="settings-kicker">Optional purchasing</span><h3>Auto-buy</h3></div><button type="button" data-auto-pause-all>Pause all auto-buy</button></div>
+            <p>Authorize one order for an exact variant, within your quantity, final-total limit, and expiry. The checkout companion must stay running; your dashboard can be closed.</p>
+            <div id="autoBuyConnection" role="status" aria-live="polite">Checking checkout companion…</div>
+            <div class="settings-actions"><button id="autoBuyPair" type="button">Pair checkout companion</button><button id="autoBuyDisconnect" type="button">Disconnect &amp; pause</button><button type="button" data-auto-purchases>Purchase history</button></div>
+            <div id="autoBuyPairing" class="settings-result" hidden></div>
+            <details class="auto-buy-guide"><summary>Connect your Store checkout</summary><ol><li>Install the optional checkout companion on a computer with a browser. For NAS or Docker installs, it can run on a separate computer connected to your HTTPS dashboard.</li><li>Pair it using the one-time code above, then run its Connect command. Sign in directly in its dedicated Store browser.</li><li>At checkout review, select a saved card, shipping address, and shipping service. The companion validates the profile with order submission blocked. Empty the setup cart afterwards.</li><li>Leave the companion running, then choose Set up auto-buy on a watched product. Select an exact variant and authorize its limits.</li></ol><p>Login expiry, an unrecognized saved card, a changed cart, or a payment challenge pauses checkout. After an uncertain submission, check Store orders before allowing another purchase.</p><a href="https://github.com/alexphillips-dev/GearBeacon/blob/dev/docs/AUTO_BUY.md" target="_blank" rel="noopener noreferrer">Companion installation &amp; recovery guide</a></details>
           </article>
         </section>
       </section>
@@ -493,6 +506,7 @@
             <button id="settingsOperationsOverviewTab" class="settings-subtab active" type="button" role="tab" aria-selected="true" aria-controls="settingsOperationsOverviewPanel" data-settings-subtab="operations/overview" tabindex="0">Overview</button>
             <button id="settingsOperationsMonitoringTab" class="settings-subtab" type="button" role="tab" aria-selected="false" aria-controls="settingsOperationsMonitoringPanel" data-settings-subtab="operations/monitoring" tabindex="-1">Monitoring</button>
             <button id="settingsOperationsDeliveryTab" class="settings-subtab" type="button" role="tab" aria-selected="false" aria-controls="settingsOperationsDeliveryPanel" data-settings-subtab="operations/delivery" tabindex="-1">Delivery</button>
+            <button id="settingsOperationsPurchasesTab" class="settings-subtab" type="button" role="tab" aria-selected="false" aria-controls="settingsOperationsPurchasesPanel" data-settings-subtab="operations/purchases" tabindex="-1">Purchases</button>
             <button id="settingsOperationsBackupsTab" class="settings-subtab" type="button" role="tab" aria-selected="false" aria-controls="settingsOperationsBackupsPanel" data-settings-subtab="operations/backups" tabindex="-1">Backups</button>
             <button id="settingsOperationsDiagnosticsTab" class="settings-subtab" type="button" role="tab" aria-selected="false" aria-controls="settingsOperationsDiagnosticsPanel" data-settings-subtab="operations/diagnostics" tabindex="-1">Diagnostics</button>
             <button id="settingsOperationsLogsTab" class="settings-subtab" type="button" role="tab" aria-selected="false" aria-controls="settingsOperationsLogsPanel" data-settings-subtab="operations/logs" tabindex="-1">Logs</button>
@@ -510,6 +524,9 @@
         </section>
         <section id="settingsOperationsDeliveryPanel" class="settings-section" role="tabpanel" aria-labelledby="settingsOperationsDeliveryTab" data-settings-section="operations/delivery" hidden>
           <div id="operationsDelivery"></div>
+        </section>
+        <section id="settingsOperationsPurchasesPanel" class="settings-section" role="tabpanel" aria-labelledby="settingsOperationsPurchasesTab" data-settings-section="operations/purchases" hidden>
+          <article class="settings-card wide-card"><div class="settings-card-head"><div><span class="settings-kicker">Separate from notification delivery</span><h3>Auto-buy purchases</h3></div><button type="button" data-auto-pause-all>Pause all auto-buy</button></div><p>Each authorization can place one order. A submission already in progress may finish after you pause.</p><div id="autoBuyAttempts">No purchase attempts yet.</div></article>
         </section>
         <section id="settingsOperationsBackupsPanel" class="settings-section" role="tabpanel" aria-labelledby="settingsOperationsBackupsTab" data-settings-section="operations/backups" hidden>
           <div id="operationsBackups" class="ops-grid"></div>
@@ -634,6 +651,8 @@
   </section>
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
   <dialog id="ownerDialog" class="owner-dialog" aria-labelledby="ownerDialogTitle"><div class="product-dialog-head"><h2 id="ownerDialogTitle">Saved views</h2><button id="closeOwnerDialog" type="button" class="icon-button" aria-label="Close dialog">×</button></div><div id="ownerDialogBody" class="product-dialog-body"></div><p id="ownerDialogResult" class="settings-result" role="status" aria-live="polite"></p></dialog>
+  <dialog id="autoBuyDialog" class="owner-dialog auto-buy-dialog" aria-labelledby="autoBuyDialogTitle"><div class="product-dialog-head"><h2 id="autoBuyDialogTitle">Set up auto-buy</h2><button id="closeAutoBuyDialog" type="button" class="icon-button" aria-label="Close auto-buy dialog">×</button></div><div id="autoBuyDialogBody" class="product-dialog-body"></div><p id="autoBuyDialogResult" class="settings-result" role="status" aria-live="polite"></p></dialog>
   <script src="/app.js"></script>
+  <script src="/autobuy.js"></script>
 </body>
 </html>

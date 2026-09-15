@@ -5,7 +5,7 @@
   "downloadUrl": "https://github.com/alexphillips-dev/GearBeacon/releases/tag/v1.3.0",
   "releasePageUrl": "https://github.com/alexphillips-dev/GearBeacon/releases/tag/v1.3.0",
   "minimumSchemaVersion": 4,
-  "maximumSchemaVersion": 13,
+  "maximumSchemaVersion": 14,
   "minimumNodeVersion": "22.13.0",
   "releaseNotes": "GearBeacon 1.3.0 includes all changes since 1.2.0: automatic live Activity with reading-position preservation and richer price, stock, watch, and delivery context; saved views and compact Watchlist controls; per-watch and collection delivery channels, optional expiry and delayed-alert context; product freshness and budget-aware collection alerts; focused Settings sections and accessible alert explanations; branch-aware update notices and verified owner-initiated updates. Repository and documentation organization, packaging identity, and automated coverage are also improved. Startup validates a safety backup before migrating schema v11 to v13; recovery exports use format v9. Existing alerts retain default channels, no expiry, and no budget condition. See the complete release notes for upgrade and rollback guidance."
 }
