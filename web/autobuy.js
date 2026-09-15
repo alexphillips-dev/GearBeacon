@@ -47,7 +47,11 @@ async function refreshAutoBuy() {
     // Only change the default when pairing changes, preserving manual toggles during polling.
     if (autoBuyGuidePaired !== paired) { $('autoBuyGuide').open = !paired; autoBuyGuidePaired = paired; }
     if (paired) clearAutoBuyPairing();
-    autoBuyMarkup($('autoBuyConnection'),`<p><strong>${state.mode === 'mock' ? 'Mock mode · simulated purchases only. ' : ''}${connection?.connected ? 'Checkout companion connected' : connection ? 'Checkout companion offline' : 'No checkout companion connected'}</strong></p>${connection ? Object.entries(connection.profiles).map(([region,p])=>`<p>${escapeHtml(region.toUpperCase())} · ${escapeHtml(p.addressLabel)} · ${escapeHtml(p.paymentLabel)} · ${p.state === 'ready' ? 'Ready' : 'Reconnect Store'}</p>`).join('') : '<p>Pair the companion to connect your Store session and saved checkout choices.</p>'}`);
+    const profiles = Object.entries(connection?.profiles || {});
+    autoBuyMarkup($('autoBuyConnection'),`<p><strong>${state.mode === 'mock' ? 'Mock mode · simulated purchases only. ' : ''}${connection?.connected ? 'Checkout companion connected' : connection ? 'Checkout companion offline' : 'No checkout companion connected'}</strong></p>${connection ? profiles.length
+      ? profiles.map(([region,p])=>`<p>Saved profile · ${escapeHtml(region.toUpperCase())} · ${escapeHtml(p.addressLabel)} · ${escapeHtml(p.paymentLabel)} · ${p.state === 'ready' ? 'Ready at last report' : 'Reconnect Store'}</p>`).join('')
+      : '<p>Companion paired, but no saved address profile has been reported. Run Connect and finish both Enter prompts until you see SAVED, then start the companion.</p>'
+      : '<p>Pair the companion to connect your Store session and saved checkout choices.</p>'}`);
     $('autoBuyPair').disabled = Boolean(connection || state.blocked);
     $('autoBuyDisconnect').disabled = !connection;
     const armed = state.rules.filter(rule=>rule.state === 'armed').length;

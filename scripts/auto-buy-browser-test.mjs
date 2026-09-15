@@ -5,7 +5,8 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from '../checkout/node_modules/playwright/index.mjs';
-import { StoreBrowser } from '../checkout/store.mjs';
+import { CheckoutAttention, StoreBrowser } from '../checkout/store.mjs';
+import { testProfileSetup } from './auto-buy-profile-test.mjs';
 import { graphqlOperation } from '../checkout/graphql.mjs';
 import { runAttempt } from '../checkout/runner.mjs';
 import { openVault } from '../checkout/vault.mjs';
@@ -48,6 +49,8 @@ const executable=[process.env.CHROME_PATH,process.platform==='win32'?join(proces
 let browser;
 const attempt={id:'fixture-attempt',authorization:'fixture-authorization',region:'us',sku:'MOCK-SKU',variantId:'mock-variant',quantity:1,currency:'USD',maxTotalMinor:35000,url:'https://store.ui.com/us/en/category/mock/products/test?variant=exact'};
 try {
+  await testProfileSetup();
+  assert.equal(new CheckoutAttention('session').name,'CheckoutAttention','Validation errors must not fall through to an installation error');
   for(const [operationName,query,field] of [['CreateCheckout',createCheckoutQuery,'storefrontCreateCheckout'],['UpdateCheckout',updateCheckoutQuery,'storefrontUpdateCheckout'],['CreateOrder',createOrderQuery,'createOrder']]) {
     const parsed=graphqlOperation({operationName,query});
     assert.equal(parsed.type,'mutation');assert.equal(parsed.name,operationName);assert.deepEqual(parsed.fields.map(f=>f.name),[field]);
@@ -80,6 +83,18 @@ try {
   assert.equal(await store.page.locator('#update').textContent(),'Delivery updated','Setup blocked the Store cart-update mutation');
   assert.equal(cartUpdates,1);
   const profile=await store.captureProfile('Test home');attempt.profileId=profile.id;
+  const completeCheckout=structuredClone(store.checkout);
+  for(const [field,name] of [['shippingAddress','Shipping address'],['billingAddress','Billing address'],['shippingOption','Shipping service'],['email','Signed-in Store account'],['taxCalculated','Final total and tax']]) {
+    store.checkout={...completeCheckout,[field]:null};
+    const report=await store.inspectProfile('Test home');
+    assert.equal(report.profile,null);assert.equal(report.checks.find(check=>check.name===name).ok,false);
+    assert.ok(!JSON.stringify(report.checks).includes(address.address1),'Validation output leaked a private address');
+  }
+  store.checkout=completeCheckout;
+  await store.page.locator('input[name=payment]').evaluate(node=>node.checked=false);
+  const noCard=await store.inspectProfile('Test home');assert.equal(noCard.profile,null);assert.equal(noCard.checks.find(check=>check.name==='Selected saved card').ok,false);
+  await store.page.locator('input[name=payment]').check();
+  assert.equal(await store.confirmEmptyCart(),false,'A setup item was mistaken for an empty cart');
   const blocked=await store.page.evaluate(async bodies=>{
     const results=[];
     for(const body of bodies)results.push(await fetch('/graphql',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(()=>false,()=>true));
@@ -92,7 +107,7 @@ try {
   assert.ok(blocked.every(Boolean),'An unapproved order/payment or unsupported mutation escaped setup');
   await store.page.getByRole('button',{name:'Place Order'}).click();await store.page.waitForTimeout(200);assert.equal(orders,0,'Setup allowed an order');await store.close();
   const vault=openVault(testDir),state={profiles:{us:profile},journal:{}};
-  const unlock=vault.lock();assert.throws(()=>vault.lock(),/already/);unlock();
+  const unlock=vault.lock();assert.throws(()=>vault.lock(),err=>err.code==='locked');unlock();
   vault.write({...state,token:'private-fixture-token'});
   assert.ok(!(await readFile(join(testDir,'vault.checkout-state'),'utf8')).includes('private-fixture-token'));
   assert.equal(vault.read().token,'private-fixture-token');

@@ -8,6 +8,8 @@
     "start": "node companion.mjs run",
     "pair": "node companion.mjs pair",
     "connect": "node companion.mjs connect",
+    "profiles": "node companion.mjs profiles",
+    "verify": "node companion.mjs verify",
     "test": "node ../scripts/auto-buy-browser-test.mjs"
   },
   "dependencies": { "playwright": "1.63.0" }

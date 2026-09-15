@@ -12,15 +12,32 @@ export function checkoutDataDir() {
 
 // Storage state, profiles, the API token, and the submission journal are encrypted together.
 // The key remains private to the companion host, outside GearBeacon backups and support exports.
-export function openVault(directory = checkoutDataDir()) {
-  fs.mkdirSync(directory,{ recursive:true, mode:0o700 });
+export class VaultError extends Error {
+  constructor(code) { super('The private checkout vault needs attention.'); this.code = code; }
+}
+
+export function openVault(directory = checkoutDataDir(), { readOnly = false } = {}) {
+  const denyWrite = () => { throw new VaultError('read-only'); };
+  const empty = { read:()=>({ profiles:{}, journal:{} }), write:denyWrite, lock:denyWrite };
+  if (readOnly && !fs.existsSync(directory)) return empty;
+  if (!readOnly) fs.mkdirSync(directory,{ recursive:true, mode:0o700 });
   if (fs.lstatSync(directory).isSymbolicLink()) throw new Error('Checkout data must be a private directory, not a symbolic link.');
-  if (process.platform !== 'win32') fs.chmodSync(directory,0o700);
+  if (process.platform !== 'win32') {
+    if (readOnly && (fs.statSync(directory).mode & 0o077)) throw new VaultError('permissions');
+    if (!readOnly) fs.chmodSync(directory,0o700);
+  }
   const keyFile = path.join(directory,'checkout.key'), stateFile = path.join(directory,'vault.checkout-state');
-  if (!fs.existsSync(keyFile)) fs.writeFileSync(keyFile,crypto.randomBytes(32),{ flag:'wx', mode:0o600 });
+  if (!fs.existsSync(keyFile)) {
+    if (fs.existsSync(stateFile)) throw new VaultError('missing-key');
+    if (readOnly) return empty;
+    fs.writeFileSync(keyFile,crypto.randomBytes(32),{ flag:'wx', mode:0o600 });
+  }
   for (const file of [keyFile,stateFile]) if (fs.existsSync(file)) {
     if (!fs.lstatSync(file).isFile() || fs.lstatSync(file).isSymbolicLink()) throw new Error('Checkout state must use regular private files.');
-    if (process.platform !== 'win32') fs.chmodSync(file,0o600);
+    if (process.platform !== 'win32') {
+      if (readOnly && (fs.statSync(file).mode & 0o077)) throw new VaultError('permissions');
+      if (!readOnly) fs.chmodSync(file,0o600);
+    }
   }
   const key = fs.readFileSync(keyFile);
   if (key.length !== 32) throw new Error('Checkout encryption key is invalid.');
@@ -51,11 +68,11 @@ export function openVault(directory = checkoutDataDir()) {
       if (!Number.isSafeInteger(pid) || pid < 1) throw new Error('Checkout lock needs manual inspection.');
       let running = true;
       try { process.kill(pid,0); } catch (err) { if (err.code === 'ESRCH') running = false; }
-      if (running) throw new Error('A checkout companion is already using this vault. Stop it before connecting or starting another.');
+      if (running) throw new VaultError('locked');
       fs.unlinkSync(file);
     }
     fs.writeFileSync(file,String(process.pid),{ flag:'wx', mode:0o600 });
     return () => { if (fs.existsSync(file) && fs.readFileSync(file,'utf8') === String(process.pid)) fs.unlinkSync(file); };
   }
-  return { read, write, lock };
+  return { read, write:readOnly ? denyWrite : write, lock:readOnly ? denyWrite : lock };
 }

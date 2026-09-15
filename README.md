@@ -92,6 +92,7 @@ The [wiki](https://github.com/alexphillips-dev/GearBeacon/wiki) contains the com
 |---|---|
 | Find products, import watches, and choose variants | [Watchlist and Browse](https://github.com/alexphillips-dev/GearBeacon/wiki/Watchlist-and-Browse) |
 | Group items, plan quantities, and track spending | [Collections and purchase planning](https://github.com/alexphillips-dev/GearBeacon/wiki/Collections-and-Purchase-Planning) |
+| Connect and verify an optional checkout profile (dev) | [Auto-buy setup and verification](https://github.com/alexphillips-dev/GearBeacon/wiki/Auto-buy) |
 | Configure item/project rules and delivery | [Alerts](https://github.com/alexphillips-dev/GearBeacon/wiki/Alerts-and-Notifications) · [Email and webhooks](https://github.com/alexphillips-dev/GearBeacon/wiki/Email-and-Webhooks) |
 | Understand prices, stock evidence, and monitoring gaps | [Stock insights](https://github.com/alexphillips-dev/GearBeacon/wiki/Stock-Insights-and-Monitoring) |
 | Investigate activity, failures, and health | [Activity and Operations](https://github.com/alexphillips-dev/GearBeacon/wiki/Activity-and-Operations) · [Troubleshooting](https://github.com/alexphillips-dev/GearBeacon/wiki/Troubleshooting) |

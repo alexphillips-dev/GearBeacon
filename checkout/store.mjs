@@ -9,7 +9,7 @@ export const STORES = {
   ca:{ origin:'https://ca.store.ui.com', path:'/ca/en', currency:'CAD' },
 };
 export class CheckoutAttention extends Error {
-  constructor(code = 'unavailable') { super('The Store checkout needs owner attention.'); this.code = code; }
+  constructor(code = 'unavailable') { super('The Store checkout needs owner attention.'); this.name = 'CheckoutAttention'; this.code = code; }
 }
 const fingerprint = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const addressKeys = ['type','firstName','lastName','businessName','address1','address2','city','country','province','postalCode','phoneNumber','taxId'];
@@ -164,13 +164,46 @@ export class StoreBrowser {
     if (unique.length !== 1) throw new CheckoutAttention('session');
     return unique[0];
   }
-  async captureProfile(addressLabel) {
-    await this.settle(); await this.challenges();
+  async inspectProfile(addressLabel) {
+    await this.settle();
+    let challengeFree = true;
+    try { await this.challenges(); } catch (err) { if (!(err instanceof CheckoutAttention)) throw err; challengeFree = false; }
+    const location = new URL(this.page.url());
+    const atCheckout = location.origin === this.origin && location.pathname.startsWith(`${this.store.path}/checkout`);
     const checkout = this.checkout, shipping = addressHash(checkout?.shippingAddress), billing = addressHash(checkout?.billingAddress), delivery = shippingHash(checkout?.shippingOption);
-    if (!checkout?.hasCustomer || !checkout.email || !checkout.taxCalculated || !shipping || !billing || !delivery || checkout.orderId || checkout.totals?.summary?.total?.currency !== this.store.currency) throw new CheckoutAttention('session');
-    const payment = await this.selectedPayment();
-    return { id:crypto.randomUUID(), region:this.region, state:'ready', addressLabel, paymentLabel:`${payment.split(':')[0]} ···· ${payment.split(':')[1]}`,
+    let payment = null;
+    try { payment = await this.selectedPayment(); } catch (err) { if (!(err instanceof CheckoutAttention)) throw err; }
+    const total = checkout?.totals?.summary?.total;
+    const checks = [
+      { name:'Store checkout page', ok:atCheckout, help:'Return to the checkout review page for the selected region.' },
+      { name:'Checkout response', ok:Boolean(checkout), help:'Wait for checkout to load. If needed, reload the checkout page; a blocked or changed Store response cannot be verified.' },
+      { name:'Store region', ok:checkout?.store?.id?.toLowerCase() === this.region, help:'Use the Store region selected in the terminal.' },
+      { name:'Signed-in Store account', ok:Boolean(challengeFree && checkout?.hasCustomer && checkout?.email), help:'Sign in directly in this browser and finish any visible account or payment challenge.' },
+      { name:'Setup cart', ok:Array.isArray(checkout?.items) && checkout.items.length === 1 && Array.isArray(checkout.externalItems) && !checkout.externalItems.length && !checkout.orderId, help:'Use one setup item without accessories, subscriptions, or an existing order.' },
+      { name:'Shipping address', ok:Boolean(shipping), help:'Select and confirm a shipping address, including its country and postal code, in checkout. The nickname entered in the terminal does not create an address.' },
+      { name:'Billing address', ok:Boolean(billing), help:'Select and confirm the billing address in checkout, including when it is the same as shipping.' },
+      { name:'Shipping service', ok:Boolean(delivery), help:'Select a delivery service and continue to order review.' },
+      { name:'Final total and tax', ok:Boolean(checkout?.taxCalculated && Number.isSafeInteger(total?.amount) && total.amount > 0 && total.currency === this.store.currency), help:'Wait for shipping, taxes, and a final total in the selected Store currency.' },
+      { name:'Selected saved card', ok:Boolean(payment), help:'Select an existing saved Visa, Mastercard, Amex, or Discover card with a visible masked last-four label. New-card forms and wallets cannot be verified; do not place an order to save a card.' },
+    ];
+    if (checks.some(check=>!check.ok)) return { checks, profile:null };
+    const profile = { id:crypto.randomUUID(), region:this.region, state:'ready', addressLabel, paymentLabel:`${payment.split(':')[0]} ···· ${payment.split(':')[1]}`,
       shipping, billing, delivery, payment, customer:fingerprint(checkout.email), storageState:await this.context.storageState() };
+    return { checks, profile };
+  }
+  async captureProfile(addressLabel) {
+    const { profile } = await this.inspectProfile(addressLabel);
+    if (!profile) throw new CheckoutAttention('session');
+    return profile;
+  }
+  async confirmEmptyCart() {
+    try { await this.visitCheckout(); await this.challenges(); }
+    catch (err) { if (!(err instanceof CheckoutAttention)) throw err; return false; }
+    const location = new URL(this.page.url());
+    if (location.origin !== this.origin || !location.pathname.startsWith(`${this.store.path}/checkout`)) return false;
+    if (this.checkout) return Array.isArray(this.checkout.items) && !this.checkout.items.length
+      && Array.isArray(this.checkout.externalItems) && !this.checkout.externalItems.length && !this.checkout.orderId;
+    return this.page.getByText(/your (?:shopping )?cart is empty|your cart is currently empty/i).isVisible().catch(()=>false);
   }
   async proof(attempt, profile) {
     await this.settle(); await this.challenges();

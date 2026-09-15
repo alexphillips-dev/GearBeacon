@@ -1,5 +1,7 @@
 # Optional auto-buy
 
+**Start here:** [Set up an address profile](#set-up-an-address-profile) · [Verify an existing profile](#verify-an-existing-address-profile-without-replacing-it) · [Troubleshoot a failed check](#troubleshooting-address-setup). Commands run from the GearBeacon folder, as shown below.
+
 Auto-buy authorizes one order for an exact variant when GearBeacon confirms availability. Each instruction specifies a quantity, a maximum **final order total** in the Store currency, an expiry, and the watch or collection that should receive the purchase record. Shipping, taxes, and surcharges must fit within that total. Arming an already available item permits purchasing after the next complete Store check.
 
 Monitoring and notifications work without a Store account or checkout companion. Purchasing is optional and is disabled until the owner connects a checkout profile and explicitly arms an instruction. The dashboard does not need to remain open; both the GearBeacon server and checkout companion must remain running.
@@ -18,30 +20,166 @@ Cart creation and cart updates remain available during setup. The request guard 
 
 ## Install the companion
 
-Use the `checkout` directory from the same GearBeacon source checkout or source package. The base server and Docker image do not download Chromium or gain a browser dependency. The optional companion requires Node.js 22.13 or newer and runs on Windows, macOS, or Linux. For a NAS, Docker, or headless server, run it on a separate computer that can reach GearBeacon through HTTPS. HTTP is accepted only for a loopback dashboard on the same computer. Keep the computer awake while purchases are armed.
+Auto-buy is currently a **dev feature added after the v1.3.0 stable release**. The published v1.3.0 downloads do not contain it. Use the current `dev` source for both GearBeacon and the companion; do not mix an older companion with a newer dashboard. Updating source files preserves the separate private companion vault. Follow the [source installation guide](https://github.com/alexphillips-dev/GearBeacon/wiki/Source-Installation) for the server and make a backup before upgrading.
 
-From the `checkout` directory:
+The optional companion requires Node.js **22.13 or newer** and runs on Windows, macOS, or Linux. For a NAS, Docker, or headless server, install the companion on a separate computer with a browser and a connection to your **HTTPS** dashboard. HTTP works only for a loopback dashboard on the same computer. Keep the companion computer awake while purchasing is armed. The base server and Docker image do not install a browser.
+
+**All commands below run from the GearBeacon folder containing `checkout`.** For example, if your prompt already ends in `GearBeacon>`, you are in the right folder.
+
+Install once:
 
 ```sh
-npm ci
-npx playwright install chromium
-npm run pair
+npm ci --prefix checkout
+npm --prefix checkout exec -- playwright install chromium
 ```
 
-On Linux, install the browser's operating-system libraries using `npx playwright install --with-deps chromium` with the required local administrative access. Browser downloads and dependency installation are explicit owner actions. An installed browser can alternatively be selected with `GEARBEACON_CHECKOUT_BROWSER_CHANNEL=chrome` or `msedge`; omit it to use Playwright Chromium.
+On Linux, use `npm --prefix checkout exec -- playwright install --with-deps chromium` if browser system libraries are missing; installing those libraries requires the appropriate local administrative access. An installed browser can alternatively be selected with `GEARBEACON_CHECKOUT_BROWSER_CHANNEL=chrome` or `msedge`. Chromium's sandbox remains enabled; run the companion as a regular user on a host that supports it.
 
-Chromium's sandbox is explicitly enabled. Run the companion as a regular user on a host that supports the browser sandbox.
+## Set up an address profile
 
-1. In GearBeacon, open **Settings > General > Auto-buy** and choose **Pair checkout companion**.
-2. Enter the dashboard origin and one-time code into the companion's pairing prompt. Choose `live` for the normal installation. The code expires after five minutes and works once. The bearer credential returned to the companion is encrypted locally and never printed or sent to another service.
-3. Run `npm run connect`. Choose a Store region and an address label such as `Home`.
-4. In the dedicated browser, sign in directly at Ubiquiti. Add a setup item, select your saved address, shipping service, and saved card, and reach the final order review. Order submission is blocked throughout setup. Press Enter in the companion terminal to validate the profile.
-5. Remove the setup item from the Store cart, then press Enter again. The companion verifies the empty cart and saves the encrypted browser session and checkout fingerprints.
-6. Run `npm start`. Return to a Watchlist card and choose **Set up auto-buy**. Select an exact variant, fill in the quantity, final-total limit, and expiry, and explicitly authorize the order. An exact variant is added to your watchlist if the original card watched any variant.
+**“Home” is a nickname in GearBeacon, not a new address in your Ubiquiti account.** You select the actual address in Store checkout. A profile records the selected shipping address, billing address, shipping service, saved card, and Store account as verification fingerprints, along with the encrypted browser session. Typing the nickname or pairing the companion alone does not save a checkout profile.
 
-To connect another region or refresh an expired Store session, stop the companion, run `npm run connect`, then restart it. A new checkout profile invalidates previously queued instructions for the old profile; reopen and authorize the desired rules after checking the Store cart. Use one companion and one dedicated Store session per GearBeacon installation. Do not edit that Store cart in another browser while purchasing is armed.
+### 1. Pair once
 
-The interactive companion intentionally refuses `mock` mode. Automated tests pair a mock worker with a mock server and an isolated local Store; they cannot reach the live Store.
+In **Settings > General > Auto-buy**, select **Pair checkout companion**, then run:
+
+```sh
+npm --prefix checkout run pair
+```
+
+Enter your dashboard origin, the one-time pairing code, and `live` for a normal installation. The origin is the dashboard's base address, without a Settings path. The code expires after five minutes and works once.
+
+If already paired, skip this step. Do not disconnect or re-pair just to check an address. Pairing resets the companion's profiles.
+
+### 2. Start Connect and name the profile
+
+Stop an already-running companion with Ctrl+C before Connect, then run:
+
+```sh
+npm --prefix checkout run connect
+```
+
+Enter `us`, `eu`, `uk`, or `ca`, then a nickname such as `Home`. There is **one profile per Store region**. Completing Connect again for that region replaces its previous profile; existing purchase instructions need review and explicit reauthorization afterwards.
+
+A dedicated browser opens. Keep both this browser and the terminal open.
+
+### 3. Choose the real address and checkout options in the browser
+
+1. Sign in directly at Ubiquiti in the dedicated browser.
+2. Add one available setup item to the cart, without extras or subscriptions.
+3. Continue to checkout and select or enter the intended shipping address in the Store's address controls. Confirm it, including the country and postal code.
+4. Select the billing address and a shipping service. Confirm billing even if it is the same as shipping.
+5. Select an **existing saved card** with a visible masked card label. A new-card entry form is not a saved card. Wallets, PayPal, bank transfers, and unrecognized saved-card controls cannot be verified.
+6. Reach final checkout review and wait for shipping, taxes, and the final total.
+
+Do not click Place Order. Order submission is blocked during Connect and Verify. Do not make a purchase just to try to finish setup.
+
+### 4. Return to the terminal and press Enter
+
+The terminal checks the checkout page and response, Store region, signed-in account, setup cart, shipping address, billing address, shipping service, final total/tax, and selected saved card.
+
+Each check shows `PASS` or `NEEDS ATTENTION` with an explanation. If a check fails, the same browser stays open. Correct that step in the browser, then return to the terminal and press Enter again. If everything looks correct but a check still fails, the Store interface or response may be unsupported; the companion must be able to verify it before setup can succeed.
+
+After the checks pass, you will see:
+
+```text
+Checkout checks passed. NOT SAVED YET: remove the setup item from the Store cart, then complete the next prompt.
+```
+
+### 5. Empty the cart, then press Enter a second time
+
+In the same browser, remove the setup item and all other cart items. Return to the terminal and press Enter.
+
+The companion confirms the empty cart, saves the encrypted profile/session, and reads the saved profile back. **Setup is complete only when this appears:**
+
+```text
+SAVED: Home (US) address profile and browser session are encrypted locally. You can close this setup terminal now.
+```
+
+If the cart cannot be confirmed empty, the browser remains open so you can correct it and retry.
+
+Closing the browser or pressing Ctrl+C **before SAVED** does not save the new profile or session. Any previously saved profile remains. After SAVED, the profile persists across terminal closure and computer restarts. If notifying GearBeacon fails afterwards, the terminal explicitly says that the profile is saved locally; starting the companion reports it again.
+
+### 6. Inspect the saved result, then run the companion
+
+```sh
+npm --prefix checkout run profiles
+```
+
+For a successful setup, expect output like:
+
+```text
+US · Home · Saved profile complete
+Saved card: visa ···· 4242
+Profile state: ready at last update
+Saved at: <the save time in UTC>
+PASS · Shipping address
+PASS · Billing address
+PASS · Shipping service
+PASS · Saved card
+PASS · Store account
+PASS · Saved browser session
+```
+
+This command reads the encrypted local vault without changing it or contacting the Store. It can run in another terminal while the worker is active. It reports missing fields or an unsaved profile with a nonzero exit status. Older saved profiles remain supported; their save time may show “not recorded by this companion version.”
+
+A complete local profile does **not** prove the Store login is still valid. Use the browser verification below for that check.
+
+To start purchasing support:
+
+```sh
+npm --prefix checkout start
+```
+
+Leave this command running. Settings > General > Auto-buy will show the region, nickname, masked card, and profile state once reported. **Companion paired** with no reported profile means address setup has not reached the dashboard yet.
+
+Then choose **Set up auto-buy** on a watched product, select an exact variant, enter quantity/final-total limit/expiry, and explicitly authorize the purchase.
+
+## Verify an existing address profile without replacing it
+
+Stop the running companion with Ctrl+C, then run:
+
+```sh
+npm --prefix checkout run verify
+```
+
+1. Choose the region whose profile you want to check.
+2. The dedicated browser opens using its saved session. If you have to sign in again, the saved login may need refreshing with Connect afterwards.
+3. Add one setup item and reach checkout review. Select the same address, billing address, shipping service, and saved card as the existing profile.
+4. Press Enter in the terminal. The normal checkout checks run, followed by `MATCH` or `DIFFERENT` for each saved choice and the Store account. No address values or account identifiers are printed.
+5. For a mismatch, select the original choice in the browser and retry. To deliberately change a saved choice, cancel Verify and run Connect.
+6. Once everything matches, remove the setup item and press Enter again.
+
+Success is explicit:
+
+```text
+VERIFIED: shipping address, billing address, shipping service, saved card, and Store account match. Cart is empty. No order was submitted; saved profile and rules are unchanged.
+```
+
+Verify checks the checkout in that browser **at that moment**. It does not place an order, replace the profile, persist a refreshed login, clear an attention state, or rearm an instruction. Use Connect to refresh an expired session or change the saved choices. Restart the worker only when the Store cart is empty and any uncertain orders have been resolved.
+
+## Troubleshooting address setup
+
+| What you see | What to do |
+|---|---|
+| Generic “Checkout companion stopped” after the first Enter on an older companion | Update the companion from current dev and rerun Connect. Earlier versions hid the checkout-validation error behind this generic message; current versions show the failed checks and keep the browser open. |
+| `NEEDS ATTENTION · Checkout response` | Wait for checkout to finish loading or reload its page. A blocked request or changed Store response cannot be used as proof. If cart creation fails, also ensure the companion includes the current dev cart-request fix. |
+| `NEEDS ATTENTION · Shipping address` | Choose and confirm the real address in Store checkout. Entering `Home` in the terminal only names the profile. |
+| `NEEDS ATTENTION · Billing address` | Confirm a billing address in checkout, even when using the shipping address for billing. |
+| `NEEDS ATTENTION · Selected saved card` | Select an existing supported saved card with a masked last-four label. A card-entry form, wallet, or a saved card that the Store does not expose as selected cannot complete setup. |
+| `NEEDS ATTENTION · Final total and tax` | Finish address and shipping selection and wait for the Store's calculated total. |
+| Profile matched, but setup did not finish | Empty the cart and complete the second Enter prompt. The first check alone does not save it. |
+| No address profile is saved | Run Connect and wait for `SAVED`. Check that you are using the same operating-system user and the same `GEARBEACON_CHECKOUT_DATA_DIR` override, if any. Do not delete the vault to troubleshoot. |
+| Profile exists locally, but Settings has no profile or says offline | Start the companion and check that it can reach the paired dashboard. Pairing and a saved local profile do not keep a stopped worker online. |
+| A companion is already using this vault | Stop its worker with Ctrl+C before Connect or Verify. The Profiles command works while it is running. |
+| `DIFFERENT` during Verify | Select the original choices and Store account, or cancel and use Connect to replace the profile intentionally. |
+| `Missing script: profiles` or `verify` | Update the companion source, and run the commands from the GearBeacon folder with `--prefix checkout`. |
+
+If a check continues to fail, report **only the check name and its fixed explanation**. Do not share addresses, account emails, pairing codes, browser storage, or the companion vault.
+
+Use one companion and one dedicated Store session per GearBeacon installation. Do not edit its Store cart in another browser while purchasing is armed. The interactive companion intentionally refuses `mock` mode; automated tests use a separate mock server and Store fixture.
+
+If you already changed directory into `checkout`, omit `--prefix checkout`: use `npm run connect`, `npm run profiles`, `npm run verify`, and `npm start`.
 
 ## States and controls
 

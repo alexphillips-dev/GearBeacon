@@ -35,6 +35,7 @@ export async function testAutoBuyUi({ evaluate,waitForBrowser,assertAccessible,a
     window.autoBuyUiHeartbeat=()=>fetch('/api/auto-buy/worker/heartbeat',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+paired.token},body:JSON.stringify({protocol:1,mode:'mock',profiles:{us:{id:'ui-profile',state:'ready',addressLabel:'Home <test>',paymentLabel:'Visa ···· 4242'}}})});
   })()`);
   await waitForBrowser("autoBuyState?.connection && !document.getElementById('autoBuyGuide').open",'Pairing did not collapse the setup instructions');
+  assert(await evaluate("document.getElementById('autoBuyConnection').textContent.includes('no saved address profile has been reported')"),'Pairing alone was presented as completed address setup');
   assert(await evaluate("document.getElementById('autoBuyPairingRow').hidden && !document.getElementById('autoBuyPairingLabel').textContent && document.getElementById('autoBuyPairing').hidden && !document.getElementById('autoBuyPairing').value"),'The consumed pairing code or its label remained visible');
   await waitForBrowser('!autoBuyLoading','Paired auto-buy status did not settle');
   assert(await evaluate(`(async()=>{
@@ -59,6 +60,7 @@ export async function testAutoBuyUi({ evaluate,waitForBrowser,assertAccessible,a
     document.getElementById('watchSearch').value='';document.getElementById('watchStatus').value='all';document.getElementById('watchCollection').value='all';app.watchQuickFilter='all';app.pendingWatchCategory='all';
     await refresh();await refreshAutoBuy();
   })()`);
+  assert(await evaluate("document.getElementById('autoBuyConnection').textContent.includes('Saved profile · US · Home <test>') && !document.querySelector('#autoBuyConnection test')"),'The saved address profile was not reported safely');
   try {
     await waitForBrowser("document.querySelector('[data-auto-buy=\"uvc-g5-ptz::autobuy-ui\"]')",'Auto-buy setup button is missing');
     await evaluate("document.querySelector('[data-auto-buy=\"uvc-g5-ptz::autobuy-ui\"]').focus(); document.querySelector('[data-auto-buy=\"uvc-g5-ptz::autobuy-ui\"]').click()");
