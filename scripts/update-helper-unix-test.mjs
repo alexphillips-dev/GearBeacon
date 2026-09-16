@@ -32,7 +32,14 @@ esac
 for arg in "$@"; do case "$arg" in /opt/*|/usr/local/*|/Library/*) echo 'Unsafe test path' >&2; exit 9;; esac; done
 exec "$@"
 `);
+  executable('gh',String.raw`printf '%s\n' "$*" >> "$TEST_ROOT/actions"
+case "$*" in *'--repo alexphillips-dev/GearBeacon'*'--signer-workflow alexphillips-dev/GearBeacon/.github/workflows/'*'--source-ref refs/tags/v1.2.1 --source-digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --deny-self-hosted-runners') ;; *) exit 9;; esac
+case "$*" in *'--bundle '*.jsonl' --repo '*) ;; *) echo 'Expected a JSONL verification bundle' >&2; exit 9;; esac
+test "$TEST_CASE" != provenance
+`);
   executable('curl',String.raw`case "$*" in
+  *api.github.com/repos/alexphillips-dev/GearBeacon/commits/refs%2Ftags%2Fv1.2.1*) printf '  "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",\n' ;;
+  *.attestation.jsonl*) test "$TEST_CASE" != missing-bundle || exit 22; printf 'mock signed bundle' > "$4" ;;
   *127.0.0.1:9876/healthz*)
     case "$TEST_CASE" in unreachable) exit 7;; wrong-version) echo '{"ok":true,"name":"GearBeacon","version":"1.2.0","packageVersion":"1.2.1"}';; wrong-app) echo '{"ok":true,"name":"Other","version":"1.2.1"}';; *) echo '{"ok":true,"name":"GearBeacon","version":"1.2.1","packageVersion":"1.2.1"}';; esac ;;
   *releases/download/v1.2.1/*)
@@ -45,6 +52,7 @@ esac
 case "$*" in
   'compose config --images gearbeacon') test "$TEST_CASE" != image-override || { echo other; exit 0; }; echo "ghcr.io/alexphillips-dev/gearbeacon:$GEARBEACON_IMAGE_TAG" ;;
   'compose pull gearbeacon') test "$TEST_CASE" != pull ;;
+  'image inspect --format {{index .RepoDigests 0}} '*) echo ghcr.io/alexphillips-dev/gearbeacon@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ;;
   'image inspect --format {{.Id}} '*) echo sha256:requested ;;
   'compose up -d --no-deps gearbeacon') test "$TEST_CASE" != restart ;;
   'compose ps -q gearbeacon') echo mock-container ;;
@@ -59,13 +67,13 @@ case "$*" in
 esac
 `);
   const original='# Preserve comments and unrelated settings\nMOCK_SETTING="fake value"\nGEARBEACON_IMAGE_TAG=1.2.0\nexport GEARBEACON_IMAGE_TAG = older\n';
-  for (const scenario of ['pull','image-override','restart','wrong-image','wrong-version','unreachable','success']) {
+  for (const scenario of ['pull','image-override','provenance','missing-bundle','restart','wrong-image','wrong-version','unreachable','success']) {
     writeFileSync(join(project,'.env'),original); writeFileSync(join(fixture,'actions'),'');
     const result=run('deploy/update-docker.sh',['1.2.1','--backup-confirmed','1'],scenario); check(result,scenario==='success');
     const env=readFileSync(join(project,'.env'),'utf8');
-    if (['pull','image-override'].includes(scenario)) { assert.equal(env,original); assert.ok(!readFileSync(join(fixture,'actions'),'utf8').includes('compose up')); }
+    if (['pull','image-override','provenance','missing-bundle'].includes(scenario)) { assert.equal(env,original); assert.ok(!readFileSync(join(fixture,'actions'),'utf8').includes('compose up')); }
     else {
-      assert.ok(env.includes('MOCK_SETTING="fake value"')); assert.ok(env.includes('# Preserve comments')); assert.equal((env.match(/GEARBEACON_IMAGE_TAG/g)||[]).length,1,`${scenario}: ${env}\n${output(result)}`); assert.ok(env.includes('GEARBEACON_IMAGE_TAG=1.2.1'));
+      assert.ok(env.includes('MOCK_SETTING="fake value"')); assert.ok(env.includes('# Preserve comments')); assert.equal((env.match(/GEARBEACON_IMAGE_TAG/g)||[]).length,1,`${scenario}: ${env}\n${output(result)}`); assert.ok(env.includes('GEARBEACON_IMAGE_TAG=1.2.1@sha256:'+'b'.repeat(64)));
       if (scenario!=='success') assert.ok(output(result).includes('matching secrets.key'));
     }
     assert.ok(!existsSync(join(project,'.gearbeacon-update.lock')));
@@ -78,15 +86,15 @@ esac
     writeFileSync(join(packageDir,'release-manifest.json'),'{"version":"1.2.1"}'); writeFileSync(join(packageDir,'build-info.json'),'{"packageVersion":"1.2.1"}');
     const packed=spawnSync(bash,['-c','tar -czf package.tar.gz "$1"','fixture',name],{cwd:fixture,encoding:'utf8',windowsHide:true}); check(packed,true);
     const hash=createHash('sha256').update(readFileSync(join(fixture,'package.tar.gz'))).digest('hex');
-    for (const scenario of ['checksum','stop','restart','wrong-version','wrong-app','unreachable','success']) {
+    for (const scenario of ['checksum','provenance','missing-bundle','stop','restart','wrong-version','wrong-app','unreachable','success']) {
       writeFileSync(join(fixture,'package.sha256'),`${scenario==='checksum'?'0'.repeat(64):hash}  package.tar.gz\n`);
       writeFileSync(join(install,'gearbeacon'),'old executable fixture'); mkdirSync(join(install,'web'),{recursive:true}); writeFileSync(join(install,'web/obsolete.html'),'old UI');
       writeFileSync(join(fixture,'actions'),'');
       const result=run('deploy/update-mac-linux.sh',['1.2.1','--backup-confirmed','--port','9876','--timeout-seconds','1','--install-dir',unix(install)],scenario,platform);
       check(result,scenario==='success');
-      if (['checksum','stop'].includes(scenario)) assert.equal(readFileSync(join(install,'gearbeacon'),'utf8'),'old executable fixture');
+      if (['checksum','provenance','missing-bundle','stop'].includes(scenario)) assert.equal(readFileSync(join(install,'gearbeacon'),'utf8'),'old executable fixture');
       if (scenario==='success') { assert.ok(!existsSync(join(install,'web/obsolete.html'))); assert.ok(readFileSync(join(install,'build-info.json'),'utf8').includes('1.2.1')); }
-      else if (scenario!=='checksum') assert.ok(output(result).includes('matching secrets.key'),output(result));
+      else if (!['checksum','provenance','missing-bundle'].includes(scenario)) assert.ok(output(result).includes('matching secrets.key'),output(result));
     }
   }
   console.log('Unix updater tests passed: Docker pin preservation/image verification; Linux/macOS checksum, stop/restart, health/version failures, metadata and success.');

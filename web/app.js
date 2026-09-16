@@ -434,7 +434,7 @@ async function api(path, options = {}) {
   const method = String(options.method || 'GET').toUpperCase();
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && app.auth?.csrfToken) headers['X-CSRF-Token'] = app.auth.csrfToken;
-  const res = await fetch(target, { credentials: 'same-origin', ...options, headers });
+  const res = await securityFetch(target, { credentials: 'same-origin', ...options, headers });
   const data = await res.json().catch(() => ({}));
   if ([401, 428].includes(res.status) && !path.startsWith('/api/auth/')) showAuth(Boolean(data.setupRequired));
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
@@ -481,16 +481,66 @@ function updateOptions(select, markup) {
   if ([...select.options].some(option => option.value === selected)) select.value = selected;
 }
 
+let verificationPending = null;
+async function securityFetch(path, options = {}) {
+  let response = await fetch(path, options);
+  if (response.status === 403 && (await response.clone().json().catch(() => ({}))).reauthenticationRequired) {
+    await verifyOwner();
+    response = await fetch(path, options);
+  }
+  if (response.status === 401 && !String(path).match(/\/api\/auth\/(login|setup)$/)) showAuth(false);
+  return response;
+}
+function verifyOwner() {
+  if (verificationPending) return verificationPending;
+  const dialog = $('securityVerifyDialog');
+  const previousFocus = document.activeElement;
+  const background = [...document.body.children].filter(node => node !== dialog && !['SCRIPT','STYLE'].includes(node.tagName));
+  const previousInert = background.map(node => node.inert);
+  background.forEach(node => { node.inert = true; });
+  $('securityVerifyForm').reset(); $('verifyError').hidden = true;
+  $('verifyCodeField').hidden = !app.auth?.mfaEnabled;
+  dialog.returnValue = '';
+  verificationPending = new Promise((resolve,reject) => {
+    dialog.addEventListener('close', () => {
+      const verified = dialog.returnValue === 'verified';
+      background.forEach((node,index) => { node.inert = previousInert[index]; });
+      $('securityVerifyForm').reset(); verificationPending = null;
+      if (previousFocus?.isConnected && previousFocus.offsetParent) previousFocus.focus({ preventScroll:true });
+      if (verified) resolve(); else reject(new Error('Verification cancelled. Nothing was changed.'));
+    }, { once:true });
+    dialog.showModal(); $('verifyPassword').focus();
+  });
+  return verificationPending;
+}
+async function refreshSecuritySettings() {
+  const result = await authRequest('/api/auth/security');
+  $('sessionHours').value = result.policy.sessionHours;
+  $('sessionIdleMinutes').value = result.policy.idleMinutes;
+  $('notificationPrivateHosts').value = result.privateNotificationHosts.join(', ');
+  $('mfaStatus').textContent = result.mfaEnabled ? 'Authenticator enabled. A fresh code or recovery code is required when signing in.' : result.ownerConfigured ? 'Optional: require an authenticator code as well as your password.' : 'Create an owner password to enable an authenticator and dashboard locking.';
+  $('mfaBegin').disabled = !result.ownerConfigured;
+  $('mfaBegin').hidden = result.mfaEnabled;
+  $('mfaDisable').hidden = !result.mfaEnabled;
+  app.auth.mfaEnabled = result.mfaEnabled; app.auth.sessionPolicy = result.policy;
+}
+
 async function authRequest(path, options = {}) {
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
   if (app.auth?.csrfToken && !['GET', 'HEAD', 'OPTIONS'].includes(String(options.method || 'GET').toUpperCase())) headers['X-CSRF-Token'] = app.auth.csrfToken;
-  const res = await fetch(path, { credentials: 'same-origin', ...options, headers });
+  const res = await securityFetch(path, { credentials: 'same-origin', ...options, headers });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
   return data;
 }
 
 function showAuth(setup = false) {
+  if (app.auth) app.auth.authenticated = false;
+  for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
+  for (const id of ['setupWizard','productDialog','activityDialog','collectionDialog','watchImportDialog']) $(id)?.classList.add('hidden');
+  document.body.classList.remove('dialog-open');
+  $('mfaSecret').value = ''; $('mfaRecoveryCodes').value = ''; $('mfaSetup').hidden = true; $('mfaRecovery').hidden = true;
+  $('authCodeField').classList.toggle('hidden', setup || !app.auth?.mfaEnabled);
   $('appShell').classList.add('hidden');
   if (typeof clearAutoBuyUi === 'function') clearAutoBuyUi();
   $('authGate').classList.remove('hidden');
@@ -511,12 +561,16 @@ function showAuth(setup = false) {
 }
 
 async function enterApp() {
+  $('appShell').inert = false;
+  $('appShell').classList.remove('wizard-blur');
+  document.querySelector('main').inert = false;
+  $('toTop').inert = false;
   $('authGate').classList.add('hidden');
   $('appShell').classList.remove('hidden');
   $('logoutBtn').classList.toggle('hidden', !app.auth?.authenticationRequired);
   showCatalogSkeletons();
   await refresh();
-  await Promise.all([refreshDataInfo(), refreshNotificationPreferences(), refreshSessions(), refreshConfiguration(), refreshOperations()]);
+  await Promise.all([refreshDataInfo(), refreshNotificationPreferences(), refreshSessions(), refreshConfiguration(), refreshOperations(), refreshSecuritySettings()]);
   if (!app.auth?.onboardingComplete) showWizard();
   else if (app.pendingProductSlug) {
     const slug = app.pendingProductSlug;
@@ -557,7 +611,7 @@ async function submitAuth(event) {
   try {
     const result = await authRequest(setup ? '/api/auth/setup' : '/api/auth/login', {
       method: 'POST',
-      body: JSON.stringify(setup ? { setupToken: $('setupToken').value, password } : { password }),
+      body: JSON.stringify(setup ? { setupToken: $('setupToken').value, password } : { password, code:$('authCode').value.trim() }),
     });
     app.auth = { ...(await authRequest('/api/auth/status')), csrfToken: result.csrfToken };
     $('authForm').reset();
@@ -2124,7 +2178,7 @@ async function exportData(encrypted = true) {
       if (passphrase == null) return;
       const confirmation = window.prompt('Enter the export passphrase again.');
       if (passphrase !== confirmation) throw new Error('The export passphrases do not match.');
-      const res = await fetch(`/api/data/export/encrypted${region}`, {
+      const res = await securityFetch(`/api/data/export/encrypted${region}`, {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json', ...(app.auth?.csrfToken ? { 'X-CSRF-Token': app.auth.csrfToken } : {}) },
         body: JSON.stringify({ passphrase }),
@@ -2133,7 +2187,7 @@ async function exportData(encrypted = true) {
       toast('Encrypted GearBeacon data exported');
     } else {
       if (!window.confirm('Plain JSON exports are not encrypted and may contain your watchlist and history. Continue?')) return;
-      const res = await fetch(`/api/data/export${region}`, { cache: 'no-store', credentials: 'same-origin' });
+      const res = await securityFetch(`/api/data/export${region}`, { cache: 'no-store', credentials: 'same-origin' });
       await saveDownloadResponse(res, `GearBeacon-Backup-${new Date().toISOString().slice(0,10)}.gearbeacon.json`);
       toast('Plain GearBeacon data exported');
     }
@@ -2253,6 +2307,7 @@ async function updateOwnerPassword(event) {
     resultEl.classList.remove('hidden');
     renderSecurity();
     await refreshSessions();
+    await refreshSecuritySettings();
   } catch (err) {
     resultEl.textContent = err.message;
     resultEl.classList.remove('hidden');
@@ -3389,7 +3444,7 @@ $('productDialogBackdrop').addEventListener('click', closeProductDialog);
 $('closeActivityDialog').addEventListener('click', closeActivityDialog);
 $('activityDialogBackdrop').addEventListener('click', closeActivityDialog);
 document.addEventListener('keydown', (event) => {
-  if ($('ownerDialog').open) return;
+  if ($('ownerDialog').open || $('securityVerifyDialog').open) return;
   if (event.key === 'Escape') {
     const panel = document.querySelector('[data-toolbar-panel]:not(.hidden)');
     if (panel) { event.preventDefault(); closeToolbarPanels(); toolbarToggle(panel).focus({preventScroll:true}); return; }
@@ -3530,6 +3585,61 @@ window.addEventListener('offline', () => {
   renderAttentionBanner();
 });
 window.addEventListener('online', () => { app.reconnectPending = app.browserOffline; app.browserOffline = false; renderAttentionBanner(); refreshActivity(app.activity.page, { background:true }); refresh(); });
+
+$('verifyCancel').addEventListener('click', () => $('securityVerifyDialog').close());
+$('securityVerifyForm').addEventListener('submit', async event => {
+  event.preventDefault(); $('verifySubmit').disabled = true; $('verifyError').hidden = true;
+  try {
+    await authRequest('/api/auth/verify', { method:'POST', body:JSON.stringify({ password:$('verifyPassword').value, code:$('verifyCode').value.trim() }) });
+    $('securityVerifyDialog').close('verified');
+  } catch (error) { $('verifyError').textContent = error.message; $('verifyError').hidden = false; }
+  finally { $('verifySubmit').disabled = false; }
+});
+$('sessionPolicyForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  try {
+    await authRequest('/api/auth/security', { method:'PUT', body:JSON.stringify({ sessionHours:Number($('sessionHours').value), idleMinutes:Number($('sessionIdleMinutes').value), privateNotificationHosts:$('notificationPrivateHosts').value }) });
+    app.auth = await authRequest('/api/auth/status');
+    await refreshSecuritySettings(); toast('Security settings saved');
+  } catch (error) { toast(error.message,'error'); }
+});
+$('mfaBegin').addEventListener('click', async () => {
+  try {
+    const result = await authRequest('/api/auth/mfa/begin', { method:'POST', body:'{}' });
+    $('mfaSecret').value = result.secret; $('mfaSetup').hidden = false; $('mfaCode').value = ''; $('mfaSecret').focus();
+  } catch (error) { toast(error.message,'error'); }
+});
+$('mfaSetup').addEventListener('submit', async event => {
+  event.preventDefault();
+  try {
+    const result = await authRequest('/api/auth/mfa/finish', { method:'POST', body:JSON.stringify({ code:$('mfaCode').value.trim() }) });
+    $('mfaSetup').reset(); $('mfaSetup').hidden = true;
+    $('mfaRecoveryCodes').value = result.recoveryCodes.join('\n'); $('mfaRecovery').hidden = false;
+    await refreshSecuritySettings(); await refreshSessions(); $('mfaRecoveryCodes').focus();
+  } catch (error) { toast(error.message,'error'); }
+});
+$('mfaRecoveryDone').addEventListener('click', () => { $('mfaRecoveryCodes').value = ''; $('mfaRecovery').hidden = true; $('mfaDisable').focus(); });
+$('mfaDisable').addEventListener('click', async () => {
+  if (!window.confirm('Disable authenticator protection? Other browsers will be signed out.')) return;
+  try {
+    await authRequest('/api/auth/mfa/disable', { method:'POST', body:'{}' });
+    $('mfaRecoveryCodes').value = ''; $('mfaRecovery').hidden = true;
+    await refreshSecuritySettings(); await refreshSessions(); toast('Authenticator disabled');
+  } catch (error) { toast(error.message,'error'); }
+});
+let lastActivitySent = 0;
+async function recordOwnerActivity(event) {
+  if (!event.isTrusted || document.hidden || !app.auth?.authenticated || !app.auth.authenticationRequired || Date.now() - lastActivitySent < 15000) return;
+  lastActivitySent = Date.now();
+  try {
+    await authRequest('/api/auth/activity', { method:'POST', body:'{}' });
+    app.auth.idleExpiresAt = new Date(Date.now() + app.auth.sessionPolicy.idleMinutes * 60000).toISOString();
+  } catch { /* The request wrapper locks an expired session. */ }
+}
+for (const event of ['pointerdown','keydown','wheel','touchstart']) document.addEventListener(event, recordOwnerActivity, { passive:true });
+setInterval(() => {
+  if (app.auth?.authenticated && app.auth.authenticationRequired && app.auth.idleExpiresAt && Date.now() >= Date.parse(app.auth.idleExpiresAt)) showAuth(false);
+}, 1000);
 
 initialize().finally(updateToTopVisibility);
 document.addEventListener('visibilitychange', () => {

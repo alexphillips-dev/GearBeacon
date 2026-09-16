@@ -1,6 +1,7 @@
 import { testActivityDisplay } from './activity-display-smoke.mjs';
 import { testUpdateNotice } from './update-notice-smoke.mjs';
 import { testAutoBuyUi } from './auto-buy-ui-smoke.mjs';
+import { testSecurityUi } from './security-ui-smoke.mjs';
 import { testSettingsNavigation } from './settings-navigation-smoke.mjs';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -1560,6 +1561,7 @@ try {
   assert(await evaluate("document.querySelectorAll('#browseGrid .store-card').length>0 && [...document.querySelectorAll('#browseGrid .store-card')].every(card=>card.querySelector('[data-product-freshness]'))"), 'Browse cards lack freshness evidence');
   await testUpdateNotice({evaluate,waitForBrowser,assertAccessible,assert,cdp,screenshotRoot});
   await testAutoBuyUi({evaluate,waitForBrowser,assertAccessible,assert,cdp,screenshotRoot});
+  await testSecurityUi({evaluate,waitForBrowser,assertAccessible,assert,cdp,testRoot});
   console.log(`BROWSER SMOKE PASSED: ${process.platform} · setup/auth · WCAG axe scans · keyboard/focus/reduced-motion · persistent navigation/filters · resettable empty states · offline recovery · copy actions · unclipped navigation · dark/light · images · watch/rules/bulk/import · exact variants/combined preview/collections/purchased · stock insights/windows/collection readiness/budget alerts/deep-links · compact searchable activity/evidence/live arrivals/anchored scrolling/stable pages · serialized refresh/hidden tabs/drafts/large lists · Settings sections/keyboard/drafts/persistence · email settings/preview/deep-link · backup/import · diagnostics/operations · responsive`);
 } catch (error) {
   if (serverOutput.length) process.stderr.write(`\nGearBeacon server output:\n${serverOutput.join('').slice(-12000)}\n`);

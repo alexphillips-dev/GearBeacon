@@ -168,6 +168,7 @@ async function proveUnsafeBindRefusal(dataDir) {
       MOCK_MODE: '1', PORT: '8896', GEARBEACON_DATA_DIR: dataDir,
       GEARBEACON_SKIP_LEGACY_IMPORT: '1', GEARBEACON_ACCESS_MODE: 'local',
       GEARBEACON_BIND_HOST: '0.0.0.0', GEARBEACON_BACKUP_INTERVAL_HOURS: '0',
+      GEARBEACON_ALLOW_INSECURE_REMOTE: '1', // Removed legacy override must never bypass the guard.
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -210,6 +211,9 @@ async function proveUnsafeProxyBindRefusal(dataDir) {
 function downgradeDatabaseForUpgradeTest(databaseFile, appVersion, schema) {
   const target = new DatabaseSync(databaseFile);
   target.exec(`DELETE FROM schema_migrations WHERE version>${schema};`);
+  if (schema < 15) for (const column of ['activity_at','verified_at']) {
+    if (target.prepare("SELECT name FROM pragma_table_info('sessions') WHERE name=?").get(column)) target.exec(`ALTER TABLE sessions DROP COLUMN ${column}`);
+  }
   if (schema < 7) target.exec(`
     DROP TABLE IF EXISTS pending_transitions; DROP TABLE IF EXISTS monitor_checks;
     ALTER TABLE events RENAME TO events_v7;
@@ -258,7 +262,7 @@ try {
   });
   const status = await waitFor('/api/status?region=us');
   if (status.version !== '1.3.0') throw new Error(`Unexpected app version: ${status.version}`);
-  if (status.storage?.engine !== 'SQLite' || status.storage?.schemaVersion !== 14) throw new Error('SQLite schema v14 was not initialized.');
+  if (status.storage?.engine !== 'SQLite' || status.storage?.schemaVersion !== 15) throw new Error('SQLite schema v15 was not initialized.');
   if (status.deployment?.mode !== 'local' || status.deployment?.bindHost !== '127.0.0.1' || status.deployment?.authenticationRequired) throw new Error('Safe local access defaults are wrong.');
   if (status.privacy?.telemetry !== false || status.privacy?.publicCloudRequired !== false) throw new Error('Privacy status is wrong.');
   if (status.regions?.length !== 2) throw new Error('Multi-region configuration was not loaded.');
@@ -295,7 +299,7 @@ try {
   secretDb.close();
   if (!encryptedSecrets.startsWith('v1:') || encryptedSecrets.includes(webhookHmacSecret) || encryptedSecrets.includes('test-bearer')) throw new Error('Notification credentials were not encrypted in SQLite.');
   const keyStat = await lstat(join(localData, 'secrets.key'));
-  const keyBytes = Buffer.from((await readFile(join(localData, 'secrets.key'), 'utf8')).trim(), 'base64');
+  const keyBytes = (await import('../backend/dist/key-protection.js')).loadProtectedKey(join(localData, 'secrets.key'));
   if (!keyStat.isFile() || keyStat.isSymbolicLink() || keyBytes.length !== 32) throw new Error('Separate local notification key file is invalid.');
   if (process.platform !== 'win32') {
     await chmod(join(localData, 'secrets.key'), 0o644);
@@ -547,7 +551,7 @@ try {
   startServer(8899, localData);
   await waitFor('/api/status?region=us');
   const afterUpgrade = await request('/api/data/info?region=us');
-  if (afterUpgrade.backup.count <= beforeUpgrade || afterUpgrade.schemaVersion !== 14) throw new Error('Automatic V0.1.5 pre-update backup or schema migration failed.');
+  if (afterUpgrade.backup.count <= beforeUpgrade || afterUpgrade.schemaVersion !== 15) throw new Error('Automatic V0.1.5 pre-update backup or schema migration failed.');
   const migratedDb = new DatabaseSync(join(localData, 'gearbeacon.mock.sqlite3'));
   const migratedPushTable = migratedDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='push_tokens'").get();
   migratedDb.close();
@@ -567,7 +571,7 @@ try {
     startServer(8899, localData);
     await waitFor('/api/status?region=us');
     const migrated = await request('/api/data/info?region=us');
-    if (migrated.schemaVersion !== 14 || migrated.backup.count < 1) throw new Error(`Automatic V${historical.version} to V1.3.0 migration failed.`);
+    if (migrated.schemaVersion !== 15 || migrated.backup.count < 1) throw new Error(`Automatic V${historical.version} to V1.3.0 migration failed.`);
     const migratedCheck = await request('/api/check?region=us', { method:'POST', body:'{}' });
     if (!migratedCheck.ok) throw new Error(`V${historical.version} monitoring did not work after migration.`);
     const migratedWatch = await request('/api/watchlist?region=us');

@@ -96,7 +96,7 @@ function agePending(minutes) {
 async function restock() { await observe({status:'SoldOut'},2); await observe({status:'Available'}); }
 try {
   await start();
-  assert.equal((await request('/api/status')).storage.schemaVersion,14);
+  assert.equal((await request('/api/status')).storage.schemaVersion,15);
   assert.equal((await details()).product.freshness.state,'confirmed');
   const initial=(await details()).product.freshness.checkedAt;
   const config=(await request('/api/config')).config;
@@ -243,10 +243,10 @@ try {
   const support=JSON.stringify(await request('/api/operations/support-bundle'));
   assert.ok(!support.includes('Delivery test') && !support.includes(black));
   await stop();
-  for (const sql of ['DROP TABLE auto_buy_rules','DROP TABLE auto_buy_attempts','DROP TABLE auto_buy_connection','DELETE FROM schema_migrations WHERE version>=13','ALTER TABLE watch_collections DROP COLUMN delivery_json']) edit(sql);
+  for (const sql of ['ALTER TABLE sessions DROP COLUMN activity_at','ALTER TABLE sessions DROP COLUMN verified_at','DROP TABLE auto_buy_rules','DROP TABLE auto_buy_attempts','DROP TABLE auto_buy_connection','DELETE FROM schema_migrations WHERE version>=13','ALTER TABLE watch_collections DROP COLUMN delivery_json']) edit(sql);
   const backups=query('SELECT COUNT(*) AS count FROM backup_log')[0].count;
   await start();
-  assert.equal((await request('/api/status')).storage.schemaVersion,14);
+  assert.equal((await request('/api/status')).storage.schemaVersion,15);
   assert.equal((await collection(project)).channels,null);
   assert.ok(query('SELECT COUNT(*) AS count FROM backup_log')[0].count>backups,'Migration did not make a safety backup');
   console.log('ALERT DELIVERY TEST PASSED: routes/defaults/previews, cancellation, delayed snapshots and email/digests, expiry/retries, variant and regional freshness, collections, recovery and v12 migration.');

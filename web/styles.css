@@ -967,3 +967,7 @@ button.watch-import-backdrop:hover { border:0; background:rgba(0,0,0,.64); trans
   .auto-buy-attempt { align-items:flex-start; }
   .compact-list .watch-card>.auto-buy-card { grid-column:1 / -1; }
 }
+/* Native modal containment keeps verification usable at mobile widths and zoom. */
+.security-verify-dialog { box-sizing:border-box; width:min(440px, calc(100% - 32px)); max-height:calc(100dvh - 32px); overflow:auto; padding:24px; border:1px solid var(--border); border-radius:14px; background:var(--bg); color:var(--text); }
+.security-verify-dialog::backdrop { background:rgb(0 0 0 / 65%); }
+.security-verify-dialog input, #mfaRecoveryCodes { box-sizing:border-box; min-width:0; width:100%; }

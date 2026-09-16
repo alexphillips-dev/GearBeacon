@@ -6,6 +6,16 @@ Checks run on the server at startup and every 24 hours, even with no browser ope
 
 GearBeacon does not automatically download or install updates. Use the existing installation or deployment update procedure, including its backup confirmation, when you choose to update.
 
+## Verifying installation packages
+
+The Windows, macOS/Linux, and Docker update helpers require a recent [GitHub CLI](https://cli.github.com/) with `gh attestation verify`, `--source-ref`, and `--source-digest` support. Install it yourself before running the helper. Verification uses the release's signed bundle and enforces the GearBeacon repository, expected package/container workflow, requested release tag, and that tag's source commit. Checksum verification remains in place for archives. TLS, bundle, signature, identity, or commit verification failures stop before replacing application files or restarting services; there is no skip-verification option.
+
+Release workflows attach `.attestation.jsonl` bundles alongside archives and a `GearBeacon-vX.Y.Z-container.attestation.jsonl` bundle for the container image. Docker verifies the immutable repository digest and persists `GEARBEACON_IMAGE_TAG=X.Y.Z@sha256:…` in the project's `.env`, preserving unrelated entries. Later Compose starts continue using that verified digest.
+
+Older releases without these bundles cannot be installed by the hardened helpers. Missing bundles are reported as a failed update, never accepted silently. The helpers download signed evidence; they never install GitHub CLI automatically. Archive verification uses a supplied bundle rather than requiring a GitHub API login; container verification also needs access to its registry. Backup confirmation and health/version checks remain required.
+
+On Windows, retain the original Windows account/profile for local key recovery. A rollback to a build predating DPAPI protection requires its compatible pre-upgrade database and pre-upgrade key. Use an encrypted export when transferring to another account or machine; see [Owner security and recovery](SECURITY_CONTROLS.md).
+
 ## Main and dev
 
 | Running channel | Update selection | Notes destination |

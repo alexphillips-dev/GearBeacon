@@ -126,11 +126,19 @@ jobs:
             PACKAGE_VERSION=${{ github.ref_name }}
             IMAGE_NAME=ghcr.io/${{ github.repository_owner }}/gearbeacon
       - name: Attest published container
+        id: container-provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.0.0
         with:
           subject-name: ghcr.io/${{ github.repository_owner }}/gearbeacon
           subject-digest: ${{ steps.container.outputs.digest }}
           push-to-registry: true
+      - name: Include signed container bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUNDLE_PATH: ${{ steps.container-provenance.outputs.bundle-path }}
+        run: |
+          cp "$BUNDLE_PATH" "GearBeacon-$GITHUB_REF_NAME-container.attestation.jsonl"
+          gh release upload "$GITHUB_REF_NAME" "GearBeacon-$GITHUB_REF_NAME-container.attestation.jsonl" --clobber
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

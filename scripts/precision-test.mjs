@@ -84,7 +84,7 @@ try {
   await start();
   const config = await request('/api/config');
   await request('/api/config', { config:{ ...config.config,digestEnabled:true,digestTime:'12:34',notificationTimeZone:'UTC',notificationCooldownMinutes:0 } }, 'PUT');
-  assert.equal((await request('/api/status')).storage.schemaVersion, 14);
+  assert.equal((await request('/api/status')).storage.schemaVersion, 15);
   const initial = await details();
   assert.equal(initial.product.sku, 'MOCK-G5-PTZ-B');
   assert.equal(initial.product.price, '$299.00');

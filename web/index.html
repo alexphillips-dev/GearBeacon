@@ -9,6 +9,16 @@
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
+  <dialog id="securityVerifyDialog" class="security-verify-dialog" aria-labelledby="securityVerifyTitle">
+    <form id="securityVerifyForm" class="settings-form">
+      <h2 id="securityVerifyTitle">Verify your identity</h2>
+      <p>Confirm it is you before changing sensitive settings or transferring data.</p>
+      <label class="field"><span>Owner password</span><input id="verifyPassword" type="password" autocomplete="current-password" required /></label>
+      <label id="verifyCodeField" class="field" hidden><span>Authenticator or recovery code</span><input id="verifyCode" autocomplete="one-time-code" spellcheck="false" /></label>
+      <p id="verifyError" class="settings-result error" role="alert" hidden></p>
+      <div class="settings-actions"><button id="verifyCancel" type="button">Cancel</button><button id="verifySubmit" type="submit" class="primary">Verify</button></div>
+    </form>
+  </dialog>
   <section id="authGate" class="auth-shell hidden" aria-labelledby="authTitle">
     <div class="auth-card">
       <img class="auth-icon" src="/assets/icon.png" alt="" width="58" height="58" />
@@ -18,6 +28,7 @@
       <form id="authForm">
         <label id="setupTokenField" class="field hidden"><span>One-time setup token</span><input id="setupToken" type="password" autocomplete="one-time-code" /></label>
         <label class="field"><span id="passwordLabel">Owner password</span><input id="authPassword" type="password" minlength="12" autocomplete="current-password" required /></label>
+        <label id="authCodeField" class="field hidden"><span>Authenticator or recovery code</span><input id="authCode" autocomplete="one-time-code" spellcheck="false" /></label>
         <label id="confirmPasswordField" class="field hidden"><span>Confirm owner password</span><input id="authPasswordConfirm" type="password" minlength="12" autocomplete="new-password" /></label>
         <button id="authSubmit" class="primary" type="submit">Sign in</button>
       </form>
@@ -481,12 +492,34 @@
               <button class="primary" type="submit">Update owner password</button>
             </form>
             <div id="securityResult" class="settings-result hidden"></div>
+            <hr />
+            <h3>Authenticator app</h3>
+            <p id="mfaStatus" role="status">Checking authenticator settings…</p>
+            <div class="settings-actions wrap"><button id="mfaBegin" type="button">Set up authenticator</button><button id="mfaDisable" type="button" hidden>Disable authenticator</button></div>
+            <form id="mfaSetup" class="settings-form" hidden>
+              <p>Add a time-based account named GearBeacon in your authenticator app. Enter this setup key manually (6 digits, 30 seconds). Setup expires in 5 minutes.</p>
+              <label class="field"><span>Setup key</span><input id="mfaSecret" readonly autocomplete="off" spellcheck="false" /></label>
+              <label class="field"><span>Code from your authenticator</span><input id="mfaCode" inputmode="numeric" pattern="[0-9]{6}" autocomplete="one-time-code" required /></label>
+              <button type="submit" class="primary">Verify and enable</button>
+            </form>
+            <div id="mfaRecovery" hidden>
+              <p><strong>Save these recovery codes in your password manager.</strong> Each code works once in place of an authenticator code. They are shown only now.</p>
+              <label class="field"><span>Recovery codes</span><textarea id="mfaRecoveryCodes" readonly rows="10" autocomplete="off" spellcheck="false"></textarea></label>
+              <button id="mfaRecoveryDone" type="button">I saved the codes</button>
+            </div>
           </article>
         </section>
         <section id="settingsSecuritySessionsPanel" class="settings-section" role="tabpanel" aria-labelledby="settingsSecuritySessionsTab" data-settings-section="security/sessions" hidden>
           <article class="settings-card wide-card">
             <div class="settings-card-head"><div><span class="settings-kicker">Private access</span><h3>Signed-in browsers</h3></div></div>
             <p>Review active owner sessions and sign out browsers that no longer need access.</p>
+            <form id="sessionPolicyForm" class="settings-form">
+              <div class="form-row"><label class="field"><span>Sign in again after (hours)</span><input id="sessionHours" type="number" min="1" max="168" required /></label><label class="field"><span>Lock after inactivity (minutes)</span><input id="sessionIdleMinutes" type="number" min="1" max="120" required /></label></div>
+              <p>Monitoring and alerts continue while locked. Background updates do not keep the dashboard unlocked. An owner password is needed for locking.</p>
+              <label class="field"><span>Approved private notification hostnames</span><input id="notificationPrivateHosts" placeholder="alerts.example.test, notify.example.test" autocomplete="off" /></label>
+              <p>Allow these exact hostnames to connect to LAN or VPN notification servers. Configured private IP addresses and localhost already work. Redirects, metadata, and link-local destinations are blocked.</p>
+              <button class="primary" type="submit">Save security settings</button>
+            </form>
             <div id="sessionList" class="session-list"></div>
           </article>
         </section>

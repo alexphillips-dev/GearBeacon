@@ -102,9 +102,18 @@ jobs:
           Expand-Archive -LiteralPath $archive -DestinationPath $rehearsal
           node scripts/standalone-smoke.mjs (Join-Path $rehearsal $package.Name)
       - name: Attest candidate contents
+        id: provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.0.0
         with:
           subject-path: dist/packages/*
+      - name: Include signed bundles for owner update verification
+        shell: pwsh
+        env:
+          BUNDLE_PATH: ${{ steps.provenance.outputs.bundle-path }}
+        run: |
+          Get-ChildItem dist/packages -File | Where-Object { $_.Name -match '\.(zip|tar\.gz)$' } | ForEach-Object {
+            Copy-Item -LiteralPath $env:BUNDLE_PATH -Destination ($_.FullName + '.attestation.jsonl')
+          }
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: standalone-${{ matrix.name }}
@@ -147,9 +156,18 @@ jobs:
           unzip -q "dist/packages/$STAGE.zip" -d "$RUNNER_TEMP/source-rehearsal"
           (cd "$RUNNER_TEMP/source-rehearsal/$STAGE" && node scripts/check-versions.mjs && node --no-warnings scripts/self-test.mjs)
       - name: Attest candidate contents
+        id: provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.0.0
         with:
           subject-path: dist/packages/*
+      - name: Include signed bundles for owner update verification
+        shell: pwsh
+        env:
+          BUNDLE_PATH: ${{ steps.provenance.outputs.bundle-path }}
+        run: |
+          Get-ChildItem dist/packages -File | Where-Object { $_.Name -match '\.(zip|tar\.gz)$' } | ForEach-Object {
+            Copy-Item -LiteralPath $env:BUNDLE_PATH -Destination ($_.FullName + '.attestation.jsonl')
+          }
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: source

@@ -214,10 +214,10 @@ try {
   // Recreate exactly the shipped v11 layout in this disposable database.
   await stop();
   const migrationDb=new DatabaseSync(join(dataDir,'gearbeacon.mock.sqlite3'));
-  migrationDb.exec('DROP TABLE auto_buy_connection; DROP TABLE auto_buy_rules; DROP TABLE auto_buy_attempts; DELETE FROM schema_migrations WHERE version>=12; ALTER TABLE watch_collections DROP COLUMN delivery_json; ALTER TABLE watch_collections DROP COLUMN budget_required;');
+  migrationDb.exec('ALTER TABLE sessions DROP COLUMN activity_at; ALTER TABLE sessions DROP COLUMN verified_at; DROP TABLE auto_buy_connection; DROP TABLE auto_buy_rules; DROP TABLE auto_buy_attempts; DELETE FROM schema_migrations WHERE version>=12; ALTER TABLE watch_collections DROP COLUMN delivery_json; ALTER TABLE watch_collections DROP COLUMN budget_required;');
   const backupCount=migrationDb.prepare('SELECT COUNT(*) AS count FROM backup_log').get().count;
   migrationDb.close(); await start();
-  assert.equal((await request('/api/status')).storage.schemaVersion,14);
+  assert.equal((await request('/api/status')).storage.schemaVersion,15);
   assert.equal((await collection(project)).budgetRequired,false);
   assert.equal((await collection(project)).items[0].paidTotal,740);
   assert.ok(query('SELECT COUNT(*) AS count FROM backup_log')[0].count>backupCount);

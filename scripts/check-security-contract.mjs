@@ -21,6 +21,14 @@ const [backend, dockerfile, compose, windowsInstaller, macInstaller, linuxInstal
 requireMatch(backend, /const PASSWORD_HASH_VERSION = 'scrypt-v2';/, 'Current owner-password hashes must use the versioned scrypt-v2 profile.');
 requireMatch(backend, /'scrypt-v1':.*p: 1[\s\S]*'scrypt-v2':.*p: 5/, 'Owner-password verification must retain legacy scrypt-v1 support and use the stronger scrypt-v2 profile.');
 requireMatch(backend, /function validatedRequestHost\([\s\S]*Request host is not allowed\./, 'HTTP requests must pass strict Host validation before routing.');
+if (backend.includes('ALLOW_INSECURE_REMOTE') || backend.includes('environment defaults are active')) throw new Error('Unsafe binding overrides and configuration fallback must not return.');
+requireMatch(backend, /activity_at[\s\S]*reauthenticationRequired/, 'Session activity and sensitive-action verification must remain server enforced.');
+for (const file of ['deploy/update-windows.ps1','deploy/update-mac-linux.sh','deploy/update-docker.sh']) {
+  const helper = await read(file);
+  for (const text of ['attestation verify','--bundle','--repo alexphillips-dev/GearBeacon','--signer-workflow','--source-ref','--source-digest']) {
+    if (!helper.includes(text)) throw new Error(`${file} must preserve provenance constraint ${text}.`);
+  }
+}
 for (const setting of ['server.headersTimeout = 15_000;', 'server.requestTimeout = 30_000;', 'server.timeout = 120_000;', 'server.keepAliveTimeout = 5_000;', 'server.maxHeadersCount = 64;', 'server.maxRequestsPerSocket = 100;']) {
   if (!backend.includes(setting)) throw new Error(`Missing bounded HTTP server setting: ${setting}`);
 }
