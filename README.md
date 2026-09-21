@@ -15,7 +15,7 @@ GearBeacon is a private, self-hosted Ubiquiti and UniFi Store inventory monitor 
 
 One installation serves one owner. Monitoring and external notification delivery run on your server, even when the browser is closed. There is no GearBeacon cloud account, subscription, hosted database, analytics, or telemetry, and monitoring requires no Ubiquiti login. Optional auto-buy uses your own Store session in a separate checkout companion.
 
-**Current version: 1.3.0** · [Downloads](https://github.com/alexphillips-dev/GearBeacon/releases) · [Release notes](docs/RELEASE_NOTES.md) · [Wiki](https://github.com/alexphillips-dev/GearBeacon/wiki)
+**Current version: 1.4.0** · [Downloads](https://github.com/alexphillips-dev/GearBeacon/releases) · [Release notes](docs/RELEASE_NOTES.md) · [Wiki](https://github.com/alexphillips-dev/GearBeacon/wiki)
 
 Save named views, use a compact Watchlist, receive budget-aware collection alerts, and read [live Activity cards](docs/ACTIVITY.md) with current availability, watch and price context, delivery explanations, and automatic arrivals that preserve your reading position. GearBeacon supports [per-watch and collection delivery channels, delayed-alert context and expiry, and product freshness](docs/ALERT_DELIVERY.md), [Settings section tabs](docs/SETTINGS.md), and [branch-aware update notices](docs/UPDATES.md). It uses schema v15 and recovery export format v10, with a validated backup before migration.
 
@@ -92,7 +92,7 @@ The [wiki](https://github.com/alexphillips-dev/GearBeacon/wiki) contains the com
 |---|---|
 | Find products, import watches, and choose variants | [Watchlist and Browse](https://github.com/alexphillips-dev/GearBeacon/wiki/Watchlist-and-Browse) |
 | Group items, plan quantities, and track spending | [Collections and purchase planning](https://github.com/alexphillips-dev/GearBeacon/wiki/Collections-and-Purchase-Planning) |
-| Connect and verify an optional checkout profile (dev) | [Auto-buy setup and verification](https://github.com/alexphillips-dev/GearBeacon/wiki/Auto-buy) |
+| Connect and verify an optional experimental checkout profile | [Auto-buy setup and verification](docs/AUTO_BUY.md) |
 | Configure item/project rules and delivery | [Alerts](https://github.com/alexphillips-dev/GearBeacon/wiki/Alerts-and-Notifications) · [Email and webhooks](https://github.com/alexphillips-dev/GearBeacon/wiki/Email-and-Webhooks) |
 | Understand prices, stock evidence, and monitoring gaps | [Stock insights](https://github.com/alexphillips-dev/GearBeacon/wiki/Stock-Insights-and-Monitoring) |
 | Investigate activity, failures, and health | [Activity and Operations](https://github.com/alexphillips-dev/GearBeacon/wiki/Activity-and-Operations) · [Troubleshooting](https://github.com/alexphillips-dev/GearBeacon/wiki/Troubleshooting) |

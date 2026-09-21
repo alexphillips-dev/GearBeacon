@@ -4,7 +4,7 @@ import { totp } from '../backend/dist/security.js';
 
 export async function testSecurityUi({evaluate,waitForBrowser,assertAccessible,assert,cdp,testRoot}) {
   const database = new DatabaseSync(join(testRoot,'gearbeacon.mock.sqlite3'));
-  const password='V1.3.0 browser owner password';
+  const password='V1.4.0 browser owner password';
   const expireVerification=()=>database.prepare('UPDATE sessions SET verified_at=?').run(new Date(Date.now()-360000).toISOString());
   try {
     await evaluate("activateSettingsTab('security'); activateSettingsSection('security','sessions'); refreshSecuritySettings()");

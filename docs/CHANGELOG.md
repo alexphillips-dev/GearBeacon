@@ -2,9 +2,12 @@
 
 The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. The first release promoted to `main` is V1.0.0.
 
-## V1.3.0 — Live Activity, flexible alerts, and easier settings
+## V1.4.0 — Optional purchasing, stronger security, and clearer Activity
 
-Development additions after the stable release:
+Released September 21, 2026. Includes every change since v1.3.0. See the [complete release notes](RELEASE_NOTES.md).
+
+- Updated CodeQL to 4.38.1, Docker Buildx setup to 4.4.1, Docker build/push to 7.4.0, and QEMU setup to 4.4.0 with full commit pins. Grouped CodeQL dependency updates, added companion dependency monitoring, and required all CodeQL actions in the security contract. Release promotion now preserves merge ancestry and fast-forwards dev to main before development resumes.
+- Added explicit v1.3.0/schema-v13 upgrade coverage for validated migration backups, retained watches, and monitoring after the v1.4.0/schema-v15 upgrade.
 
 - Stabilized CI accessibility checks by waiting for active CSS transitions before measuring contrast, made updater-fixture deadlines deterministic with coverage for delayed startup and retries, and allowed slower first-use Windows key protection during test-server startup while failing promptly if the process exits.
 - Hardened general application security: removed the unauthenticated remote-bind escape hatch and stopped startup on invalid saved configuration; added configurable absolute session expiry and idle locking that excludes background polling, fresh owner verification for sensitive settings/data transfers, and optional authenticator codes with single-use recovery codes. Schema v15 signs existing browsers out once after a validated migration backup.
@@ -22,7 +25,9 @@ Development additions after the stable release:
 - Added Watchlist setup/status UI, General > Auto-buy, Operations > Purchases, and scoped purchase accounting. Added schema-v14 migration and format-v10 exports; SQLite backups and JSON restores cannot reactivate old purchase instructions or companion tokens. Monitoring remains credential-free.
 - Added backend and real-browser mock checkout tests, including authorization, duplicate claims, paused/stale rules, restart uncertainty, recovery, privacy, and responsive accessible setup. Real Ubiquiti authenticated checkout and unattended saved-payment compatibility still require owner setup and verification; no real order was placed during development.
 
-Released September 14, 2026. Includes every development change since v1.2.0. See the [complete release notes](RELEASE_NOTES.md).
+## V1.3.0 — Live Activity, flexible alerts, and easier settings
+
+Released September 14, 2026. Includes every development change since v1.2.0. See the [1.3.0 release notes](https://github.com/alexphillips-dev/GearBeacon/releases/tag/v1.3.0).
 
 - Release validation now runs Activity context and update-channel tests across the CI platform matrix. Corrected the delayed-delivery restart fixture to capture startup deliveries and assert that a due job resumes with its original context.
 - Source-package rehearsal now accepts the full installed prerelease version and verifies that disabled online checks do not claim a verified update result.

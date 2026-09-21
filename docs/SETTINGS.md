@@ -1,6 +1,6 @@
 # Settings navigation
 
-GearBeacon 1.3.0 keeps the six Settings categories and adds a second row of tabs for their existing sections. Only the selected section is shown.
+GearBeacon keeps six Settings categories with a second row of tabs for their sections. Only the selected section is shown.
 
 | Settings category | Sections |
 |---|---|

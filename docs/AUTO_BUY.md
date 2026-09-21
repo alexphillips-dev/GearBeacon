@@ -22,7 +22,7 @@ Cart creation and cart updates remain available during setup. The request guard 
 
 ## Install the companion
 
-Auto-buy is currently a **dev feature added after the v1.3.0 stable release**. The published v1.3.0 downloads do not contain it. Use the current `dev` source for both GearBeacon and the companion; do not mix an older companion with a newer dashboard. Updating source files preserves the separate private companion vault. Follow the [source installation guide](https://github.com/alexphillips-dev/GearBeacon/wiki/Source-Installation) for the server and make a backup before upgrading.
+Auto-buy is included as an **optional experimental feature in GearBeacon 1.4.0**. Download the matching **Source** archive from the [1.4.0 release](https://github.com/alexphillips-dev/GearBeacon/releases/tag/v1.4.0) for the companion, even if the server uses a standalone package or Docker. Use the same release for the dashboard and companion; development installations should keep both on the same dev revision. Updating source files preserves the separate private companion vault. Follow the [source installation guide](https://github.com/alexphillips-dev/GearBeacon/wiki/Source-Installation) for the server and make a backup before upgrading. The payment and live-compatibility limitations above still apply.
 
 The optional companion requires Node.js **22.13 or newer** and runs on Windows, macOS, or Linux. For a NAS, Docker, or headless server, install the companion on a separate computer with a browser and a connection to your **HTTPS** dashboard. HTTP works only for a loopback dashboard on the same computer. Keep the companion computer awake while purchasing is armed. The base server and Docker image do not install a browser.
 

@@ -1,11 +1,11 @@
 {
   "name": "GearBeacon",
-  "latestVersion": "1.3.0",
-  "publishedAt": "2026-09-14T00:00:00Z",
-  "downloadUrl": "https://github.com/alexphillips-dev/GearBeacon/releases/tag/v1.3.0",
-  "releasePageUrl": "https://github.com/alexphillips-dev/GearBeacon/releases/tag/v1.3.0",
+  "latestVersion": "1.4.0",
+  "publishedAt": "2026-09-21T00:00:00Z",
+  "downloadUrl": "https://github.com/alexphillips-dev/GearBeacon/releases/tag/v1.4.0",
+  "releasePageUrl": "https://github.com/alexphillips-dev/GearBeacon/releases/tag/v1.4.0",
   "minimumSchemaVersion": 4,
   "maximumSchemaVersion": 15,
   "minimumNodeVersion": "22.13.0",
-  "releaseNotes": "GearBeacon 1.3.0 includes all changes since 1.2.0: automatic live Activity with reading-position preservation and richer price, stock, watch, and delivery context; saved views and compact Watchlist controls; per-watch and collection delivery channels, optional expiry and delayed-alert context; product freshness and budget-aware collection alerts; focused Settings sections and accessible alert explanations; branch-aware update notices and verified owner-initiated updates. Repository and documentation organization, packaging identity, and automated coverage are also improved. Startup validates a safety backup before migrating schema v11 to v13; recovery exports use format v9. Existing alerts retain default channels, no expiry, and no budget condition. See the complete release notes for upgrade and rollback guidance."
+  "releaseNotes": "GearBeacon 1.4.0 includes all changes since 1.3.0: optional experimental auto-buy with exact-variant limits, a sandboxed checkout companion, clearer setup and profile verification; NEW TO STORE and NOW AVAILABLE Activity badges; configurable session locking, fresh owner verification and optional authenticator codes; Windows account-protected installation keys, restricted notification destinations, and signed update provenance. CI timing, dependency maintenance, and release ancestry are improved. Upgrade creates a validated backup before schema v13 to v15 migration and signs browsers out once. Exports use format v10 and restore purchase instructions paused. Existing saved-card support is required for auto-buy; authenticated live checkout compatibility remains unverified. Read the complete release notes for private-host approvals and Windows key transfer/rollback guidance."
 }
