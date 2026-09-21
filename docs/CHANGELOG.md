@@ -6,6 +6,7 @@ The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. 
 
 Development additions after the stable release:
 
+- Stabilized CI accessibility checks by waiting for active CSS transitions before measuring contrast, and made updater-fixture deadlines deterministic with coverage for delayed startup and retries.
 - Hardened general application security: removed the unauthenticated remote-bind escape hatch and stopped startup on invalid saved configuration; added configurable absolute session expiry and idle locking that excludes background polling, fresh owner verification for sensitive settings/data transfers, and optional authenticator codes with single-use recovery codes. Schema v15 signs existing browsers out once after a validated migration backup.
 - Protected Windows installation keys with account-scoped DPAPI and verified private ACLs for source, portable, and service installs; retained owner-only Unix permissions and documented encrypted transfer/rollback requirements. Portable recovery excludes owner security policy, MFA material, and private network approvals.
 - Restricted notification requests to configured origins with DNS address pinning, explicit private-host approval, metadata/link-local blocking, no redirects, and bounded responses. Update helpers now require signed repository/workflow/tag/commit provenance before installation; release workflows include verification bundles and Docker retains the verified image digest.
