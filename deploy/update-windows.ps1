@@ -2,6 +2,7 @@
 param([Parameter(Mandatory=$true)][string]$Version, [string]$InstallDir = "$env:ProgramFiles\GearBeacon", [switch]$BackupConfirmed, [ValidateRange(1,65535)][int]$Port = 8787, [ValidateRange(1,300)][int]$TimeoutSeconds = 60)
 $ErrorActionPreference = 'Stop'
 if (-not $BackupConfirmed) { throw 'Use Prepare safe update in GearBeacon first, then rerun with -BackupConfirmed.' }
+if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { throw 'Install the GitHub CLI (gh) to verify signed release attestations before updating.' }
 if ($Version -notmatch '^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$') { throw 'Version must be a release version such as 1.0.0.' }
 $InstallDir = [IO.Path]::GetFullPath($InstallDir)
 if ((Split-Path $InstallDir -Leaf) -ne 'GearBeacon') { throw 'InstallDir must resolve to a GearBeacon directory.' }
@@ -21,6 +22,11 @@ try {
   $expected = ((Get-Content "$temp/$name.zip.sha256" -Raw) -split '\s+')[0].ToLowerInvariant()
   $actual = (Get-FileHash "$temp/$name.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
   if ($expected -notmatch '^[a-f0-9]{64}$' -or $expected -ne $actual) { throw 'Downloaded package checksum does not match release metadata.' }
+  Invoke-WebRequest "$base/$name.zip.attestation.jsonl" -OutFile "$temp/$name.zip.attestation.jsonl"
+  $commit = (Invoke-RestMethod "https://api.github.com/repos/alexphillips-dev/GearBeacon/commits/refs%2Ftags%2Fv$Version" -TimeoutSec 30).sha
+  if ($commit -cnotmatch '^[a-f0-9]{40}$') { throw 'The release tag did not resolve to a valid source commit.' }
+  & gh attestation verify "$temp/$name.zip" --bundle "$temp/$name.zip.attestation.jsonl" --repo alexphillips-dev/GearBeacon --signer-workflow alexphillips-dev/GearBeacon/.github/workflows/package.yml --source-ref "refs/tags/v$Version" --source-digest $commit --deny-self-hosted-runners
+  if ($LASTEXITCODE -ne 0) { throw 'Release provenance verification failed. Nothing was installed.' }
   Expand-Archive "$temp/$name.zip" -DestinationPath $temp
   foreach ($entry in @('GearBeacon.exe', 'web/index.html', 'release-manifest.json')) {
     if (-not (Test-Path -LiteralPath "$temp/$name/$entry" -PathType Leaf)) { throw 'Downloaded package is incomplete.' }

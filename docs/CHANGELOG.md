@@ -2,9 +2,32 @@
 
 The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. The first release promoted to `main` is V1.0.0.
 
+## V1.4.0 — Optional purchasing, stronger security, and clearer Activity
+
+Released September 21, 2026. Includes every change since v1.3.0. See the [complete release notes](RELEASE_NOTES.md).
+
+- Updated CodeQL to 4.38.1, Docker Buildx setup to 4.4.1, Docker build/push to 7.4.0, and QEMU setup to 4.4.0 with full commit pins. Grouped CodeQL dependency updates, added companion dependency monitoring, and required all CodeQL actions in the security contract. Release promotion now preserves merge ancestry and fast-forwards dev to main before development resumes.
+- Added explicit v1.3.0/schema-v13 upgrade coverage for validated migration backups, retained watches, and monitoring after the v1.4.0/schema-v15 upgrade.
+
+- Stabilized CI accessibility checks by waiting for active CSS transitions before measuring contrast, made updater-fixture deadlines deterministic with coverage for delayed startup and retries, and allowed slower first-use Windows key protection during test-server startup while failing promptly if the process exits.
+- Hardened general application security: removed the unauthenticated remote-bind escape hatch and stopped startup on invalid saved configuration; added configurable absolute session expiry and idle locking that excludes background polling, fresh owner verification for sensitive settings/data transfers, and optional authenticator codes with single-use recovery codes. Schema v15 signs existing browsers out once after a validated migration backup.
+- Protected Windows installation keys with account-scoped DPAPI and verified private ACLs for source, portable, and service installs; retained owner-only Unix permissions and documented encrypted transfer/rollback requirements. Portable recovery excludes owner security policy, MFA material, and private network approvals.
+- Restricted notification requests to configured origins with DNS address pinning, explicit private-host approval, metadata/link-local blocking, no redirects, and bounded responses. Update helpers now require signed repository/workflow/tag/commit provenance before installation; release workflows include verification bundles and Docker retains the verified image digest.
+
+- Added compact teal NEW TO STORE badges to newly discovered Activity listings and NOW AVAILABLE badges to Coming soon → In stock events. New listings show their availability at detection, upcoming items show Still coming soon when unchanged, and launch transitions use Coming soon for instead of Back after. Cards remain separate, with the same labels in accessible descriptions and event details.
+- Fixed a false sign-in failure caused by Stripe's transparent one-pixel verification helper. Account confirmation and visible security challenges now have separate setup results; expanded helpers and active challenges still stop checkout. Card-entry forms now explain that entered payment details cannot be saved for unattended auto-buy, with an explicit exit path when no reusable card is available. Diagnostics never read card-field values.
+- Made companion setup output easier to scan with numbered steps and retries, failed checks and indented guidance first, aligned status labels, word wrapping, and separate save/verification/cancellation summaries. Supported terminals use color; redirected output and `NO_COLOR` remain plain text. Previous attempts remain in scrollback.
+- Clarified address-profile setup with individual checkout checks, retry in the same browser, and an explicit SAVED confirmation after emptying the cart. Fixed validation errors falling through to a generic installation error. Added local `profiles` inspection and a `verify` browser comparison that preserves saved profiles and purchase rules. Settings now distinguishes pairing from a reported saved profile; the Auto-buy wiki includes setup, verification, and troubleshooting steps.
+- Auto-buy setup instructions now expand by default only when no companion is paired, preserving manual toggles during refreshes. Pairing shows its mode and expiry label beside a compact field containing only the selectable code; both clear after pairing.
+- Fixed auto-buy setup incorrectly blocking the Store's cart creation/update requests when their variables or response fragments contained purchase/payment names. Checkout guards now inspect the executed mutation fields; order submission still requires authorization.
+- Added optional auto-buy: exact-variant purchase instructions with quantity, final-total cap including tax/shipping/surcharges, expiry, explicit owner authorization, pause controls, and one successful order per authorization.
+- Added an optional Playwright checkout companion with sandboxed Chromium, one-time pairing, encrypted Store sessions and durable submission journals. Browser checkout validates the full cart, account session, saved address, selected masked card, shipping service, currency, and Store totals. Unknown order outcomes block further checkout and require reconciliation; challenges and unrecognized checkout details pause without bypasses.
+- Added Watchlist setup/status UI, General > Auto-buy, Operations > Purchases, and scoped purchase accounting. Added schema-v14 migration and format-v10 exports; SQLite backups and JSON restores cannot reactivate old purchase instructions or companion tokens. Monitoring remains credential-free.
+- Added backend and real-browser mock checkout tests, including authorization, duplicate claims, paused/stale rules, restart uncertainty, recovery, privacy, and responsive accessible setup. Real Ubiquiti authenticated checkout and unattended saved-payment compatibility still require owner setup and verification; no real order was placed during development.
+
 ## V1.3.0 — Live Activity, flexible alerts, and easier settings
 
-Released September 14, 2026. Includes every development change since v1.2.0. See the [complete release notes](RELEASE_NOTES.md).
+Released September 14, 2026. Includes every development change since v1.2.0. See the [1.3.0 release notes](https://github.com/alexphillips-dev/GearBeacon/releases/tag/v1.3.0).
 
 - Release validation now runs Activity context and update-channel tests across the CI platform matrix. Corrected the delayed-delivery restart fixture to capture startup deliveries and assert that a due job resumes with its original context.
 - Source-package rehearsal now accepts the full installed prerelease version and verifies that disabled online checks do not claim a verified update result.

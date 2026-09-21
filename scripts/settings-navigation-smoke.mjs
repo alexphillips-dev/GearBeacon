@@ -5,12 +5,12 @@ import { setTimeout as delay } from 'node:timers/promises';
 // Runs inside browser-smoke's isolated mock installation and authenticated browser.
 export async function testSettingsNavigation({ evaluate, waitForBrowser, reloadBrowserPage, assertAccessible, assert, cdp, screenshotRoot }) {
   const sections = {
-    general:['application', 'stores'],
+    general:['application', 'stores', 'autobuy'],
     notifications:['alerts', 'channels', 'delivery', 'email'],
     data:['schedule', 'backups'],
     security:['overview', 'password', 'sessions'],
     privacy:['catalog', 'notifications'],
-    operations:['overview', 'monitoring', 'delivery', 'backups', 'diagnostics', 'logs'],
+    operations:['overview', 'monitoring', 'delivery', 'purchases', 'backups', 'diagnostics', 'logs'],
   };
   assert(JSON.stringify(await evaluate('SETTINGS_SECTIONS')) === JSON.stringify(sections), 'Settings sections or their ordering changed unexpectedly');
   await evaluate('Promise.all([refreshConfiguration(), refreshNotificationPreferences(), refreshSessions(), refreshOperations()])');

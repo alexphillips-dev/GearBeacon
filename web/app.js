@@ -265,6 +265,11 @@ function activityMoney(event, value) {
   const symbol = String(event.price || event.previousPrice || '$').match(/[^\d\s.,-]+/)?.[0] || '$';
   return `${symbol}${Math.abs(value).toFixed(2)}`;
 }
+function activityDiscovery(event) {
+  if (event.type === 'new_product') return { label:'NEW TO STORE', title:'GearBeacon first detected this listing in this Store region at the time of this event.' };
+  if (event.type === 'restock' && humanStatus(event.previousStatus) === 'Coming soon') return { label:'NOW AVAILABLE', title:'This item changed from Coming soon to In stock in this Store region.' };
+  return null;
+}
 function activityMeta(event) {
   const parts = [];
   const previousStatus = humanStatus(event.previousStatus);
@@ -274,7 +279,10 @@ function activityMeta(event) {
   else if (event.type === 'sold_out') parts.push({ text:`${event.previousStatus ? previousStatus : 'In stock'} → Sold out`, className:'event-meta-transition' });
   else if (event.type === 'status_change') parts.push({ text:`${previousStatus} → ${currentStatus}`, className:'event-meta-transition' });
   else if (event.type === 'price_change') parts.push({ text:`${event.previousPrice || 'Previous price'} → ${event.price || 'New price'}`, className:'event-meta-transition' });
-  else if (event.type === 'new_product') parts.push({ text:'New product discovered', className:'event-meta-transition' });
+  else if (event.type === 'new_product') {
+    const availability = event.status ? currentStatus === 'Available' ? 'In stock' : currentStatus : event.inStock === true ? 'In stock' : '';
+    parts.push({ text:`New listing${availability ? ` · ${availability}` : ''}`, className:'event-meta-transition' });
+  }
   else parts.push({ text:humanStatus(event.type), className:'event-meta-transition' });
 
   if (event.type !== 'price_change' && event.price) parts.push({ text:event.price, className:'event-meta-price' });
@@ -290,7 +298,7 @@ function activityMeta(event) {
   }
   if (event.previousStateDurationSeconds !== null && event.previousStateDurationSeconds !== undefined) {
     const duration = activityDuration(event.previousStateDurationSeconds);
-    const text = event.type === 'restock' ? `Back after ${duration}` : event.type === 'sold_out' ? `Available for ${duration}` : event.type === 'price_change' ? `Price held for ${duration}` : `Previous state for ${duration}`;
+    const text = event.type === 'restock' ? `${previousStatus === 'Coming soon' ? 'Coming soon for' : 'Back after'} ${duration}` : event.type === 'sold_out' ? `Available for ${duration}` : event.type === 'price_change' ? `Price held for ${duration}` : `Previous state for ${duration}`;
     parts.push({ text, className:'event-meta-duration' });
   }
   if ((app.status?.regions?.length || 0) > 1 && event.region) parts.push({ text:String(event.region).toUpperCase(), className:'event-meta-region' });
@@ -326,7 +334,7 @@ function activityCurrentStatus(event) {
   if (state !== 'confirmed') return {label:state === 'pending' ? 'Confirming change' : state === 'stale' ? 'Checks delayed' : 'Status unconfirmed',tone:'uncertain',title:detail};
   if (event.context.collection) return {label:current.status === 'Ready' ? 'Still ready' : current.status === 'Archived' ? 'Archived' : 'No longer ready',tone:current.status === 'Ready' ? 'available' : 'unavailable',title:detail};
   if (current.status === 'Unlisted') return {label:'Now unlisted',tone:'uncertain',title:detail};
-  if (current.status === 'Coming soon') return {label:'Now coming soon',tone:'uncertain',title:detail};
+  if (current.status === 'Coming soon') return {label:humanStatus(event.status) === 'Coming soon' ? 'Still coming soon' : 'Now coming soon',tone:'uncertain',title:detail};
   if (current.inStock) return {label:event.type === 'restock' || event.inStock === true ? 'Still in stock' : 'Now in stock',tone:'available',title:detail};
   return {label:event.type === 'restock' || event.inStock === true ? 'Sold out since' : 'Still sold out',tone:'unavailable',title:detail};
 }
@@ -426,7 +434,7 @@ async function api(path, options = {}) {
   const method = String(options.method || 'GET').toUpperCase();
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && app.auth?.csrfToken) headers['X-CSRF-Token'] = app.auth.csrfToken;
-  const res = await fetch(target, { credentials: 'same-origin', ...options, headers });
+  const res = await securityFetch(target, { credentials: 'same-origin', ...options, headers });
   const data = await res.json().catch(() => ({}));
   if ([401, 428].includes(res.status) && !path.startsWith('/api/auth/')) showAuth(Boolean(data.setupRequired));
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
@@ -473,17 +481,68 @@ function updateOptions(select, markup) {
   if ([...select.options].some(option => option.value === selected)) select.value = selected;
 }
 
+let verificationPending = null;
+async function securityFetch(path, options = {}) {
+  let response = await fetch(path, options);
+  if (response.status === 403 && (await response.clone().json().catch(() => ({}))).reauthenticationRequired) {
+    await verifyOwner();
+    response = await fetch(path, options);
+  }
+  if (response.status === 401 && !String(path).match(/\/api\/auth\/(login|setup)$/)) showAuth(false);
+  return response;
+}
+function verifyOwner() {
+  if (verificationPending) return verificationPending;
+  const dialog = $('securityVerifyDialog');
+  const previousFocus = document.activeElement;
+  const background = [...document.body.children].filter(node => node !== dialog && !['SCRIPT','STYLE'].includes(node.tagName));
+  const previousInert = background.map(node => node.inert);
+  background.forEach(node => { node.inert = true; });
+  $('securityVerifyForm').reset(); $('verifyError').hidden = true;
+  $('verifyCodeField').hidden = !app.auth?.mfaEnabled;
+  dialog.returnValue = '';
+  verificationPending = new Promise((resolve,reject) => {
+    dialog.addEventListener('close', () => {
+      const verified = dialog.returnValue === 'verified';
+      background.forEach((node,index) => { node.inert = previousInert[index]; });
+      $('securityVerifyForm').reset(); verificationPending = null;
+      if (previousFocus?.isConnected && previousFocus.offsetParent) previousFocus.focus({ preventScroll:true });
+      if (verified) resolve(); else reject(new Error('Verification cancelled. Nothing was changed.'));
+    }, { once:true });
+    dialog.showModal(); $('verifyPassword').focus();
+  });
+  return verificationPending;
+}
+async function refreshSecuritySettings() {
+  const result = await authRequest('/api/auth/security');
+  $('sessionHours').value = result.policy.sessionHours;
+  $('sessionIdleMinutes').value = result.policy.idleMinutes;
+  $('notificationPrivateHosts').value = result.privateNotificationHosts.join(', ');
+  $('mfaStatus').textContent = result.mfaEnabled ? 'Authenticator enabled. A fresh code or recovery code is required when signing in.' : result.ownerConfigured ? 'Optional: require an authenticator code as well as your password.' : 'Create an owner password to enable an authenticator and dashboard locking.';
+  $('mfaBegin').disabled = !result.ownerConfigured;
+  $('mfaBegin').hidden = result.mfaEnabled;
+  $('mfaDisable').hidden = !result.mfaEnabled;
+  app.auth.mfaEnabled = result.mfaEnabled; app.auth.sessionPolicy = result.policy;
+}
+
 async function authRequest(path, options = {}) {
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
   if (app.auth?.csrfToken && !['GET', 'HEAD', 'OPTIONS'].includes(String(options.method || 'GET').toUpperCase())) headers['X-CSRF-Token'] = app.auth.csrfToken;
-  const res = await fetch(path, { credentials: 'same-origin', ...options, headers });
+  const res = await securityFetch(path, { credentials: 'same-origin', ...options, headers });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
   return data;
 }
 
 function showAuth(setup = false) {
+  if (app.auth) app.auth.authenticated = false;
+  for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
+  for (const id of ['setupWizard','productDialog','activityDialog','collectionDialog','watchImportDialog']) $(id)?.classList.add('hidden');
+  document.body.classList.remove('dialog-open');
+  $('mfaSecret').value = ''; $('mfaRecoveryCodes').value = ''; $('mfaSetup').hidden = true; $('mfaRecovery').hidden = true;
+  $('authCodeField').classList.toggle('hidden', setup || !app.auth?.mfaEnabled);
   $('appShell').classList.add('hidden');
+  if (typeof clearAutoBuyUi === 'function') clearAutoBuyUi();
   $('authGate').classList.remove('hidden');
   $('setupTokenField').classList.toggle('hidden', !setup);
   $('confirmPasswordField').classList.toggle('hidden', !setup);
@@ -502,12 +561,16 @@ function showAuth(setup = false) {
 }
 
 async function enterApp() {
+  $('appShell').inert = false;
+  $('appShell').classList.remove('wizard-blur');
+  document.querySelector('main').inert = false;
+  $('toTop').inert = false;
   $('authGate').classList.add('hidden');
   $('appShell').classList.remove('hidden');
   $('logoutBtn').classList.toggle('hidden', !app.auth?.authenticationRequired);
   showCatalogSkeletons();
   await refresh();
-  await Promise.all([refreshDataInfo(), refreshNotificationPreferences(), refreshSessions(), refreshConfiguration(), refreshOperations()]);
+  await Promise.all([refreshDataInfo(), refreshNotificationPreferences(), refreshSessions(), refreshConfiguration(), refreshOperations(), refreshSecuritySettings()]);
   if (!app.auth?.onboardingComplete) showWizard();
   else if (app.pendingProductSlug) {
     const slug = app.pendingProductSlug;
@@ -548,7 +611,7 @@ async function submitAuth(event) {
   try {
     const result = await authRequest(setup ? '/api/auth/setup' : '/api/auth/login', {
       method: 'POST',
-      body: JSON.stringify(setup ? { setupToken: $('setupToken').value, password } : { password }),
+      body: JSON.stringify(setup ? { setupToken: $('setupToken').value, password } : { password, code:$('authCode').value.trim() }),
     });
     app.auth = { ...(await authRequest('/api/auth/status')), csrfToken: result.csrfToken };
     $('authForm').reset();
@@ -714,6 +777,7 @@ function watchCard(p) {
     <div class="detail">${escapeHtml(productDetail(p))}${changedRecently ? ' · changed recently' : ''}</div>
     ${freshnessMarkup(p)}
     ${alertSummaryMarkup(p)}
+    ${autoBuyCard(p)}
     <div class="rule-chips">${(p.collections || []).map((id) => app.collections.find((collection) => collection.id === id)).filter(Boolean).map((collection) => `<span class="rule-chip">Collection: ${escapeHtml(collection.name)}</span>`).join('')}</div>
     <div class="card-actions">
       <button data-product-detail="${escapeHtml(p.slug)}">Alert rules</button>
@@ -894,7 +958,7 @@ function renderProducts(force = false) {
   const watched = filteredWatchlist();
   $('watchCount').textContent = allWatched.length;
   if ($('settingsWatchCount')) $('settingsWatchCount').textContent = `${allWatched.length} product${allWatched.length === 1 ? '' : 's'}`;
-  const watchKey = JSON.stringify([watched.map((p) => [p.slug,p.name,p.imageUrl,p.sku,p.variantTitle,p.category,p.status,p.inStock,p.unlisted,p.price,p.lastChangedAt,p.watchRule,p.collections,p.alertSummary]), app.collections.map(({ id,name,notifyReady,alertsOnly,archived,alertSummary }) => [id,name,notifyReady,alertsOnly,archived,alertSummary]), [...app.selectedWatch]]);
+  const watchKey = JSON.stringify([watched.map((p) => [p.slug,p.name,p.imageUrl,p.sku,p.variantTitle,p.category,p.status,p.inStock,p.unlisted,p.price,p.lastChangedAt,p.watchRule,p.collections,p.alertSummary,p.autoBuy]), app.collections.map(({ id,name,notifyReady,alertsOnly,archived,alertSummary }) => [id,name,notifyReady,alertsOnly,archived,alertSummary]), [...app.selectedWatch]]);
   if (force || watchKey !== app.watchRenderKey) {
     reconcileList($('watchGrid'), watched, 'data-product-card', watchCard);
     app.watchRenderKey = watchKey;
@@ -1283,6 +1347,7 @@ function renderEvents() {
   const events = app.activity.events || [];
   const arrivals = app.activity.arrivals || [];
   const renderEvent = (e) => {
+    const discovery = activityDiscovery(e);
     const metadata = activityMeta(e);
     const priceClass = metadata.some(part => part.priceDecrease) ? ' price-decrease' : '';
     const metadataText = metadata.map((part) => `${part.text}${part.extra ? ` ${part.extra}` : ''}`).join(' · ');
@@ -1290,8 +1355,8 @@ function renderEvents() {
       const text = escapeHtml(part.text);
       let content = text;
       if (part.className === 'event-meta-transition') {
-        if (e.type === 'sold_out') content = text.replace(/Sold out$/, '<span class="event-meta-sold-out">Sold out</span>');
-        else if (e.type === 'restock') content = text.replace(/In stock$/, '<span class="event-meta-in-stock">In stock</span>');
+        if (e.type === 'sold_out' || e.type === 'new_product') content = content.replace(/Sold out$/, '<span class="event-meta-sold-out">Sold out</span>');
+        if (e.type === 'restock' || e.type === 'new_product') content = content.replace(/In stock$/, '<span class="event-meta-in-stock">In stock</span>');
       }
       return `<span class="event-meta-part ${escapeHtml(part.className)}">${content}${part.extra ? ` <span class="event-delta-percent">${escapeHtml(part.extra)}</span>` : ''}</span>`;
     }).join('');
@@ -1300,11 +1365,11 @@ function renderEvents() {
     const context = activityContextParts(e);
     const contextParts = [context.current.label ? {kind:'current',text:context.current.label,title:context.current.title,tone:context.current.tone} : null,...context.parts].filter(Boolean);
     const contextText = contextParts.map(part => `${part.text}. ${part.title}`).join(' ');
-    const contextHtml = contextParts.map(part => `<span class="event-context-part ${part.tone}" data-activity-context="${part.kind}" title="${escapeHtml(part.title)}">${escapeHtml(part.text)}</span>`).join('');
-    const activityLabel = `Open ${e.name} activity details. ${metadataText}. ${context.watch ? `${context.watchTitle}. ` : ''}${contextText} Server alert: ${alert.label}. Detected ${exactTime}.`;
+    const contextHtml = `${discovery && context.watch ? `<span class="event-context-part event-discovery-watch" title="${escapeHtml(context.watchTitle)}">${escapeHtml(context.watch)}</span>` : ''}${contextParts.map(part => `<span class="event-context-part ${part.tone}" data-activity-context="${part.kind}" title="${escapeHtml(part.title)}">${escapeHtml(part.text)}</span>`).join('')}`;
+    const activityLabel = `Open ${e.name} activity details. ${discovery ? `${discovery.label}. ${discovery.title} ` : ''}${metadataText}. ${context.watch ? `${context.watchTitle}. ` : ''}${contextText} Server alert: ${alert.label}. Detected ${exactTime}.`;
     return `<button class="event event-button ${escapeHtml(e.type)}${priceClass}" type="button" data-activity-event="${escapeHtml(e.id)}" data-activity-row="event:${escapeHtml(e.id)}" aria-label="${escapeHtml(activityLabel)}">
       <span class="event-icon" aria-hidden="true">${icon[e.type] || '•'}</span>
-      <span class="event-main"><span class="event-title"><strong>${escapeHtml(e.name)}</strong>${context.watch ? `<span class="event-watch" title="${escapeHtml(context.watchTitle)}">${escapeHtml(context.watch)}</span>` : ''}</span><span class="event-meta" title="${escapeHtml(metadataText)}">${metadataHtml}</span>${contextHtml ? `<span class="event-context" title="${escapeHtml(contextText)}">${contextHtml}</span>` : ''}</span>
+      <span class="event-main"><span class="event-title"><strong>${escapeHtml(e.name)}</strong>${discovery ? `<span class="event-discovery" title="${escapeHtml(discovery.title)}">${discovery.label}</span>` : ''}${context.watch ? `<span class="event-watch" title="${escapeHtml(context.watchTitle)}">${escapeHtml(context.watch)}</span>` : ''}</span><span class="event-meta" title="${escapeHtml(metadataText)}">${metadataHtml}</span>${contextHtml ? `<span class="event-context" title="${escapeHtml(contextText)}">${contextHtml}</span>` : ''}</span>
       <span class="event-side"><span class="event-alert ${escapeHtml(alert.state)}" title="${escapeHtml(serverAlertTitle(e))}"><span class="event-alert-dot" aria-hidden="true"></span><span class="event-alert-label">${escapeHtml(alert.label)}</span></span><time datetime="${escapeHtml(e.detectedAt)}" title="${escapeHtml(exactTime)}">${escapeHtml(activityTime(e))}</time></span>
     </button>`;
   };
@@ -1438,6 +1503,8 @@ function renderActivityDialog(event) {
   const alert = event.serverAlert || {};
   $('activityDialogTitle').textContent = event.name || 'Activity details';
   $('activityDialogBody').innerHTML = `<section class="activity-detail-hero"><span class="settings-kicker">${escapeHtml(String(event.region || '').toUpperCase())} · ${escapeHtml(humanStatus(event.type))}</span><h3>${escapeHtml(event.name || event.slug)}</h3><p>${escapeHtml(metadata)}</p></section>${activityContextDetails(event)}<div class="activity-evidence"><article class="settings-card"><span class="settings-kicker">Monitor evidence</span><h3>Confirmation</h3><dl class="settings-details"><div><dt>Policy</dt><dd>${escapeHtml(humanStatus(confirmation.policy || 'legacy event'))}</dd></div><div><dt>Observations</dt><dd>${escapeHtml(confirmation.observations || 1)} of ${escapeHtml(confirmation.required || 1)}</dd></div><div><dt>First observed</dt><dd>${escapeHtml(confirmation.firstObservedAt ? new Date(confirmation.firstObservedAt).toLocaleString() : exactEventTime(event))}</dd></div><div><dt>Confirmed</dt><dd>${escapeHtml(confirmation.confirmedAt ? new Date(confirmation.confirmedAt).toLocaleString() : exactEventTime(event))}</dd></div></dl></article><article class="settings-card"><span class="settings-kicker">Server notification</span><h3>${escapeHtml(alert.label || 'No delivery')}</h3><p>${escapeHtml(serverAlertTitle(event))}</p><dl class="settings-details"><div><dt>Outcome</dt><dd>${escapeHtml(humanStatus(alert.state || 'not recorded'))}</dd></div><div><dt>Channels</dt><dd>${escapeHtml((alert.channels || []).join(', ') || 'None')}</dd></div><div><dt>Detected</dt><dd>${escapeHtml(exactEventTime(event))}</dd></div></dl></article></div><div class="settings-actions wrap activity-detail-actions">${event.collectionId ? `<button class="primary button-link" type="button" data-activity-collection="${escapeHtml(event.collectionId)}" data-activity-region="${escapeHtml(event.region || app.currentRegion || '')}">Open collection</button>` : `<button class="primary button-link" type="button" data-activity-product="${escapeHtml(event.slug)}" data-activity-region="${escapeHtml(event.region || app.currentRegion || '')}">Open product details</button>`}${event.url ? `<a class="button-link" href="${escapeHtml(event.url)}" target="_blank" rel="noopener">Open UniFi Store ↗</a>` : ''}</div>`;
+  const discovery = activityDiscovery(event);
+  if (discovery) $('activityDialogBody').querySelector('.activity-detail-hero h3').insertAdjacentHTML('afterend', `<p><span class="event-discovery">${discovery.label}</span> ${escapeHtml(discovery.title)}</p>`);
 }
 
 async function openActivityDialog(id) {
@@ -2111,7 +2178,7 @@ async function exportData(encrypted = true) {
       if (passphrase == null) return;
       const confirmation = window.prompt('Enter the export passphrase again.');
       if (passphrase !== confirmation) throw new Error('The export passphrases do not match.');
-      const res = await fetch(`/api/data/export/encrypted${region}`, {
+      const res = await securityFetch(`/api/data/export/encrypted${region}`, {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json', ...(app.auth?.csrfToken ? { 'X-CSRF-Token': app.auth.csrfToken } : {}) },
         body: JSON.stringify({ passphrase }),
@@ -2120,7 +2187,7 @@ async function exportData(encrypted = true) {
       toast('Encrypted GearBeacon data exported');
     } else {
       if (!window.confirm('Plain JSON exports are not encrypted and may contain your watchlist and history. Continue?')) return;
-      const res = await fetch(`/api/data/export${region}`, { cache: 'no-store', credentials: 'same-origin' });
+      const res = await securityFetch(`/api/data/export${region}`, { cache: 'no-store', credentials: 'same-origin' });
       await saveDownloadResponse(res, `GearBeacon-Backup-${new Date().toISOString().slice(0,10)}.gearbeacon.json`);
       toast('Plain GearBeacon data exported');
     }
@@ -2240,6 +2307,7 @@ async function updateOwnerPassword(event) {
     resultEl.classList.remove('hidden');
     renderSecurity();
     await refreshSessions();
+    await refreshSecuritySettings();
   } catch (err) {
     resultEl.textContent = err.message;
     resultEl.classList.remove('hidden');
@@ -3376,7 +3444,7 @@ $('productDialogBackdrop').addEventListener('click', closeProductDialog);
 $('closeActivityDialog').addEventListener('click', closeActivityDialog);
 $('activityDialogBackdrop').addEventListener('click', closeActivityDialog);
 document.addEventListener('keydown', (event) => {
-  if ($('ownerDialog').open) return;
+  if ($('ownerDialog').open || $('securityVerifyDialog').open) return;
   if (event.key === 'Escape') {
     const panel = document.querySelector('[data-toolbar-panel]:not(.hidden)');
     if (panel) { event.preventDefault(); closeToolbarPanels(); toolbarToggle(panel).focus({preventScroll:true}); return; }
@@ -3517,6 +3585,61 @@ window.addEventListener('offline', () => {
   renderAttentionBanner();
 });
 window.addEventListener('online', () => { app.reconnectPending = app.browserOffline; app.browserOffline = false; renderAttentionBanner(); refreshActivity(app.activity.page, { background:true }); refresh(); });
+
+$('verifyCancel').addEventListener('click', () => $('securityVerifyDialog').close());
+$('securityVerifyForm').addEventListener('submit', async event => {
+  event.preventDefault(); $('verifySubmit').disabled = true; $('verifyError').hidden = true;
+  try {
+    await authRequest('/api/auth/verify', { method:'POST', body:JSON.stringify({ password:$('verifyPassword').value, code:$('verifyCode').value.trim() }) });
+    $('securityVerifyDialog').close('verified');
+  } catch (error) { $('verifyError').textContent = error.message; $('verifyError').hidden = false; }
+  finally { $('verifySubmit').disabled = false; }
+});
+$('sessionPolicyForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  try {
+    await authRequest('/api/auth/security', { method:'PUT', body:JSON.stringify({ sessionHours:Number($('sessionHours').value), idleMinutes:Number($('sessionIdleMinutes').value), privateNotificationHosts:$('notificationPrivateHosts').value }) });
+    app.auth = await authRequest('/api/auth/status');
+    await refreshSecuritySettings(); toast('Security settings saved');
+  } catch (error) { toast(error.message,'error'); }
+});
+$('mfaBegin').addEventListener('click', async () => {
+  try {
+    const result = await authRequest('/api/auth/mfa/begin', { method:'POST', body:'{}' });
+    $('mfaSecret').value = result.secret; $('mfaSetup').hidden = false; $('mfaCode').value = ''; $('mfaSecret').focus();
+  } catch (error) { toast(error.message,'error'); }
+});
+$('mfaSetup').addEventListener('submit', async event => {
+  event.preventDefault();
+  try {
+    const result = await authRequest('/api/auth/mfa/finish', { method:'POST', body:JSON.stringify({ code:$('mfaCode').value.trim() }) });
+    $('mfaSetup').reset(); $('mfaSetup').hidden = true;
+    $('mfaRecoveryCodes').value = result.recoveryCodes.join('\n'); $('mfaRecovery').hidden = false;
+    await refreshSecuritySettings(); await refreshSessions(); $('mfaRecoveryCodes').focus();
+  } catch (error) { toast(error.message,'error'); }
+});
+$('mfaRecoveryDone').addEventListener('click', () => { $('mfaRecoveryCodes').value = ''; $('mfaRecovery').hidden = true; $('mfaDisable').focus(); });
+$('mfaDisable').addEventListener('click', async () => {
+  if (!window.confirm('Disable authenticator protection? Other browsers will be signed out.')) return;
+  try {
+    await authRequest('/api/auth/mfa/disable', { method:'POST', body:'{}' });
+    $('mfaRecoveryCodes').value = ''; $('mfaRecovery').hidden = true;
+    await refreshSecuritySettings(); await refreshSessions(); toast('Authenticator disabled');
+  } catch (error) { toast(error.message,'error'); }
+});
+let lastActivitySent = 0;
+async function recordOwnerActivity(event) {
+  if (!event.isTrusted || document.hidden || !app.auth?.authenticated || !app.auth.authenticationRequired || Date.now() - lastActivitySent < 15000) return;
+  lastActivitySent = Date.now();
+  try {
+    await authRequest('/api/auth/activity', { method:'POST', body:'{}' });
+    app.auth.idleExpiresAt = new Date(Date.now() + app.auth.sessionPolicy.idleMinutes * 60000).toISOString();
+  } catch { /* The request wrapper locks an expired session. */ }
+}
+for (const event of ['pointerdown','keydown','wheel','touchstart']) document.addEventListener(event, recordOwnerActivity, { passive:true });
+setInterval(() => {
+  if (app.auth?.authenticated && app.auth.authenticationRequired && app.auth.idleExpiresAt && Date.now() >= Date.parse(app.auth.idleExpiresAt)) showAuth(false);
+}, 1000);
 
 initialize().finally(updateToTopVisibility);
 document.addEventListener('visibilitychange', () => {

@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 
 const [html, javascript] = await Promise.all([
   readFile('web/index.html', 'utf8'),
-  readFile('web/app.js', 'utf8'),
+  Promise.all([readFile('web/app.js', 'utf8'),readFile('web/autobuy.js', 'utf8')]).then(parts=>parts.join('\n')),
 ]);
 const htmlIds = [...html.matchAll(/\bid="([^"]+)"/g)].map((match) => match[1]);
 const duplicateIds = [...new Set(htmlIds.filter((id, index) => htmlIds.indexOf(id) !== index))];

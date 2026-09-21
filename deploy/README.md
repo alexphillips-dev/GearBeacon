@@ -18,9 +18,9 @@ This directory contains GearBeacon's service installers, uninstallers, and owner
 
 - Native installers expect the **extracted standalone package**, with its executable, `web` directory, and manifest. They are copied into release archives; source-checkout launchers are in `../launchers/`.
 - Automatic startup uses a low-privilege identity and a separate service data directory. Windows uses a **Scheduled Task named GearBeacon**, despite the installer filename.
-- Create and verify a pre-update backup before passing `-BackupConfirmed` or `--backup-confirmed`. Native updaters verify SHA-256; Docker updates retain the existing data volume.
+- Create and verify a pre-update backup before passing `-BackupConfirmed` or `--backup-confirmed`. Native updaters verify SHA-256; all helpers require GitHub CLI to verify the release's signed provenance bundle. Docker updates retain the existing data volume and pin the verified image digest.
 - Native update helpers replace application files, not every installer/service configuration. Review deployment changes before applying a new installer.
-- GearBeacon 1.3.0 helpers verify local `/healthz` and the expected version after restart. Native helpers accept custom ports (`-Port` or `--port`); failed verification prints recovery guidance and exits unsuccessfully. They do not automatically restore a database or roll back.
+- Update helpers verify local `/healthz` and the expected version after restart. Native helpers accept custom ports (`-Port` or `--port`); failed verification prints recovery guidance and exits unsuccessfully. They do not automatically restore a database or roll back. See [owner security and recovery](../docs/SECURITY_CONTROLS.md) before transferring or rolling back a Windows account-protected key.
 - The Docker helper atomically saves `GEARBEACON_IMAGE_TAG` in the Compose project `.env`, checks the resolved image and running image ID, and preserves other settings. Run it from that project with its normal `.env` configuration. Helpers inside older release archives still need manual tag persistence and startup verification.
 - Uninstallers preserve application data unless you explicitly request `-RemoveData` or `--remove-data`.
 

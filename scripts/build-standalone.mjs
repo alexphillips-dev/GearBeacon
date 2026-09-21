@@ -34,7 +34,18 @@ const bundledEmailModule = [
   '  return module.exports;',
   '})();',
 ].join('\n');
-const bundledSource = indexSource.replace(emailRequire, () => bundledEmailModule);
+const autoBuySource = readFileSync(join(root, 'backend', 'dist', 'autobuy.js'), 'utf8');
+const autoBuyRequire = "const { createAutoBuy, AUTO_BUY_SCHEMA, neutralizeAutoBuyBackup } = require('./autobuy');";
+if (!indexSource.includes(autoBuyRequire)) throw new Error('Standalone bundling could not find the auto-buy module import.');
+const bundledAutoBuyModule = ['const { createAutoBuy, AUTO_BUY_SCHEMA, neutralizeAutoBuyBackup } = (() => {',
+  'const module = { exports: {} };', 'const exports = module.exports;', autoBuySource, 'return module.exports;', '})();'].join('\n');
+let bundledSource = indexSource.replace(emailRequire, () => bundledEmailModule).replace(autoBuyRequire, () => bundledAutoBuyModule);
+for (const [name, names] of [['security','createOwnerSecurity'], ['key-protection','secureDataDirectory, loadProtectedKey'], ['outbound','notificationFetch, normalizePrivateHosts']]) {
+  const statement = `const { ${names} } = require('./${name}');`;
+  if (!bundledSource.includes(statement)) throw new Error(`Missing ${name} module import.`);
+  const source = readFileSync(join(root,'backend','dist',`${name}.js`),'utf8');
+  bundledSource = bundledSource.replace(statement, () => `const { ${names} } = (() => { const module = { exports:{} }; const exports = module.exports;\n${source}\nreturn module.exports; })();`);
+}
 writeFileSync(bundledMainFile, bundledSource);
 
 const syntaxCheck = spawnSync(process.execPath, ['--check', bundledMainFile], { cwd: root, stdio: 'inherit' });

@@ -1,5 +1,7 @@
 import { testActivityDisplay } from './activity-display-smoke.mjs';
 import { testUpdateNotice } from './update-notice-smoke.mjs';
+import { testAutoBuyUi } from './auto-buy-ui-smoke.mjs';
+import { testSecurityUi } from './security-ui-smoke.mjs';
 import { testSettingsNavigation } from './settings-navigation-smoke.mjs';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -112,12 +114,20 @@ async function assertAccessible(label) {
     const injected = await cdp.send('Runtime.evaluate', { expression:axeSource });
     if (injected.exceptionDetails) throw new Error(`Could not load axe-core for ${label}.`);
   }
+  // Theme, hover and layout changes can still be transitioning after DOM checks
+  // pass. Audit their settled colors without disabling transitions or axe rules.
+  await evaluate(`(async () => {
+    await new Promise(requestAnimationFrame);
+    await Promise.all(document.getAnimations()
+      .filter(animation => animation instanceof CSSTransition)
+      .map(animation => animation.finished.catch(() => {})));
+  })()`);
   const violations = await evaluate(`axe.run(document, {
     runOnly:{ type:'tag', values:['wcag2a','wcag2aa','wcag21aa','wcag22aa'] },
     resultTypes:['violations']
   }).then(({ violations }) => violations.map((violation) => ({
     id:violation.id, impact:violation.impact, help:violation.help,
-    targets:violation.nodes.slice(0,5).map((node) => node.target.join(' '))
+    targets:violation.nodes.slice(0,5).map((node) => ({target:node.target.join(' '), summary:node.failureSummary}))
   })))`);
   assert(violations.length === 0, `${label} has accessibility violations: ${JSON.stringify(violations)}`);
 }
@@ -189,8 +199,8 @@ try {
   await assertAccessible('Owner setup screen');
   await evaluate(`(() => {
     document.getElementById('setupToken').value = 'v19-browser-setup-token';
-    document.getElementById('authPassword').value = 'V1.3.0 browser owner password';
-    document.getElementById('authPasswordConfirm').value = 'V1.3.0 browser owner password';
+    document.getElementById('authPassword').value = 'V1.4.0 browser owner password';
+    document.getElementById('authPasswordConfirm').value = 'V1.4.0 browser owner password';
     document.getElementById('authForm').requestSubmit();
   })()`);
   await waitForBrowser("!document.getElementById('appShell').classList.contains('hidden') && app.products.length >= 5", 'Authenticated dashboard did not load');
@@ -654,7 +664,7 @@ try {
   await evaluate("document.getElementById('closeProductDialog').click(); document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabData').click()");
   await waitForBrowser("!document.getElementById('settingsPanelData').hidden && document.getElementById('settingsPanelNotifications').hidden", 'Data settings tab failed');
   const recoverySettings = await evaluate("({ activityRetention:document.getElementById('configEventRetention').value, secondaryDirectory:document.getElementById('configSecondaryBackupDir').value, encrypted:document.getElementById('configSecondaryEncrypted').checked, hasPrimaryTest:Boolean(document.getElementById('testPrimaryBackup')), hasSecondaryTest:Boolean(document.getElementById('testSecondaryBackup')) })");
-  assert(recoverySettings.activityRetention === '365' && recoverySettings.secondaryDirectory === '' && !recoverySettings.encrypted && recoverySettings.hasPrimaryTest && recoverySettings.hasSecondaryTest, `V1.3.0 recovery settings are incomplete: ${JSON.stringify(recoverySettings)}`);
+  assert(recoverySettings.activityRetention === '365' && recoverySettings.secondaryDirectory === '' && !recoverySettings.encrypted && recoverySettings.hasPrimaryTest && recoverySettings.hasSecondaryTest, `V1.4.0 recovery settings are incomplete: ${JSON.stringify(recoverySettings)}`);
   const browserBackup = await evaluate(`(async () => {
     const backup = await api('/api/data/export/encrypted', { method:'POST', body:JSON.stringify({ passphrase:'browser backup passphrase' }) });
     const preview = await api('/api/data/preview', { method:'POST', body:JSON.stringify({ backup, passphrase:'browser backup passphrase' }) });
@@ -693,7 +703,7 @@ try {
 
   await evaluate("document.getElementById('logoutBtn').click()");
   await waitForBrowser("!document.getElementById('authGate').classList.contains('hidden')", 'Browser logout did not return to the owner gate');
-  await evaluate("(() => { document.getElementById('authPassword').value='V1.3.0 browser owner password'; document.getElementById('authForm').requestSubmit(); })()");
+  await evaluate("(() => { document.getElementById('authPassword').value='V1.4.0 browser owner password'; document.getElementById('authForm').requestSubmit(); })()");
   await waitForBrowser("!document.getElementById('appShell').classList.contains('hidden') && app.auth.authenticated", 'Browser login after logout failed');
   await evaluate("document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabSecurity').click()");
   await evaluate("document.querySelector('[data-settings-subtab=\"security/sessions\"]').click()");
@@ -1432,6 +1442,8 @@ try {
     activateTab('watchlist'); resetWatchFilters(); document.getElementById('groupCollectedWatches').checked=false;
     const saved={products:app.products,collections:app.collections,variants:app.catalogVariants,selected:app.selectedWatch};
     const template=app.products.find(product=>product.watched);
+    // Keep relative-time labels stable while measuring DOM reuse; performance.now remains live.
+    const originalNow=Date.now; const fixtureNow=originalNow(); Date.now=()=>fixtureNow;
     try {
       app.collections=[]; app.catalogVariants=[]; app.selectedWatch=new Set(['scale-0']);
       app.products=Array.from({length:500},(_,i)=>({...template,slug:'scale-'+i,name:'Scale product '+i,imageUrl:null,collections:[],watched:true}));
@@ -1458,7 +1470,7 @@ try {
       app.collections[0]={...app.collections[0],pricing:{...app.collections[0].pricing,total:12345}};
       renderProducts(); const retainedProjects=projects.filter(node=>node.isConnected).length;
       return {fullMs,unchangedMs,singleMs,unchanged,retained,retainedProjects,optionsPreserved,focusPreserved,changedFocus,selected:document.querySelector('[data-watch-select="scale-0"]')?.checked};
-    } finally { app.products=saved.products; app.collections=saved.collections; app.catalogVariants=saved.variants; app.selectedWatch=saved.selected; renderProducts(true); }
+    } finally { Date.now=originalNow; app.products=saved.products; app.collections=saved.collections; app.catalogVariants=saved.variants; app.selectedWatch=saved.selected; renderProducts(true); }
   })()`);
   assert(scale.unchanged && scale.retained===499 && scale.retainedProjects===49 && scale.optionsPreserved && scale.focusPreserved && scale.changedFocus && scale.selected, `Large-list refresh lost state: ${JSON.stringify(scale)}`);
   console.log(`BROWSER SCALE: 500 watches · full ${scale.fullMs.toFixed(1)}ms · unchanged ${scale.unchangedMs.toFixed(1)}ms · one price ${scale.singleMs.toFixed(1)}ms · ${scale.retained}/500 cards retained`);
@@ -1556,6 +1568,8 @@ try {
   await evaluate("closeProductDialog(); activateTab('browse'); renderProducts(true)");
   assert(await evaluate("document.querySelectorAll('#browseGrid .store-card').length>0 && [...document.querySelectorAll('#browseGrid .store-card')].every(card=>card.querySelector('[data-product-freshness]'))"), 'Browse cards lack freshness evidence');
   await testUpdateNotice({evaluate,waitForBrowser,assertAccessible,assert,cdp,screenshotRoot});
+  await testAutoBuyUi({evaluate,waitForBrowser,assertAccessible,assert,cdp,screenshotRoot});
+  await testSecurityUi({evaluate,waitForBrowser,assertAccessible,assert,cdp,testRoot});
   console.log(`BROWSER SMOKE PASSED: ${process.platform} · setup/auth · WCAG axe scans · keyboard/focus/reduced-motion · persistent navigation/filters · resettable empty states · offline recovery · copy actions · unclipped navigation · dark/light · images · watch/rules/bulk/import · exact variants/combined preview/collections/purchased · stock insights/windows/collection readiness/budget alerts/deep-links · compact searchable activity/evidence/live arrivals/anchored scrolling/stable pages · serialized refresh/hidden tabs/drafts/large lists · Settings sections/keyboard/drafts/persistence · email settings/preview/deep-link · backup/import · diagnostics/operations · responsive`);
 } catch (error) {
   if (serverOutput.length) process.stderr.write(`\nGearBeacon server output:\n${serverOutput.join('').slice(-12000)}\n`);

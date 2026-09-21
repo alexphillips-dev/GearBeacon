@@ -5,6 +5,8 @@ const requireMatch = (text, pattern, message) => {
   if (!pattern.test(text)) throw new Error(message);
 };
 
+requireMatch(await read('checkout/companion.mjs'), /chromium\.launch\(\{\s*headless,\s*chromiumSandbox:true/, 'The checkout companion must explicitly enable the Chromium sandbox.');
+
 const [backend, dockerfile, compose, windowsInstaller, macInstaller, linuxInstaller, dependabot, securityWorkflow] = await Promise.all([
   read('backend/src/index.ts'),
   read('Dockerfile'),
@@ -19,6 +21,14 @@ const [backend, dockerfile, compose, windowsInstaller, macInstaller, linuxInstal
 requireMatch(backend, /const PASSWORD_HASH_VERSION = 'scrypt-v2';/, 'Current owner-password hashes must use the versioned scrypt-v2 profile.');
 requireMatch(backend, /'scrypt-v1':.*p: 1[\s\S]*'scrypt-v2':.*p: 5/, 'Owner-password verification must retain legacy scrypt-v1 support and use the stronger scrypt-v2 profile.');
 requireMatch(backend, /function validatedRequestHost\([\s\S]*Request host is not allowed\./, 'HTTP requests must pass strict Host validation before routing.');
+if (backend.includes('ALLOW_INSECURE_REMOTE') || backend.includes('environment defaults are active')) throw new Error('Unsafe binding overrides and configuration fallback must not return.');
+requireMatch(backend, /activity_at[\s\S]*reauthenticationRequired/, 'Session activity and sensitive-action verification must remain server enforced.');
+for (const file of ['deploy/update-windows.ps1','deploy/update-mac-linux.sh','deploy/update-docker.sh']) {
+  const helper = await read(file);
+  for (const text of ['attestation verify','--bundle','--repo alexphillips-dev/GearBeacon','--signer-workflow','--source-ref','--source-digest']) {
+    if (!helper.includes(text)) throw new Error(`${file} must preserve provenance constraint ${text}.`);
+  }
+}
 for (const setting of ['server.headersTimeout = 15_000;', 'server.requestTimeout = 30_000;', 'server.timeout = 120_000;', 'server.keepAliveTimeout = 5_000;', 'server.maxHeadersCount = 64;', 'server.maxRequestsPerSocket = 100;']) {
   if (!backend.includes(setting)) throw new Error(`Missing bounded HTTP server setting: ${setting}`);
 }
@@ -38,7 +48,9 @@ requireMatch(linuxInstaller, /User=gearbeacon[\s\S]*CapabilityBoundingSet=[\s\S]
 requireMatch(linuxInstaller, /chown -R root:root \/opt\/gearbeacon/, 'Linux application files must remain root-owned.');
 
 const devTargets = dependabot.match(/target-branch:\s*dev/g) || [];
-if (devTargets.length !== 3) throw new Error('Every Dependabot ecosystem must target the development branch.');
+const dependencyUpdates = dependabot.split(/\r?\n  - package-ecosystem:/).slice(1);
+if (dependencyUpdates.length !== 4 || devTargets.length !== dependencyUpdates.length || dependencyUpdates.some(section=>!/^\s+target-branch:\s*dev\s*$/m.test(section))) throw new Error('Every Dependabot ecosystem must target the development branch.');
+if (!dependencyUpdates.some(section=>/^\s*npm\s*\r?\n/.test(section) && /^\s+directory:\s*\/checkout\s*$/m.test(section))) throw new Error('The optional checkout companion must receive dependency updates.');
 const actionsUpdates = dependabot.split(/\r?\n  - package-ecosystem:/).find((section) => /^\s*github-actions\s*\r?\n/.test(section)) || '';
 requireMatch(actionsUpdates, /    groups:\s*\r?\n      codeql:\s*\r?\n        patterns:\s*\r?\n          - ['"]github\/codeql-action\/\*['"]/, 'Dependabot must group CodeQL actions so initialization, analysis, and SARIF upload update together.');
 requireMatch(securityWorkflow, /repository-secret-scan:[\s\S]*scan-type:\s*fs[\s\S]*scanners:\s*secret[\s\S]*exit-code:\s*'1'/, 'Security CI must fail closed on repository filesystem secret findings.');

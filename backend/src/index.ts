@@ -1,4 +1,4 @@
-// GearBeacon V1.3.0 backend
+// GearBeacon V1.4.0 backend
 // Private, owner-operated stock monitoring for local and self-hosted installs.
 // @ts-nocheck
 
@@ -14,9 +14,13 @@ const { URL } = require('node:url');
 const { execFileSync } = require('node:child_process');
 const { DatabaseSync } = require('node:sqlite');
 const { renderEmail, buildMimeEmail, numericPrice } = require('./email');
+const { createAutoBuy, AUTO_BUY_SCHEMA, neutralizeAutoBuyBackup } = require('./autobuy');
+const { createOwnerSecurity } = require('./security');
+const { secureDataDirectory, loadProtectedKey } = require('./key-protection');
+const { notificationFetch, normalizePrivateHosts } = require('./outbound');
 
-const APP_VERSION = '1.3.0';
-const DATABASE_SCHEMA_VERSION = 13;
+const APP_VERSION = '1.4.0';
+const DATABASE_SCHEMA_VERSION = 15;
 const STORE_BASE = 'https://store.ui.com';
 const REGIONS = {
   us: { label: 'United States', path: 'us/en', currency: 'USD', origin: STORE_BASE },
@@ -93,10 +97,12 @@ const rawAccessMode = String(process.env.GEARBEACON_ACCESS_MODE || 'local').trim
 if (!['local', 'private', 'proxy'].includes(rawAccessMode)) throw new Error('GEARBEACON_ACCESS_MODE must be local, private, or proxy.');
 let ACCESS_MODE = rawAccessMode;
 let BIND_HOST = String(process.env.GEARBEACON_BIND_HOST || (ACCESS_MODE === 'private' ? '0.0.0.0' : '127.0.0.1')).trim();
-const ALLOW_INSECURE_REMOTE = ['1', 'true', 'yes'].includes(String(process.env.GEARBEACON_ALLOW_INSECURE_REMOTE || '').toLowerCase());
+if (ACCESS_MODE === 'local' && !isLoopbackHost(BIND_HOST)) throw new Error('Refusing to expose an unauthenticated local-mode server on a non-loopback address. Use authenticated private mode for remote access.');
+if (ACCESS_MODE === 'proxy' && !isLoopbackHost(BIND_HOST)) throw new Error('Refusing proxy mode on a non-loopback bind. Use a same-host HTTPS reverse proxy.');
 let COOKIE_SECURE = ['1', 'true', 'yes'].includes(String(process.env.GEARBEACON_COOKIE_SECURE || '').toLowerCase())
   || PUBLIC_BASE_URL.toLowerCase().startsWith('https://');
-const SESSION_HOURS = Math.max(1, Math.min(24 * 90, Number(process.env.GEARBEACON_SESSION_HOURS || 168)));
+const SESSION_HOURS = Number(process.env.GEARBEACON_SESSION_HOURS || 24);
+const SESSION_IDLE_MINUTES = Number(process.env.GEARBEACON_SESSION_IDLE_MINUTES || 30);
 let ALLOWED_ORIGINS = String(process.env.GEARBEACON_ALLOWED_ORIGINS || '').split(',').map((value) => value.trim()).filter(Boolean);
 
 let NOTIFICATION_MAX_ATTEMPTS = Math.max(1, Math.min(10, Number(process.env.GEARBEACON_NOTIFICATION_MAX_ATTEMPTS || 5)));
@@ -162,6 +168,7 @@ const BACKUP_DIR = path.join(USER_DATA_DIR, 'backups');
 const DB_FILE = path.join(USER_DATA_DIR, MOCK_MODE ? 'gearbeacon.mock.sqlite3' : 'gearbeacon.sqlite3');
 const SECRET_KEY_FILE = path.join(USER_DATA_DIR, 'secrets.key');
 fs.mkdirSync(USER_DATA_DIR, { recursive: true, mode: 0o700 });
+secureDataDirectory(USER_DATA_DIR);
 fs.mkdirSync(BACKUP_DIR, { recursive: true, mode: 0o700 });
 try { if (process.platform !== 'win32') { fs.chmodSync(USER_DATA_DIR, 0o700); fs.chmodSync(BACKUP_DIR, 0o700); } } catch {}
 
@@ -573,6 +580,8 @@ function createDatabaseBackup(reason = 'manual') {
     const destination = path.join(BACKUP_DIR, filename);
     db.exec('PRAGMA wal_checkpoint(FULL)');
     db.exec(`VACUUM INTO '${sqliteQuote(destination)}'`);
+    const backupDb = new DatabaseSync(destination);
+    try { neutralizeAutoBuyBackup(backupDb); } finally { backupDb.close(); }
     const backupIntegrity = databaseIntegrity(destination);
     if (!backupIntegrity.ok) {
       try { fs.unlinkSync(destination); } catch {}
@@ -852,6 +861,13 @@ MIGRATIONS.push({ version:13, name:'alert-routing-and-expiry', sql:`
   ALTER TABLE watch_collections ADD COLUMN delivery_json TEXT NOT NULL DEFAULT '{}';
 ` });
 
+MIGRATIONS.push({ version:14, name:'authorized-auto-buy', sql:AUTO_BUY_SCHEMA });
+MIGRATIONS.push({ version:15, name:'owner-session-security', sql:`
+  ALTER TABLE sessions ADD COLUMN activity_at TEXT;
+  ALTER TABLE sessions ADD COLUMN verified_at TEXT;
+  DELETE FROM sessions;
+` });
+
 function runMigrations() {
   // Bootstrap the migration ledger before querying it on a brand-new database.
   if (!tableExists('schema_migrations')) {
@@ -897,30 +913,7 @@ function writeAppLog(level, source, message, detail = null) {
 }
 
 function secretKey() {
-  try {
-    if (fs.existsSync(SECRET_KEY_FILE)) {
-      const stat = fs.lstatSync(SECRET_KEY_FILE);
-      if (stat.isSymbolicLink() || !stat.isFile()) throw new Error('Secret key path is not a regular file.');
-      if (process.platform !== 'win32') {
-        fs.chmodSync(SECRET_KEY_FILE, 0o600);
-        const mode = fs.lstatSync(SECRET_KEY_FILE).mode & 0o777;
-        if (mode !== 0o600) throw new Error(`Secret key permissions are ${mode.toString(8)}; expected 600.`);
-      }
-      const key = Buffer.from(fs.readFileSync(SECRET_KEY_FILE, 'utf8').trim(), 'base64');
-      if (key.length !== 32) throw new Error('Secret key file is invalid.');
-      return key;
-    }
-    const key = crypto.randomBytes(32);
-    fs.writeFileSync(SECRET_KEY_FILE, key.toString('base64'), { encoding: 'utf8', flag: 'wx', mode: 0o600 });
-    if (process.platform !== 'win32') {
-      fs.chmodSync(SECRET_KEY_FILE, 0o600);
-      const mode = fs.lstatSync(SECRET_KEY_FILE).mode & 0o777;
-      if (mode !== 0o600) throw new Error(`Secret key permissions are ${mode.toString(8)}; expected 600.`);
-    }
-    return key;
-  } catch (err) {
-    throw new Error(`Unable to load the local notification encryption key: ${err?.message || err}`);
-  }
+  return loadProtectedKey(SECRET_KEY_FILE);
 }
 
 function encryptLocalSecrets(value) {
@@ -1124,7 +1117,13 @@ function normalizeAppConfig(input, base = DEFAULT_APP_CONFIG) {
 }
 
 function storedAppConfig() {
-  return normalizeAppConfig(safeJsonParse(getSetting('app_config', ''), {}), DEFAULT_APP_CONFIG);
+  const stored = getSetting('app_config', '');
+  let config = {};
+  if (stored) {
+    try { config = JSON.parse(stored); } catch { throw new Error('Saved application configuration is not valid JSON.'); }
+    if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('Saved application configuration must be an object.');
+  }
+  return normalizeAppConfig(config, DEFAULT_APP_CONFIG);
 }
 
 function storedSecrets() {
@@ -1352,11 +1351,15 @@ if (startupSafetyBackup && tableExists('backup_log')) {
 if (previousSchemaVersion > 0 && previousSchemaVersion < 5 && getSetting('onboarding_complete') == null) {
   setSetting('onboarding_complete', '1');
 }
+const ownerSecurity = createOwnerSecurity({ db, getSetting, setSetting, encrypt:encryptLocalSecrets, decrypt:decryptLocalSecrets, sessionHours:SESSION_HOURS, idleMinutes:SESSION_IDLE_MINUTES });
+ownerSecurity.policy();
 try {
+  if (fs.existsSync(SECRET_KEY_FILE)) secretKey();
+  ownerSecurity.enabled();
   applyAppConfig(storedAppConfig(), storedSecrets(), { startup: true });
 } catch (err) {
   console.error('[configuration] saved settings could not be applied:', err?.message || err);
-  writeAppLog('error', 'configuration', 'Saved configuration could not be applied; environment defaults are active.', { error: err?.message || String(err) });
+  throw new Error('Saved configuration could not be applied. Startup stopped; correct the configuration or restore a valid backup.');
 }
 for (const region of ACTIVE_REGIONS) importLegacyStateIfNeeded(region);
 setMeta('last_app_version', APP_VERSION);
@@ -1380,6 +1383,37 @@ function contextualProxy(values) {
   });
 }
 const state = contextualProxy(states);
+const autoBuy = createAutoBuy({
+  db, regions:REGIONS, mock:MOCK_MODE,
+  getProduct:(region,slug) => {
+    const product = states[region]?.products[slug];
+    return product ? { ...product, autoBuyFresh:productFreshness(product,region).state === 'confirmed' } : null;
+  },
+  eligible:(region,slug,collectionId,quantity) => {
+    if (!states[region]?.watchlist.includes(slug) || watchRule(slug,region).purchasedAt) return false;
+    if (!collectionId) return true;
+    const member = db.prepare(`SELECT m.quantity,m.purchased_quantity,c.archived FROM watch_collection_members m
+      JOIN watch_collections c ON c.region=m.region AND c.id=m.collection_id WHERE m.region=? AND m.slug=? AND m.collection_id=?`).get(region,slug,collectionId);
+    return Boolean(member && !member.archived && member.quantity-member.purchased_quantity >= quantity);
+  },
+  purchased:(region,slug,config,receipt) => {
+    if (!states[region]?.watchlist.includes(slug)) return;
+    if (config.collectionId) {
+      // Only the selected project receives the purchased quantity. Other projects remain wanted.
+      db.prepare(`UPDATE watch_collection_members SET purchased_quantity=purchased_quantity+?,
+        paid_total=CASE WHEN purchased_quantity=0 THEN ? WHEN paid_total IS NOT NULL THEN paid_total+? ELSE NULL END
+        WHERE region=? AND slug=? AND collection_id=? AND quantity-purchased_quantity>=?`)
+        .run(config.quantity,receipt.totalMinor/100,receipt.totalMinor/100,region,slug,config.collectionId,config.quantity);
+      baselineCollections(region,[config.collectionId]);
+    } else {
+      const rule = { ...watchRule(slug,region), purchasedAt:isoNow() };
+      db.prepare(`INSERT INTO watch_rules(region,slug,rule_json,updated_at) VALUES(?,?,?,?)
+        ON CONFLICT(region,slug) DO UPDATE SET rule_json=excluded.rule_json,updated_at=excluded.updated_at`).run(region,slug,JSON.stringify(rule),isoNow());
+      db.prepare("UPDATE notification_queue SET status='cancelled',updated_at=? WHERE region=? AND status IN ('pending','failed') AND json_extract(payload_json,'$.slug')=?").run(isoNow(),region,slug);
+    }
+  },
+  notify:(region,title,detail) => regionContext.run(region,()=>enqueueOperationalAlert('auto-buy',title,detail,region)),
+});
 const saveTimers = new Map();
 function saveStateSoon() {
   const region = currentRegion();
@@ -1886,8 +1920,15 @@ function createEvent(type, previous, current, watchedAtDetection, confirmation =
   return event;
 }
 
+async function fetchNotification(url, options = {}, timeoutMs = 10000) {
+  return notificationFetch(url, options, timeoutMs, {
+    allowedUrls:[NTFY_BASE_URL, DISCORD_WEBHOOK_URL, GENERIC_WEBHOOK_URL, GOTIFY_BASE_URL],
+    privateHosts:normalizePrivateHosts(getSetting('notification_private_hosts', process.env.GEARBEACON_NOTIFICATION_PRIVATE_HOSTS || '')),
+  });
+}
+
 async function postJson(url, body, headers = {}) {
-  const res = await fetchWithTimeout(url, {
+  const res = await fetchNotification(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...headers },
     body: JSON.stringify(body),
@@ -2080,7 +2121,7 @@ async function sendNtfy(event) {
   if (!NTFY_TOPIC) return null;
   const url = `${NTFY_BASE_URL}/${encodeURIComponent(NTFY_TOPIC)}`;
   const copy = notificationCopy(event);
-  const res = await fetchWithTimeout(url, {
+  const res = await fetchNotification(url, {
     method: 'POST',
     headers: {
       Title: copy.title,
@@ -2125,7 +2166,7 @@ async function sendGenericWebhook(event) {
       'X-GearBeacon-Signature': `sha256=${crypto.createHmac('sha256', GENERIC_WEBHOOK_HMAC_SECRET).update(`${timestamp}.${body}`).digest('hex')}`,
     } : {}),
   };
-  const response = await fetchWithTimeout(GENERIC_WEBHOOK_URL, { method: 'POST', headers, body }, 10000);
+  const response = await fetchNotification(GENERIC_WEBHOOK_URL, { method: 'POST', headers, body }, 10000);
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   return true;
 }
@@ -3098,6 +3139,7 @@ async function checkStore(reason = 'timer') {
     saveStateSoon();
 
     for (const event of notifications) enqueueAlert(event);
+    if (!monitor.partialErrors.length) autoBuy.observe(currentRegion(), state.products);
     if (!monitor.partialErrors.length) evaluateCollectionAlerts();
     try {
       const stat = typeof fs.statfsSync === 'function' ? fs.statfsSync(USER_DATA_DIR) : null;
@@ -3164,7 +3206,7 @@ function productForApi(product) {
   const watched = state.watchlist.includes(product.slug);
   const watch = watched ? db.prepare('SELECT created_at FROM watchlist WHERE region=? AND slug=?').get(currentRegion(), product.slug) : null;
   const collections = watched ? db.prepare('SELECT collection_id FROM watch_collection_members WHERE region=? AND slug=?').all(currentRegion(), product.slug).map((row) => row.collection_id) : [];
-  return { ...product, freshness:productFreshness(product), watched, watchedAt:watch?.created_at || null, watchRule:watched ? watchRule(product.slug) : null, collections, alertSummary:watched ? alertConfiguration(product) : null };
+  return { ...product, freshness:productFreshness(product), watched, watchedAt:watch?.created_at || null, watchRule:watched ? watchRule(product.slug) : null, collections, alertSummary:watched ? alertConfiguration(product) : null, autoBuy:watched ? autoBuy.rule(currentRegion(),product.slug) : null };
 }
 
 function collectionAlertActive(id, region = currentRegion()) {
@@ -3984,7 +4026,7 @@ function exportSnapshot() {
   const settings = {};
   if (tableExists('settings')) {
     for (const row of db.prepare('SELECT key,value FROM settings').all()) {
-      if (!/password|secret|token|credential|session/i.test(row.key)) settings[row.key] = row.value;
+      if (!/password|secret|token|credential|session|^owner_(?:security_policy|totp(?:_pending)?)$|^notification_private_hosts$/i.test(row.key)) settings[row.key] = row.value;
     }
   }
   const regionData = {};
@@ -4010,13 +4052,14 @@ function exportSnapshot() {
   }
   return {
     format: 'GearBeaconBackup',
-    formatVersion: 9,
+    formatVersion: 10,
     exportedAt: isoNow(),
     appVersion: APP_VERSION,
     schemaVersion: schemaVersion(),
     defaultRegion: DEFAULT_REGION,
     activeRegions: [...ACTIVE_REGIONS],
     regions: regionData,
+    autoBuy:autoBuy.exportData(),
     settings,
   };
 }
@@ -4062,7 +4105,8 @@ function normalizeImportedSnapshot(snapshot) {
   const isBackup = snapshot.format === 'GearBeaconBackup';
   const isLegacy = !snapshot.format && (Array.isArray(snapshot.watchlist) || snapshot.products || Array.isArray(snapshot.events));
   if (!isBackup && !isLegacy) throw new Error('This file is not a GearBeacon backup or legacy GearBeacon state file.');
-  if (isBackup && Number(snapshot.formatVersion || 0) > 9) throw new Error(`This backup format (${snapshot.formatVersion}) is newer than GearBeacon ${APP_VERSION} supports.`);
+  if (isBackup && Number(snapshot.formatVersion || 0) > 10) throw new Error(`This backup format (${snapshot.formatVersion}) is newer than GearBeacon ${APP_VERSION} supports.`);
+  autoBuy.validateImport(snapshot.autoBuy);
   const normalizeRegion = (value) => ({
     watchlist: Array.isArray(value?.watchlist) ? value.watchlist.map(String).filter(Boolean) : [],
     watchCreatedAt: value?.watchCreatedAt && typeof value.watchCreatedAt === 'object' && !Array.isArray(value.watchCreatedAt) ? value.watchCreatedAt : {},
@@ -4148,6 +4192,7 @@ function importSnapshot(snapshot) {
   const normalized = normalizeImportedSnapshot(snapshot);
   for (const region of ACTIVE_REGIONS) flushState(region);
   const safety = createDatabaseBackup('pre-import');
+  autoBuy.restore();
   let watchCount = 0;
   let eventCount = 0;
   const importedRegions = [];
@@ -4202,16 +4247,17 @@ function importSnapshot(snapshot) {
     const importedKeys = new Set(Object.keys(normalized.settings));
     const remove = db.prepare('DELETE FROM settings WHERE key=?');
     for (const row of db.prepare('SELECT key FROM settings').all()) {
-      if (!/password|secret|token|credential|session/i.test(row.key) && !importedKeys.has(row.key)) remove.run(row.key);
+      if (!/password|secret|token|credential|session|^owner_(?:security_policy|totp(?:_pending)?)$|^notification_private_hosts$/i.test(row.key) && !importedKeys.has(row.key)) remove.run(row.key);
     }
     const put = db.prepare(`INSERT INTO settings(key,value,updated_at) VALUES(?,?,?)
       ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`);
     for (const [key, value] of Object.entries(normalized.settings)) {
-      if (!/password|secret|token|credential|session/i.test(key)) put.run(String(key), String(value), isoNow());
+      if (!/password|secret|token|credential|session|^owner_(?:security_policy|totp(?:_pending)?)$|^notification_private_hosts$/i.test(key)) put.run(String(key), String(value), isoNow());
     }
     applyAppConfig(storedAppConfig(), storedSecrets());
     scheduleBackups();
   }
+  autoBuy.importData(snapshot.autoBuy);
   setMeta('last_import_at', isoNow());
   return { ok: true, watchCount, eventCount, importedRegions, safetyBackup: safety };
 }
@@ -4527,6 +4573,7 @@ function initializeOwnerAuthentication() {
   if (configured && (!ownerCredential() || reset)) {
     setOwnerPassword(configured);
     db.exec('DELETE FROM sessions');
+    if (reset && process.env.GEARBEACON_RESET_MFA === '1') ownerSecurity.disable();
     console.log(`[security] owner password ${reset ? 'reset' : 'initialized'} from server configuration`);
   }
   if ((ACCESS_MODE !== 'local' || ownerCredential()) && !ownerCredential()) {
@@ -4563,8 +4610,13 @@ function sessionForRequest(req) {
   const token = parseCookies(req).gearbeacon_session;
   if (!token) return null;
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-  const session = db.prepare('SELECT token_hash,csrf_token,created_at,last_used_at,expires_at,remote_address,user_agent FROM sessions WHERE token_hash=? AND expires_at>?').get(tokenHash, isoNow());
+  const session = db.prepare('SELECT token_hash,csrf_token,created_at,last_used_at,expires_at,remote_address,user_agent,activity_at,verified_at FROM sessions WHERE token_hash=? AND expires_at>?').get(tokenHash, isoNow());
   if (!session) return null;
+  const policy = ownerSecurity.policy();
+  if (!session.activity_at || Date.now() - Date.parse(session.activity_at) >= policy.idleMinutes * 60000 || Date.now() - Date.parse(session.created_at) >= policy.sessionHours * 3600000) {
+    db.prepare('DELETE FROM sessions WHERE token_hash=?').run(tokenHash);
+    return null;
+  }
   const now = isoNow();
   db.prepare('UPDATE sessions SET last_used_at=? WHERE token_hash=?').run(now, tokenHash);
   return { ...session, last_used_at: now, token };
@@ -4585,9 +4637,9 @@ function createSession(req) {
   const csrfToken = randomToken(24);
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
   const createdAt = isoNow();
-  const expiresAt = new Date(Date.now() + SESSION_HOURS * 60 * 60 * 1000).toISOString();
-  db.prepare('INSERT INTO sessions(token_hash,csrf_token,created_at,last_used_at,expires_at,remote_address,user_agent) VALUES(?,?,?,?,?,?,?)')
-    .run(tokenHash, csrfToken, createdAt, createdAt, expiresAt, requestAddress(req), String(req.headers['user-agent'] || '').slice(0, 300));
+  const expiresAt = new Date(Date.now() + ownerSecurity.policy().sessionHours * 60 * 60 * 1000).toISOString();
+  db.prepare('INSERT INTO sessions(token_hash,csrf_token,created_at,last_used_at,expires_at,remote_address,user_agent,activity_at,verified_at) VALUES(?,?,?,?,?,?,?,?,?)')
+    .run(tokenHash, csrfToken, createdAt, createdAt, expiresAt, requestAddress(req), String(req.headers['user-agent'] || '').slice(0, 300), createdAt, createdAt);
   return { token, csrfToken, tokenHash, createdAt, expiresAt };
 }
 
@@ -4647,6 +4699,9 @@ function authStatus(req) {
     authenticated: Boolean(session),
     csrfToken: session?.csrf_token || null,
     sessionExpiresAt: session?.expires_at || null,
+    mfaEnabled: ownerSecurity.enabled(),
+    sessionPolicy: ownerSecurity.policy(),
+    idleExpiresAt: session?.activity_at ? new Date(Date.parse(session.activity_at) + ownerSecurity.policy().idleMinutes * 60000).toISOString() : null,
     onboardingComplete: getSetting('onboarding_complete', '0') === '1',
   };
 }
@@ -4900,6 +4955,30 @@ function contentType(file) {
 async function handleApi(req, res, url) {
   if (req.method === 'OPTIONS') return sendJson(res, 204, {});
 
+  // Companion credentials are narrowly scoped to checkout operations. They never grant owner API access.
+  if (url.pathname.startsWith('/api/auto-buy/worker/')) {
+    try {
+      const action = url.pathname.slice('/api/auto-buy/worker/'.length);
+      if (req.method === 'POST' && action === 'pair') {
+        assertLoginAllowed(req);
+        const body = await readJsonBody(req);
+        try { return sendJson(res,200,autoBuy.pair(body)); }
+        catch (err) { recordLoginFailure(req); throw err; }
+      }
+      const c = autoBuy.authenticate(String(req.headers.authorization || '').match(/^Bearer (\S+)$/)?.[1]);
+      const match = action.match(/^attempts\/([a-f0-9-]{36})(?:\/(authorize|complete|report))?$/);
+      if (req.method === 'GET' && match && !match[2]) return sendJson(res,200,{ attempt:autoBuy.attempt(c,match[1]) });
+      if (req.method !== 'POST') return sendJson(res,405,{ error:'Method not allowed.' });
+      const body = await readJsonBody(req);
+      if (action === 'heartbeat') return sendJson(res,200,autoBuy.heartbeat(c,body));
+      if (action === 'claim') return sendJson(res,200,autoBuy.claim(c));
+      if (match?.[2] === 'authorize') return sendJson(res,200,autoBuy.authorize(c,match[1],body));
+      if (match?.[2] === 'complete') return sendJson(res,200,autoBuy.complete(c,match[1],body));
+      if (match?.[2] === 'report') return sendJson(res,200,autoBuy.report(c,match[1],body));
+      return sendJson(res,404,{ error:'Checkout operation not found.' });
+    } catch (err) { return sendJson(res,err.statusCode || 400,{ error:err.statusCode ? err.message : 'Invalid checkout request.' }); }
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/auth/status') {
     return sendJson(res, 200, authStatus(req));
   }
@@ -4928,10 +5007,10 @@ async function handleApi(req, res, url) {
     try { assertLoginAllowed(req); } catch (err) { return sendJson(res, err.statusCode || 429, { error: err.message }); }
     const body = await readJsonBody(req);
     const credential = ownerCredential();
-    if (!verifyPassword(body?.password, credential?.password_hash)) {
+    if (!verifyPassword(body?.password, credential?.password_hash) || !ownerSecurity.verify(body?.code)) {
       recordLoginFailure(req);
       writeAppLog('warn', 'security', 'Rejected owner sign-in.', { remoteAddress: requestAddress(req) });
-      return sendJson(res, 401, { error: 'The owner password is incorrect.' });
+      return sendJson(res, 401, { error: 'The owner password or authenticator code is incorrect. Use a fresh code or an unused recovery code.' });
     }
     if (upgradeOwnerPasswordHash(body.password, credential)) {
       writeAppLog('info', 'security', 'Owner password hash was upgraded after a successful sign-in.', { remoteAddress: requestAddress(req) });
@@ -4948,6 +5027,82 @@ async function handleApi(req, res, url) {
   const changesState = !['GET', 'HEAD', 'OPTIONS'].includes(req.method || 'GET');
   if (changesState && authenticationRequired() && !safeEqualText(req.headers['x-csrf-token'] || '', session.csrf_token || '')) {
     return sendJson(res, 403, { error: 'The security token is missing or invalid. Refresh the page and try again.' });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/auth/activity') {
+    if (session.token_hash) db.prepare('UPDATE sessions SET activity_at=? WHERE token_hash=?').run(isoNow(), session.token_hash);
+    return sendJson(res, 200, { ok:true });
+  }
+  if (req.method === 'POST' && url.pathname === '/api/auth/verify') {
+    if (!session.token_hash) return sendJson(res, 200, { ok:true });
+    assertLoginAllowed(req);
+    const body = await readJsonBody(req);
+    if (!verifyPassword(body?.password, ownerCredential()?.password_hash) || !ownerSecurity.verify(body?.code)) {
+      recordLoginFailure(req);
+      return sendJson(res, 403, { error:'Verification failed. Check your password and use a fresh authenticator or recovery code.' });
+    }
+    clearLoginFailures(req);
+    db.prepare('UPDATE sessions SET verified_at=?,activity_at=? WHERE token_hash=?').run(isoNow(), isoNow(), session.token_hash);
+    return sendJson(res, 200, { ok:true });
+  }
+  const sensitive = (req.method === 'PUT' && ['/api/config','/api/auth/password','/api/auth/security'].includes(url.pathname))
+    || /^\/api\/data\/(export(?:\/encrypted)?|preview|import|test-restore)$/.test(url.pathname)
+    || (changesState && (url.pathname.startsWith('/api/auth/mfa/') || url.pathname.startsWith('/api/auth/sessions/')));
+  if (sensitive && session.token_hash && (!session.verified_at || Date.now() - Date.parse(session.verified_at) >= 5 * 60000)) {
+    return sendJson(res, 403, { error:'Verify your identity to continue.', reauthenticationRequired:true });
+  }
+  if (req.method === 'GET' && url.pathname === '/api/auth/security') {
+    return sendJson(res, 200, { policy:ownerSecurity.policy(), privateNotificationHosts:normalizePrivateHosts(getSetting('notification_private_hosts', process.env.GEARBEACON_NOTIFICATION_PRIVATE_HOSTS || '')), mfaEnabled:ownerSecurity.enabled(), ownerConfigured:Boolean(ownerCredential()) });
+  }
+  if (url.pathname === '/api/auth/security' && req.method === 'PUT') {
+    try {
+      const body = await readJsonBody(req);
+      const privateHosts = normalizePrivateHosts(body.privateNotificationHosts || []);
+      const policy = ownerSecurity.savePolicy(body);
+      setSetting('notification_private_hosts', privateHosts.join(','));
+      writeAppLog('info', 'security', 'Owner session policy changed.');
+      return sendJson(res, 200, { ok:true, policy });
+    } catch { return sendJson(res, 400, { error:'Session lifetime must be 1–168 hours; idle lock must be 1–120 minutes.' }); }
+  }
+  if (url.pathname.startsWith('/api/auth/mfa/') && req.method === 'POST') {
+    if (!session.token_hash) return sendJson(res, 409, { error:'Create an owner password before setting up an authenticator.' });
+    assertLoginAllowed(req);
+    const body = await readJsonBody(req);
+    if (url.pathname === '/api/auth/mfa/begin') return sendJson(res, 200, ownerSecurity.begin(session));
+    if (url.pathname === '/api/auth/mfa/finish') {
+      try {
+        const result = ownerSecurity.finish(session, body?.code);
+        clearLoginFailures(req);
+        writeAppLog('info', 'security', 'Authenticator enabled; other browser sessions revoked.');
+        return sendJson(res, 200, result);
+      } catch { recordLoginFailure(req); return sendJson(res, 400, { error:'Setup expired or the authenticator code is incorrect. Start again if needed.' }); }
+    }
+    if (url.pathname === '/api/auth/mfa/disable') {
+      ownerSecurity.disable();
+      db.prepare('DELETE FROM sessions WHERE token_hash<>?').run(session.token_hash);
+      writeAppLog('info', 'security', 'Authenticator disabled; other browser sessions revoked.');
+      return sendJson(res, 200, { ok:true });
+    }
+  }
+
+  if (url.pathname.startsWith('/api/auto-buy')) {
+    try {
+      if (req.method === 'GET' && url.pathname === '/api/auto-buy') return sendJson(res,200,autoBuy.status());
+      const body = changesState ? await readJsonBody(req) : {};
+      if (req.method === 'POST' && url.pathname === '/api/auto-buy/pairing') return sendJson(res,200,autoBuy.startPairing());
+      if (req.method === 'POST' && url.pathname === '/api/auto-buy/disconnect') return sendJson(res,200,autoBuy.disconnect());
+      if (req.method === 'POST' && url.pathname === '/api/auto-buy/pause-all') return sendJson(res,200,autoBuy.pauseAll());
+      if (req.method === 'PUT' && url.pathname === '/api/auto-buy/rules') {
+        const region = String(url.searchParams.get('region') || DEFAULT_REGION).toLowerCase();
+        if (!ACTIVE_REGIONS.includes(region)) return sendJson(res,400,{ error:'Choose an active Store region.' });
+        return sendJson(res,200,{ rule:autoBuy.save(region,String(body.slug || ''),body) });
+      }
+      const pause = url.pathname.match(/^\/api\/auto-buy\/rules\/([a-f0-9-]{36})\/pause$/);
+      if (req.method === 'POST' && pause) return sendJson(res,200,{ rule:autoBuy.pause(pause[1]) });
+      const resolve = url.pathname.match(/^\/api\/auto-buy\/attempts\/([a-f0-9-]{36})\/resolve$/);
+      if (req.method === 'POST' && resolve) return sendJson(res,200,autoBuy.resolve(resolve[1],body));
+      return sendJson(res,404,{ error:'Auto-buy operation not found.' });
+    } catch (err) { return sendJson(res,err.statusCode || 400,{ error:err.statusCode ? err.message : 'Invalid purchase instruction.' }); }
   }
 
   if (req.method === 'POST' && url.pathname === '/api/auth/logout') {
@@ -4971,11 +5126,16 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'PUT' && url.pathname === '/api/auth/password') {
+    assertLoginAllowed(req);
     const body = await readJsonBody(req);
     const credential = ownerCredential();
-    if (credential && !verifyPassword(body?.currentPassword, credential.password_hash)) return sendJson(res, 401, { error: 'The current owner password is incorrect.' });
+    if (credential && !verifyPassword(body?.currentPassword, credential.password_hash)) {
+      recordLoginFailure(req);
+      return sendJson(res, 401, { error: 'The current owner password is incorrect.' });
+    }
     try { setOwnerPassword(body?.newPassword); } catch (err) { return sendJson(res, 400, { error: err.message }); }
     db.exec('DELETE FROM sessions');
+    clearLoginFailures(req);
     const created = createSession(req);
     writeAppLog('info', 'security', 'Owner password changed; other sessions were revoked.', { remoteAddress: requestAddress(req) });
     res.gearbeaconHeaders = { ...commonResponseHeaders(res), 'Set-Cookie': sessionCookie(req, created.token, created.expiresAt) };
@@ -5661,8 +5821,8 @@ server.maxHeadersCount = 64;
 server.maxRequestsPerSocket = 100;
 
 async function start() {
-  if (!isLoopbackHost(BIND_HOST) && ACCESS_MODE === 'local' && !ALLOW_INSECURE_REMOTE) {
-    throw new Error('Refusing to expose an unauthenticated local-mode server on a non-loopback address. Use GEARBEACON_ACCESS_MODE=private or explicitly set GEARBEACON_ALLOW_INSECURE_REMOTE=1.');
+  if (!isLoopbackHost(BIND_HOST) && ACCESS_MODE === 'local') {
+    throw new Error('Refusing to expose an unauthenticated local-mode server on a non-loopback address. Use authenticated private mode for remote access.');
   }
   if (ACCESS_MODE === 'proxy' && !isLoopbackHost(BIND_HOST)) {
     throw new Error('Refusing proxy mode on a non-loopback bind. Keep GearBeacon reachable only through a same-host HTTPS reverse proxy.');

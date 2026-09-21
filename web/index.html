@@ -9,6 +9,16 @@
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
+  <dialog id="securityVerifyDialog" class="security-verify-dialog" aria-labelledby="securityVerifyTitle">
+    <form id="securityVerifyForm" class="settings-form">
+      <h2 id="securityVerifyTitle">Verify your identity</h2>
+      <p>Confirm it is you before changing sensitive settings or transferring data.</p>
+      <label class="field"><span>Owner password</span><input id="verifyPassword" type="password" autocomplete="current-password" required /></label>
+      <label id="verifyCodeField" class="field" hidden><span>Authenticator or recovery code</span><input id="verifyCode" autocomplete="one-time-code" spellcheck="false" /></label>
+      <p id="verifyError" class="settings-result error" role="alert" hidden></p>
+      <div class="settings-actions"><button id="verifyCancel" type="button">Cancel</button><button id="verifySubmit" type="submit" class="primary">Verify</button></div>
+    </form>
+  </dialog>
   <section id="authGate" class="auth-shell hidden" aria-labelledby="authTitle">
     <div class="auth-card">
       <img class="auth-icon" src="/assets/icon.png" alt="" width="58" height="58" />
@@ -18,6 +28,7 @@
       <form id="authForm">
         <label id="setupTokenField" class="field hidden"><span>One-time setup token</span><input id="setupToken" type="password" autocomplete="one-time-code" /></label>
         <label class="field"><span id="passwordLabel">Owner password</span><input id="authPassword" type="password" minlength="12" autocomplete="current-password" required /></label>
+        <label id="authCodeField" class="field hidden"><span>Authenticator or recovery code</span><input id="authCode" autocomplete="one-time-code" spellcheck="false" /></label>
         <label id="confirmPasswordField" class="field hidden"><span>Confirm owner password</span><input id="authPasswordConfirm" type="password" minlength="12" autocomplete="new-password" /></label>
         <button id="authSubmit" class="primary" type="submit">Sign in</button>
       </form>
@@ -121,8 +132,10 @@
         <div><h2>Your watchlist</h2><p>Watch exact variants, set availability and price conditions, and organize your gear.</p></div>
         <button id="watchManageToggle" class="toolbar-toggle watch-management" type="button" data-toolbar-toggle="watchManageMenu" aria-controls="watchManageMenu" aria-expanded="false">Manage</button>
       </div>
+      <div id="autoBuyWatchStatus" class="auto-buy-watch-status" hidden><span id="autoBuyWatchSummary" role="status" aria-live="polite"></span><button type="button" data-auto-pause-all>Pause all auto-buy</button></div>
       <div id="watchManageMenu" class="toolbar-panel toolbar-actions hidden" data-toolbar-panel role="group" aria-label="Manage watchlist">
         <button id="openCollectionManager" type="button">Manage collections</button>
+        <button type="button" data-auto-settings>Auto-buy settings</button>
         <button id="openWatchImport" type="button">Import watchlist</button>
         <button id="selectVisibleWatches" type="button">Select visible watches</button>
       </div>
@@ -265,11 +278,12 @@
         <div class="settings-subtabs" role="tablist" aria-label="General sections">
           <button id="settingsGeneralApplicationTab" class="settings-subtab active" type="button" role="tab" aria-selected="true" aria-controls="settingsGeneralApplicationPanel" data-settings-subtab="general/application" tabindex="0">Application</button>
           <button id="settingsGeneralStoresTab" class="settings-subtab" type="button" role="tab" aria-selected="false" aria-controls="settingsGeneralStoresPanel" data-settings-subtab="general/stores" tabindex="-1">Stores &amp; access</button>
+          <button id="settingsGeneralAutoBuyTab" class="settings-subtab" type="button" role="tab" aria-selected="false" aria-controls="settingsGeneralAutoBuyPanel" data-settings-subtab="general/autobuy" tabindex="-1">Auto-buy</button>
         </div>
         <section id="settingsGeneralApplicationPanel" class="settings-section" role="tabpanel" aria-labelledby="settingsGeneralApplicationTab" data-settings-section="general/application">
           <article class="settings-card">
             <div class="settings-card-head">
-              <div><span class="settings-kicker">Application</span><h3>GearBeacon <span id="settingsVersion">V1.3.0</span></h3></div>
+              <div><span class="settings-kicker">Application</span><h3>GearBeacon <span id="settingsVersion">V1.4.0</span></h3></div>
               <span id="schemaBadge" class="settings-badge">SQLite</span>
             </div>
             <p>Your watched products live in a persistent SQLite database outside the GearBeacon application folder.</p>
@@ -294,6 +308,32 @@
               <button class="primary" type="submit">Validate & save</button>
             </form>
             <div id="configResult" class="settings-result hidden"></div>
+          </article>
+        </section>
+        <section id="settingsGeneralAutoBuyPanel" class="settings-section" role="tabpanel" aria-labelledby="settingsGeneralAutoBuyTab" data-settings-section="general/autobuy" hidden>
+          <article class="settings-card wide-card">
+            <div class="settings-card-head"><div><span class="settings-kicker">Optional purchasing</span><h3>Auto-buy</h3></div><button type="button" data-auto-pause-all>Pause all auto-buy</button></div>
+            <p>Authorize one order for an exact variant, within your quantity, final-total limit, and expiry. The checkout companion must stay running; your dashboard can be closed.</p>
+            <div id="autoBuyConnection" role="status" aria-live="polite">Checking checkout companion…</div>
+            <div class="settings-actions"><button id="autoBuyPair" type="button">Pair checkout companion</button><button id="autoBuyDisconnect" type="button">Disconnect &amp; pause</button><button type="button" data-auto-purchases>Purchase history</button></div>
+            <div id="autoBuyPairingRow" class="auto-buy-pairing-row" hidden>
+              <label id="autoBuyPairingLabel" for="autoBuyPairing"></label>
+              <input id="autoBuyPairing" class="settings-result" type="text" readonly autocomplete="off" spellcheck="false" hidden />
+            </div>
+            <details id="autoBuyGuide" class="auto-buy-guide">
+              <summary>Connect your Store checkout</summary>
+              <p><strong>A reusable saved card is required.</strong> If the Store only offers card entry and “Use saved payment” has no existing card, this checkout cannot complete unattended auto-buy setup. Entering card details does not save them in the companion. Do not place an order just to finish setup.</p>
+              <ol>
+                <li>Install the optional checkout companion on a computer with a browser. For NAS or Docker installs, it can run on a separate computer connected to your HTTPS dashboard.</li>
+                <li>Pair it using the one-time code above, then run Connect. “Home” is only a nickname in GearBeacon; select the actual address in the dedicated Store browser.</li>
+                <li>Add one setup item and reach checkout review. Select a saved card, shipping and billing addresses, and a shipping service. Press Enter in the terminal to check them. Correct any failed checks in the same browser and retry. Order submission is blocked.</li>
+                <li>Remove the setup item, then press Enter in the terminal again. Setup is complete only when you see <strong>SAVED</strong>.</li>
+                <li>Start the companion and leave it running. Your saved profile appears above. Choose Set up auto-buy on a watched product, select an exact variant, and authorize its limits.</li>
+              </ol>
+              <p>To check saved setup, run <code>npm --prefix checkout run profiles</code> from the GearBeacon folder. For a browser comparison of your saved address, shipping service, and card, stop the companion and run <code>npm --prefix checkout run verify</code>. Verify keeps the saved profile unchanged.</p>
+              <p>Login expiry, an unrecognized saved card, a changed cart, or a payment challenge pauses checkout. After an uncertain submission, check Store orders before allowing another purchase.</p>
+              <a href="https://github.com/alexphillips-dev/GearBeacon/wiki/Auto-buy" target="_blank" rel="noopener noreferrer">Companion installation, address setup &amp; verification guide</a>
+            </details>
           </article>
         </section>
       </section>
@@ -452,12 +492,34 @@
               <button class="primary" type="submit">Update owner password</button>
             </form>
             <div id="securityResult" class="settings-result hidden"></div>
+            <hr />
+            <h3>Authenticator app</h3>
+            <p id="mfaStatus" role="status">Checking authenticator settings…</p>
+            <div class="settings-actions wrap"><button id="mfaBegin" type="button">Set up authenticator</button><button id="mfaDisable" type="button" hidden>Disable authenticator</button></div>
+            <form id="mfaSetup" class="settings-form" hidden>
+              <p>Add a time-based account named GearBeacon in your authenticator app. Enter this setup key manually (6 digits, 30 seconds). Setup expires in 5 minutes.</p>
+              <label class="field"><span>Setup key</span><input id="mfaSecret" readonly autocomplete="off" spellcheck="false" /></label>
+              <label class="field"><span>Code from your authenticator</span><input id="mfaCode" inputmode="numeric" pattern="[0-9]{6}" autocomplete="one-time-code" required /></label>
+              <button type="submit" class="primary">Verify and enable</button>
+            </form>
+            <div id="mfaRecovery" hidden>
+              <p><strong>Save these recovery codes in your password manager.</strong> Each code works once in place of an authenticator code. They are shown only now.</p>
+              <label class="field"><span>Recovery codes</span><textarea id="mfaRecoveryCodes" readonly rows="10" autocomplete="off" spellcheck="false"></textarea></label>
+              <button id="mfaRecoveryDone" type="button">I saved the codes</button>
+            </div>
           </article>
         </section>
         <section id="settingsSecuritySessionsPanel" class="settings-section" role="tabpanel" aria-labelledby="settingsSecuritySessionsTab" data-settings-section="security/sessions" hidden>
           <article class="settings-card wide-card">
             <div class="settings-card-head"><div><span class="settings-kicker">Private access</span><h3>Signed-in browsers</h3></div></div>
             <p>Review active owner sessions and sign out browsers that no longer need access.</p>
+            <form id="sessionPolicyForm" class="settings-form">
+              <div class="form-row"><label class="field"><span>Sign in again after (hours)</span><input id="sessionHours" type="number" min="1" max="168" required /></label><label class="field"><span>Lock after inactivity (minutes)</span><input id="sessionIdleMinutes" type="number" min="1" max="120" required /></label></div>
+              <p>Monitoring and alerts continue while locked. Background updates do not keep the dashboard unlocked. An owner password is needed for locking.</p>
+              <label class="field"><span>Approved private notification hostnames</span><input id="notificationPrivateHosts" placeholder="alerts.example.test, notify.example.test" autocomplete="off" /></label>
+              <p>Allow these exact hostnames to connect to LAN or VPN notification servers. Configured private IP addresses and localhost already work. Redirects, metadata, and link-local destinations are blocked.</p>
+              <button class="primary" type="submit">Save security settings</button>
+            </form>
             <div id="sessionList" class="session-list"></div>
           </article>
         </section>
@@ -493,6 +555,7 @@
             <button id="settingsOperationsOverviewTab" class="settings-subtab active" type="button" role="tab" aria-selected="true" aria-controls="settingsOperationsOverviewPanel" data-settings-subtab="operations/overview" tabindex="0">Overview</button>
             <button id="settingsOperationsMonitoringTab" class="settings-subtab" type="button" role="tab" aria-selected="false" aria-controls="settingsOperationsMonitoringPanel" data-settings-subtab="operations/monitoring" tabindex="-1">Monitoring</button>
             <button id="settingsOperationsDeliveryTab" class="settings-subtab" type="button" role="tab" aria-selected="false" aria-controls="settingsOperationsDeliveryPanel" data-settings-subtab="operations/delivery" tabindex="-1">Delivery</button>
+            <button id="settingsOperationsPurchasesTab" class="settings-subtab" type="button" role="tab" aria-selected="false" aria-controls="settingsOperationsPurchasesPanel" data-settings-subtab="operations/purchases" tabindex="-1">Purchases</button>
             <button id="settingsOperationsBackupsTab" class="settings-subtab" type="button" role="tab" aria-selected="false" aria-controls="settingsOperationsBackupsPanel" data-settings-subtab="operations/backups" tabindex="-1">Backups</button>
             <button id="settingsOperationsDiagnosticsTab" class="settings-subtab" type="button" role="tab" aria-selected="false" aria-controls="settingsOperationsDiagnosticsPanel" data-settings-subtab="operations/diagnostics" tabindex="-1">Diagnostics</button>
             <button id="settingsOperationsLogsTab" class="settings-subtab" type="button" role="tab" aria-selected="false" aria-controls="settingsOperationsLogsPanel" data-settings-subtab="operations/logs" tabindex="-1">Logs</button>
@@ -510,6 +573,9 @@
         </section>
         <section id="settingsOperationsDeliveryPanel" class="settings-section" role="tabpanel" aria-labelledby="settingsOperationsDeliveryTab" data-settings-section="operations/delivery" hidden>
           <div id="operationsDelivery"></div>
+        </section>
+        <section id="settingsOperationsPurchasesPanel" class="settings-section" role="tabpanel" aria-labelledby="settingsOperationsPurchasesTab" data-settings-section="operations/purchases" hidden>
+          <article class="settings-card wide-card"><div class="settings-card-head"><div><span class="settings-kicker">Separate from notification delivery</span><h3>Auto-buy purchases</h3></div><button type="button" data-auto-pause-all>Pause all auto-buy</button></div><p>Each authorization can place one order. A submission already in progress may finish after you pause.</p><div id="autoBuyAttempts">No purchase attempts yet.</div></article>
         </section>
         <section id="settingsOperationsBackupsPanel" class="settings-section" role="tabpanel" aria-labelledby="settingsOperationsBackupsTab" data-settings-section="operations/backups" hidden>
           <div id="operationsBackups" class="ops-grid"></div>
@@ -534,7 +600,7 @@
     </section>
 
     <footer>
-      <span>GearBeacon V1.3.0 · Private self-hosted monitoring</span>
+      <span>GearBeacon V1.4.0 · Private self-hosted monitoring</span>
       <span id="notifyStatus"></span>
     </footer>
   </main>
@@ -634,6 +700,8 @@
   </section>
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
   <dialog id="ownerDialog" class="owner-dialog" aria-labelledby="ownerDialogTitle"><div class="product-dialog-head"><h2 id="ownerDialogTitle">Saved views</h2><button id="closeOwnerDialog" type="button" class="icon-button" aria-label="Close dialog">×</button></div><div id="ownerDialogBody" class="product-dialog-body"></div><p id="ownerDialogResult" class="settings-result" role="status" aria-live="polite"></p></dialog>
+  <dialog id="autoBuyDialog" class="owner-dialog auto-buy-dialog" aria-labelledby="autoBuyDialogTitle"><div class="product-dialog-head"><h2 id="autoBuyDialogTitle">Set up auto-buy</h2><button id="closeAutoBuyDialog" type="button" class="icon-button" aria-label="Close auto-buy dialog">×</button></div><div id="autoBuyDialogBody" class="product-dialog-body"></div><p id="autoBuyDialogResult" class="settings-result" role="status" aria-live="polite"></p></dialog>
   <script src="/app.js"></script>
+  <script src="/autobuy.js"></script>
 </body>
 </html>

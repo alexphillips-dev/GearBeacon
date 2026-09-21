@@ -1,77 +1,60 @@
-# GearBeacon 1.3.0 — Live Activity, flexible alerts, and easier settings
+# GearBeacon 1.4.0 — Optional purchasing, stronger security, and clearer Activity
 
-This release includes **all development changes since the last published main release, 1.2.0**. It improves everyday monitoring with automatic Activity arrivals, more useful event details, saved views, flexible delivery rules, shorter Settings pages, and update notices for the installed branch.
+This release includes **all changes since the last published main release, v1.3.0**: optional experimental auto-buy, a checkout companion with clearer setup and verification, new-product Activity labels, owner-access and local-data hardening, signed update verification, and release/CI maintenance.
 
-GearBeacon remains a private, single-owner, self-hosted UniFi Store monitor. Monitoring and external notifications run on your server, even when the browser is closed.
+GearBeacon remains a private, single-owner, self-hosted UniFi Store monitor. Monitoring and notifications need no Store account and continue when the browser is closed. Purchasing is optional and requires separate setup and explicit authorization.
 
-## Activity
+## Optional experimental auto-buy
 
-- **Automatic arrivals:** the visible Activity tab checks for new cards every second. At the top, new events appear immediately; when scrolled down, the card being read and keyboard focus stay in place. No button click is required to reveal arrivals.
-- **Stable history and pagination:** retain filters and the selected historical page while newer events appear above it. Bounded batches handle large bursts without skipping events; reconnects and expired reading boundaries recover automatically. The 20/50/100 page sizes remain available.
-- **Individual events:** every event remains its own compact card, including separate parent products and exact variants. Events are never combined or collapsed into groups.
-- **Current status beside original evidence:** see current availability and check freshness, current Watchlist and collection membership, exact variant identity, and the event price compared with the current target. Original detection snapshots remain unchanged.
-- **Observed price context:** a 30-day observed-low indicator requires sufficient retained history for that Store and exact item, ending at the event. Limited history is not presented as a proven low.
-- **Clear delivery outcomes:** badges identify successful channels and suppression reasons. Delivery outcomes refresh automatically; details retain the underlying evidence.
-- **Dates and totals:** Today, Yesterday, and date separators help navigation without combining cards. Totals cover all matching events across pages, and calendar filters and headings follow the configured timezone.
-- **Consistent colors:** price decreases use blue for the icon and savings amount/percentage; increases retain amber. Sold out text matches the red icon, and In stock text matches green. Both themes retain readable text, arrows, and before/after values.
+- **Authorize one exact purchase:** choose a watched variant, quantity, maximum final order total including shipping/tax/surcharges, expiry, and the watch or collection that receives the purchase record. Each authorization allows one successful order. Arming an already available item permits checkout after the next complete Store check.
+- **Dedicated checkout companion:** pair the optional Node.js/Playwright companion with a one-time code and sign in directly in its sandboxed Store browser. The server and companion must remain running; the dashboard can be closed. A NAS, Docker, or headless installation can use a companion on a separate browser-capable computer over HTTPS.
+- **Checkout checks and recovery:** validate the exact cart contents, quantity, region, currency, account, address fingerprints, shipping service, selected saved card, and final total. Unrecognized Store write endpoints, visible challenges, changed checkout details, or an uncertain submission stop further checkout and require review. The companion retains an encrypted browser session and durable submission journal locally.
+- **Dashboard controls:** Watchlist purchase setup/status, Settings > General > Auto-buy, pause/disconnect controls, and Settings > Operations > Purchases expose rules and outcomes. Recovery restores purchase instructions paused and does not reactivate old companion tokens.
+- **Setup that explains its result:** numbered steps, aligned checks, failed checks first, wrapped guidance, retries in the same browser, and explicit SAVED/cancelled summaries. The address label is a GearBeacon nickname, not an address created in the Store. Local `profiles` and browser `verify` commands check saved profiles without replacing them.
+- **Pairing improvements:** connection instructions expand automatically only while unpaired. The mode/expiry label sits beside a compact field that selects and copies only the pairing code; pairing clears both.
+- **Checkout setup fixes:** cart preparation is no longer blocked by purchase/payment words in response fragments; the guard checks executed mutation fields. Account confirmation is separate from visible challenge detection, so Stripe's one-pixel background helper no longer falsely reports a signed-out account. Expanded helpers and active challenges still require owner attention.
 
-## Watches, views, and collections
+**Compatibility limitation:** unattended checkout requires an existing reusable saved card with a visible masked label. Entering a card number, expiry, and security code does not create a supported saved payment method. If Use saved payment has no usable card, auto-buy setup cannot finish; do not place an order just to try to save a card. The companion does not collect raw payment-field values, solve CAPTCHAs, or bypass MFA/payment challenges. Authenticated live Ubiquiti checkout, regional account behavior, and unattended payment compatibility remain unverified with a real owner account; automated coverage uses isolated checkout fixtures. Stock availability does not reserve an item or guarantee an order.
 
-- **Saved views:** save, rename, replace, and delete named Watchlist and Browse views per regional Store. Views are stored on the installation for use across browsers and are included in recovery data. Revision checks prevent conflicting edits from silently overwriting a newer view.
-- **Compact lists:** choose Cards or Compact list while retaining product images, prices, availability, collection memberships, and actions.
-- **Simpler Watchlist controls:** search, status, collection, and sorting share one primary row. View options contains category, layout, optional Watchlist collection grouping, and saved views; Manage contains collection management, imports, and bulk selection. Browse saved views use the same dropdown styling.
-- **Budget-aware readiness:** optionally require a collection to be within budget before it can send a ready alert. Qualification combines recorded spending, remaining quantities, and confirmed qualifying prices; unknown costs and pending prices block qualification. Cards and explanations identify the blocker. This condition defaults off for existing collections.
-- **Safer collection rule changes:** budget and rule edits establish a new baseline and cancel obsolete pending deliveries. Existing item-alert overrides, quantities, recorded payments, and purchased state are preserved.
+See the [auto-buy setup, profile verification, and troubleshooting guide](https://github.com/alexphillips-dev/GearBeacon/blob/v1.4.0/docs/AUTO_BUY.md). Standalone and Docker users install the companion separately from the matching Source archive; the base server does not install a browser.
 
-## Notifications and monitoring evidence
+## Clearer new-product Activity
 
-- **Choose delivery channels per watch or collection:** use the configured defaults or select ntfy, Discord, Gotify, Webhook, and Email. Previews explain disabled or unconfigured selections. Collection routes apply to collection-ready events; member watches keep their own routes. Browser popups remain controlled separately.
-- **Apply route changes to queued work:** removing a channel cancels its pending and failed jobs. Adding a channel affects future events and does not resend earlier alerts. An in-progress delivery cannot be recalled.
-- **Optional alert expiry:** set a time limit for restock, target-price, price-drop, and collection-ready alerts, including time spent in quiet hours, digests, and retries. Queued jobs retain their original expiry ceiling; shorter current limits apply immediately. Expired alerts remain visible in Activity and cannot be revived with Retry failed. Existing rules default to no expiry.
-- **Context for delayed alerts:** messages delayed by at least one minute show the original detection time alongside separately labeled current confirmed or last-known status. Exact-variant context remains tied to the triggering SKU. Supported server channels, email, and grouped/digest messages include this context without rewriting the original event.
-- **Product freshness:** Watchlist cards and compact lists, Browse, and product details distinguish confirmed checks, pending changes, delayed checks, and unknown coverage. Freshness labels update without rebuilding the card or discarding an open rule form. Monitoring gaps never count as confirmation.
-- **Explain effective rules:** item and collection summaries describe inherited settings, target conditions, pauses, purchased state, collection-only overrides, channels, scheduling, and cooldowns. Actual notification jobs are shown separately from hypothetical delivery timing.
+- Teal **NEW TO STORE** badges distinguish newly discovered listings and show their availability at detection.
+- **NOW AVAILABLE** distinguishes Coming soon → In stock launches from ordinary restocks. Launch timing says Coming soon for; unchanged upcoming listings say Still coming soon.
+- The same context appears in accessible descriptions and event details. Events remain individual compact cards, including separate product and variant events, with live arrivals and reading-position preservation retained.
 
-## Settings, accessibility, and interface fixes
+## Owner access and local-data security
 
-- **Shorter Settings pages:** each existing category has section tabs. General separates Application from Stores & access; Notifications separates Alert types, Channels, Delivery, and Email; Data separates Schedule & retention from Backups & transfer; Security separates Overview, Password, and Sessions; Privacy separates Catalog & updates from Notifications; Operations separates Overview, Monitoring, Delivery, Backups, Diagnostics, and Logs.
-- **Remember navigation and preserve drafts:** each Settings category remembers its last section in this browser. Switching tabs preserves unsaved inputs; explicit Save controls still apply changes. Passwords and drafts are not stored as navigation preferences.
-- **Accessible section navigation:** scoped arrow-key/Home/End handling, visible focus, responsive wrapping, and deep links reveal the relevant section. Operations remains the final Settings category, including compatibility with old Operations links.
-- **Compact help controls:** card and rule explanation buttons now display a question mark with descriptive labels and tooltips. The explanation dialog has padded content, a contained sticky header, and wrapping long titles. Empty results no longer leave an extra bar, and horizontal overflow is removed.
-- **Stores & access spacing:** Store choices, field rows, and access options have consistent vertical gaps, including stacked mobile fields, so labels no longer crowd the controls above them.
-- **Smoother refreshes:** unchanged product, collection, and Activity nodes and dropdown options are reused. Overlapping refreshes are coalesced and stale responses after edits or region changes are rejected. Unsaved rules and notification preferences remain intact. Hidden tabs defer expensive rendering while server monitoring and delivery continue.
-- **Current Operations data:** older Operations responses and errors cannot overwrite a newer result, keeping warning shortcuts and recovery status consistent during overlapping refreshes.
+- **Fail-closed access:** local mode always refuses non-loopback binds, including the former insecure remote override. Invalid saved configuration stops startup instead of silently falling back to environment defaults.
+- **Session policy:** configurable absolute sign-in lifetime (default 24 hours) and inactivity lock (default 30 minutes). Background polling does not renew activity; monitoring, delivery, and an independently running companion continue while the dashboard is locked.
+- **Fresh owner verification:** sensitive configuration, data-transfer/recovery, password/session, and authenticator operations require a recent sign-in or verification. The verification dialog supports keyboard cancellation, focus recovery, mobile layouts, and both themes.
+- **Optional authenticator codes:** local TOTP enrollment, replay protection, and ten single-use recovery codes. No cloud account or external QR service is required. Setup secrets clear on lock/sign-out; MFA material and local security policy stay out of portable exports.
+- **Protected installation keys:** Windows uses account-scoped DPAPI and verified private ACLs for application data and the installation key, including existing raw-key migration without changing the underlying key. Linux/macOS retain owner-only directory/key permissions. These installation-key protections are separate from the companion's own local vault.
+- **Restricted notification requests:** exact configured origins, DNS-validated address pinning, redirect rejection, TLS validation, timeouts, bounded responses, and metadata/link-local/reserved-address blocking. Private DNS destinations require explicit hostname approval; configured private IPs and localhost remain supported.
 
-## Updates and deployment
+See [owner security and recovery](https://github.com/alexphillips-dev/GearBeacon/blob/v1.4.0/docs/SECURITY_CONTROLS.md) for session limits, authenticator setup, account recovery, and private-host approvals.
 
-- **Update button:** a compact blue `update available · vX.Y.Z` button appears below the header on every tab. It opens matching release notes in a new tab, or the local update details when a notes link is unavailable. Its arrival preserves Activity reading position and focus.
-- **Branch-aware checks:** main follows newer published stable releases and excludes drafts and prereleases. Dev compares the running commit with the dev branch, detecting newer commits even when the version number is unchanged. It opens matching prerelease notes when available, otherwise the changelog for that commit.
-- **Automatic checking:** the server checks at startup and daily, sharing cached results across browsers. Manual checks remain in Settings. Offline failures preserve the last confirmed result; retries respect rate limits. Automatic checking can be disabled, and downloads and installation remain owner-initiated.
-- **Build identity:** packaged source archives, standalone packages, and container builds retain branch, version, and commit metadata so update checks can identify the installed build.
-- **Prerelease channels:** candidate packages follow dev even when the package workflow is dispatched from main; stable packages built from main keep the stable channel.
-- **Verified updates:** native helpers check local startup health and the expected version after restart, support custom ports, retain build metadata, and report recovery steps if verification fails. Docker updates persist the selected image tag in the Compose project `.env`, preserve other settings, and verify the resolved and running image. All helpers retain mandatory backup confirmation.
+## Updates, packaging, and maintenance
 
-## Documentation, privacy, and maintenance
+- Native and Docker update helpers require GitHub artifact attestations tied to the official repository, signer workflow, release tag, and source commit, and reject self-hosted signer runners. Packages include signed verification bundles. Docker pins the verified immutable image digest. Updates remain owner-initiated and backup-confirmed; GitHub CLI is required by these helpers.
+- Source and standalone packaging include the new backend modules while excluding companion state and keys. Companion dependencies receive their own Dependabot checks.
+- Updated pinned actions: CodeQL **4.38.1**, Docker Buildx setup **4.4.1**, Docker build/push **7.4.0**, and QEMU setup **4.4.0**. CodeQL actions update together and are enforced by the security contract.
+- Release promotion uses a merge commit, then fast-forwards dev to the reviewed main commit. This preserves shared ancestry and prevents already-released development commits from appearing ahead of main again.
+- Expanded backend, browser, profile, recovery, and security regression coverage. Fixed relative-time fixture races, contrast scans during CSS transitions, updater deadline timing, and slow first-use Windows startup. Updater fixtures also cover delayed health and retries.
 
-- Reorganized release history and getting-started guidance under `docs/`, source startup scripts under `launchers/`, and contribution/security guidance under `.github/`. Standalone packages retain their top-level getting-started file and appropriate service helpers.
-- Simplified the README and deployment overview, connected the complete Wiki, and added badges for releases, main CI, license, platforms, Docker, and documentation. Clarified source archive layout, saved-setting precedence, Windows Scheduled Task management, Docker version pinning, configuration, and recovery.
-- Removed local agent instructions from tracked files and expanded ignore rules for editor state, environment overrides, credentials, databases, exports, logs, and generated packages. Delayed-delivery product context stays redacted from support diagnostics.
-- Added deterministic coverage for saved views, routing, expiry, freshness, collection budgets, migration/recovery, Activity evidence, timezone boundaries, refresh races, large lists, update channels, and updater success/failure behavior. Browser coverage includes mobile, both themes, keyboard/focus, Settings drafts, dialogs, and live Activity anchoring.
-- Corrected the notification restart test to retain alerts sent during startup and explicitly verify that due jobs resume with their original delayed context.
-- Updated source-package rehearsal to validate the full installed version, including prerelease suffixes, and confirm that disabled update checks remain unverified.
-- Made the imported-history duration test account for the API's actual rolling window, preserving exact duration assertions on slower runners.
-- Removed inline-shell invocation from updater fixtures and exercised paths containing spaces, ampersands, and quotes, addressing the CodeQL finding in that test helper.
-- Candidate packages and releases retain required automated platform, security, checksum, SBOM, and attestation checks. Real-host installation, rollback, manual accessibility, and soak testing are documented as recommended additional validation, without weakening automated release requirements.
+## Upgrading from v1.3.0
 
-## Upgrading from 1.2.0
+1. Use Prepare safe update and test the backup before replacing files. Keep the compatible pre-upgrade database **and pre-upgrade encryption key** for rollback. Stop an existing companion and update it to the matching version before reconnecting.
+2. Follow the installation-specific update procedure, restart GearBeacon, and hard-refresh the browser. Source and companion installs require Node.js 22.13 or newer; standalone packages include their server runtime.
+3. Startup validates a safety backup before upgrading **schema v13 to v15**. Existing watches, rules, collections, history, settings, encrypted integration secrets, and owner credentials are preserved. Existing browser sessions are signed out once; sign in again to continue.
+4. If notifications use a hostname resolving to a private LAN/VPN address, approve the exact hostname in Settings > Security > Sessions. Review access configuration if the removed insecure remote override was previously used.
+5. On Windows, the upgraded installation key is tied to its original account and DPAPI profile. Prepare an encrypted data export before moving machines or changing service identity; copying the wrapped key alone is insufficient.
 
-1. Create a backup and use the restore-test controls before updating. Keep the compatible pre-upgrade database and its matching encryption key for rollback.
-2. Follow the update procedure for your installation type. Source installations require Node.js 22.13 or newer; standalone packages include their runtime. Source checkout launchers now live under `launchers/`; older 1.2.0 source archives keep their launchers at the root.
-3. Restart the GearBeacon process after replacing the application files, then hard-refresh the browser to load the matching interface.
-4. Startup creates and validates a safety backup before migrating the 1.2.0 database from **schema v11 to v13**. Existing watches, rules, collections, quantities, spending, history, settings, encrypted secrets, and owner access are retained.
+Recovery exports use **format v10**. Supported older exports remain importable. Portable exports exclude owner credentials, MFA material, browser sessions, private-network approvals, and local integration secrets. Purchase instructions restore paused; pair the companion again on a restored installation. Companion session files and keys stay on the companion host and are excluded from GearBeacon backups.
 
-Recovery exports now use **format v9**, preserving saved views, collection budget conditions, delivery channel choices, and expiry. Previous supported formats remain importable. Existing watches and collections retain default channels, no expiry, and no budget-based readiness requirement until you change those settings.
+Older applications cannot open a schema-v15 database, a format-v10 export, or a DPAPI-wrapped key. Rollback requires the compatible pre-upgrade database, pre-upgrade key, and matching older application. Update helpers do not automatically restore a database.
 
-Older application versions cannot open a schema-v13 database or format-v9 export. Rollback requires the compatible pre-upgrade database, matching key, and application version; update helpers do not automatically restore a database.
+[Full comparison: v1.3.0…v1.4.0](https://github.com/alexphillips-dev/GearBeacon/compare/v1.3.0...v1.4.0)
 
-Stock freshness and observed price history describe monitoring evidence, not a promise of checkout availability or a prediction of future restocks. GearBeacon remains independent from Ubiquiti. UniFi and Ubiquiti are trademarks of Ubiquiti Inc.
+GearBeacon remains independent from Ubiquiti. UniFi and Ubiquiti are trademarks of Ubiquiti Inc.

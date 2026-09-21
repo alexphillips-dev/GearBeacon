@@ -5,6 +5,7 @@ CONFIRM=${2:-}
 test -n "$VERSION" || { echo 'Usage: update-mac-linux.sh VERSION --backup-confirmed [--port PORT] [--timeout-seconds SECONDS] [--install-dir DIRECTORY]' >&2; exit 2; }
 printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$' || { echo 'Version must be a release version such as 1.0.0.' >&2; exit 2; }
 test "$CONFIRM" = '--backup-confirmed' || { echo 'Use Prepare safe update in GearBeacon first, then add --backup-confirmed.' >&2; exit 2; }
+command -v gh >/dev/null 2>&1 || { echo 'Install the GitHub CLI (gh) to verify signed release attestations before updating.' >&2; exit 2; }
 case "$(uname -s)" in Darwin) PLATFORM=macos; INSTALL=/usr/local/lib/gearbeacon; SERVICE=com.gearbeacon.server ;; Linux) PLATFORM=linux; INSTALL=/opt/gearbeacon; SERVICE=gearbeacon ;; *) echo 'Unsupported platform.' >&2; exit 2 ;; esac
 case "$(uname -m)" in arm64|aarch64) ARCH=arm64 ;; x86_64|amd64) ARCH=x64 ;; *) echo 'Unsupported processor architecture.' >&2; exit 2 ;; esac
 shift 2
@@ -44,6 +45,10 @@ EXPECTED=$(awk 'NR==1 {print $1}' "$TMP_DIR/$NAME.tar.gz.sha256")
 printf '%s' "$EXPECTED" | grep -Eq '^[a-fA-F0-9]{64}$' || { echo 'Invalid checksum metadata.' >&2; exit 1; }
 if command -v sha256sum >/dev/null 2>&1; then ACTUAL=$(sha256sum "$TMP_DIR/$NAME.tar.gz" | awk '{print $1}'); else ACTUAL=$(shasum -a 256 "$TMP_DIR/$NAME.tar.gz" | awk '{print $1}'); fi
 test "$(printf '%s' "$EXPECTED" | tr A-F a-f)" = "$ACTUAL" || { echo 'Downloaded package checksum does not match release metadata.' >&2; exit 1; }
+curl -fL "$BASE/$NAME.tar.gz.attestation.jsonl" -o "$TMP_DIR/$NAME.tar.gz.attestation.jsonl"
+COMMIT=$(curl -fsS --max-time 30 "https://api.github.com/repos/alexphillips-dev/GearBeacon/commits/refs%2Ftags%2Fv$VERSION" | sed -n 's/^[[:space:]]*"sha"[[:space:]]*:[[:space:]]*"\([a-f0-9]*\)".*/\1/p' | head -n 1)
+printf '%s' "$COMMIT" | grep -Eq '^[a-f0-9]{40}$' || { echo 'The release tag did not resolve to a valid source commit.' >&2; exit 1; }
+gh attestation verify "$TMP_DIR/$NAME.tar.gz" --bundle "$TMP_DIR/$NAME.tar.gz.attestation.jsonl" --repo alexphillips-dev/GearBeacon --signer-workflow alexphillips-dev/GearBeacon/.github/workflows/package.yml --source-ref "refs/tags/v$VERSION" --source-digest "$COMMIT" --deny-self-hosted-runners || { echo 'Release provenance verification failed. Nothing was installed.' >&2; exit 1; }
 # Packages contain regular files/directories beneath one release directory only.
 tar -tzf "$TMP_DIR/$NAME.tar.gz" > "$TMP_DIR/entries"
 awk -v name="$NAME" '$0 !~ "^" name "/" || $0 ~ /(^|\/)\.\.(\/|$)/ {bad=1} END {exit bad}' "$TMP_DIR/entries" || { echo 'Unsafe archive paths.' >&2; exit 1; }

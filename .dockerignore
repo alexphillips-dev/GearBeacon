@@ -1,5 +1,10 @@
 .git
 .github
+checkout
+checkout-data
+*.checkout-state
+*.checkout-journal
+*.checkout-lock
 backend/node_modules
 *.zip
 *.sha256.txt

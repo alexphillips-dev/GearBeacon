@@ -13,12 +13,12 @@ const run = (command, args, expectedText) => {
 };
 
 if (process.platform === 'win32') {
-  run('pwsh', ['-NoProfile', '-NonInteractive', '-File', 'deploy/update-windows.ps1', '-Version', '1.3.0'], 'BackupConfirmed');
+  run('pwsh', ['-NoProfile', '-NonInteractive', '-File', 'deploy/update-windows.ps1', '-Version', '1.4.0'], 'BackupConfirmed');
   const result=spawnSync('pwsh',['-NoProfile','-NonInteractive','-File','scripts/update-helper-windows-test.ps1'],{cwd:root,encoding:'utf8',windowsHide:true});
   if (result.status!==0) throw new Error(`${result.stdout || ''}\n${result.stderr || ''}`);
 } else {
-  run('sh', ['deploy/update-mac-linux.sh', '1.3.0'], '--backup-confirmed');
-  run('sh', ['deploy/update-docker.sh', '1.3.0'], '--backup-confirmed');
+  run('sh', ['deploy/update-mac-linux.sh', '1.4.0'], '--backup-confirmed');
+  run('sh', ['deploy/update-docker.sh', '1.4.0'], '--backup-confirmed');
 }
 
 const fixtures=spawnSync(process.execPath,['scripts/update-helper-unix-test.mjs'],{cwd:root,encoding:'utf8',windowsHide:true});

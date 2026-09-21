@@ -10,10 +10,15 @@ function Assert($condition, $message) { if (-not $condition) { throw $message } 
 function Invoke-WebRequest {
   param($Uri, $OutFile)
   Assert ($Uri -like 'https://github.com/alexphillips-dev/GearBeacon/releases/download/v1.2.1/*') 'Unexpected download destination.'
+  if ($Uri.EndsWith('.attestation.jsonl')) { if ($global:GearBeaconTestScenario -eq 'missing-bundle') { throw 'Missing attestation.' }; Set-Content -LiteralPath $OutFile 'mock signed bundle'; return }
   if ($Uri.EndsWith('.sha256')) {
     $hash = if ($global:GearBeaconTestScenario -eq 'checksum') { '0' * 64 } else { (Get-FileHash $archive -Algorithm SHA256).Hash }
     Set-Content -LiteralPath $OutFile -Value $hash
   } else { Copy-Item -LiteralPath $archive -Destination $OutFile }
+}
+function gh {
+  Assert (($args -join ' ') -like '*--repo alexphillips-dev/GearBeacon*--signer-workflow alexphillips-dev/GearBeacon/.github/workflows/package.yml*--source-ref refs/tags/v1.2.1 --source-digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --deny-self-hosted-runners') 'Missing attestation identity restrictions.'
+  $global:LASTEXITCODE = if ($global:GearBeaconTestScenario -eq 'provenance') { 1 } else { 0 }
 }
 function Stop-ScheduledTask {
   param($TaskName, $ErrorAction)
@@ -28,6 +33,7 @@ function Start-ScheduledTask {
 }
 function Invoke-RestMethod {
   param($Uri, $TimeoutSec)
+  if ($Uri -eq 'https://api.github.com/repos/alexphillips-dev/GearBeacon/commits/refs%2Ftags%2Fv1.2.1') { return @{sha=('a' * 40)} }
   Assert ($Uri -eq 'http://127.0.0.1:9876/healthz') 'Custom port or local health path was lost.'
   $global:GearBeaconTestActions += 'health'
   if ($global:GearBeaconTestScenario -eq 'unreachable') { throw 'Mock connection refused.' }
@@ -42,7 +48,7 @@ try {
   Set-Content "$fixture/$name/release-manifest.json" '{"version":"1.2.1"}'
   Set-Content "$fixture/$name/build-info.json" '{"packageVersion":"1.2.1","commit":"fixture"}'
   Compress-Archive -LiteralPath "$fixture/$name" -DestinationPath $archive
-  foreach ($case in @('checksum','stop','restart','wrong-version','wrong-app','unreachable','success')) {
+  foreach ($case in @('checksum','provenance','missing-bundle','stop','restart','wrong-version','wrong-app','unreachable','success')) {
     $global:GearBeaconTestScenario = $case
     $global:GearBeaconTestActions = @()
     Set-Content "$install/GearBeacon.exe" 'old executable fixture'
@@ -57,9 +63,9 @@ try {
       Assert ((Get-Content "$install/build-info.json" -Raw).Contains('1.2.1')) 'Build metadata was not updated.'
     } else {
       Assert $failed "The $case failure was reported as success."
-      if ($case -eq 'checksum') { Assert ($global:GearBeaconTestActions.Count -eq 0) 'Checksum failure stopped the application.' }
-      if ($case -in @('checksum','stop')) { Assert ((Get-Content "$install/GearBeacon.exe" -Raw).Contains('old executable')) 'Pre-install failure changed application files.' }
-      if ($case -ne 'checksum') { Assert (($result -join ' ').Contains('matching secrets.key')) 'Recovery instructions omitted the compatible database/key requirement.' }
+      if ($case -in @('checksum','provenance','missing-bundle')) { Assert ($global:GearBeaconTestActions.Count -eq 0) 'Checksum failure stopped the application.' }
+      if ($case -in @('checksum','provenance','missing-bundle','stop')) { Assert ((Get-Content "$install/GearBeacon.exe" -Raw).Contains('old executable')) 'Pre-install failure changed application files.' }
+      if ($case -notin @('checksum','provenance','missing-bundle')) { Assert (($result -join ' ').Contains('matching secrets.key')) 'Recovery instructions omitted the compatible database/key requirement.' }
     }
   }
   Write-Host 'Windows updater tests passed: checksum, stop/restart failures, wrong app/version, unreachable health, metadata and successful startup.'

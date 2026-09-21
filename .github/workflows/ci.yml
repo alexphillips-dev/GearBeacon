@@ -50,6 +50,8 @@ jobs:
         run: node --no-warnings scripts/alert-delivery-test.mjs
       - name: Activity context and branch-aware update checks
         run: node --no-warnings scripts/activity-context-test.mjs && node --no-warnings scripts/update-notice-test.mjs
+      - name: Authorized purchases, uncertainty and recovery
+        run: node --no-warnings scripts/auto-buy-test.mjs
       - name: Verify update helper safety, startup and recovery
         run: npm run test:update-helpers
       - name: Verify source launchers from outside the checkout
@@ -79,6 +81,9 @@ jobs:
           node-version: '22.16.0'
           cache: npm
       - run: npm ci
+      - run: npm ci --prefix checkout
+      - name: Isolated checkout browser and submission tests
+        run: npm run test:checkout
       - run: npm run build
       - name: Test UI in headless Chrome
         run: npm run test:browser
@@ -149,8 +154,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0
-      - uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Build ${{ matrix.name }} image
         run: docker buildx build --platform '${{ matrix.platform }}' --load --build-arg VCS_REF="$GITHUB_SHA" --build-arg BUILD_BRANCH="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}" -t 'gearbeacon:${{ matrix.name }}' .
       - name: Run ${{ matrix.name }} image
@@ -197,4 +202,4 @@ jobs:
         shell: bash
         env:
           EXPECTED_BUILD_COMMIT: ${{ github.sha }}
-        run: node scripts/standalone-smoke.mjs dist/standalone/GearBeacon-v1.3.0-*/
+        run: node scripts/standalone-smoke.mjs dist/standalone/GearBeacon-v1.4.0-*/
