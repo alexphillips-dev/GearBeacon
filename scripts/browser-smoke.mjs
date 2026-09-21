@@ -114,12 +114,20 @@ async function assertAccessible(label) {
     const injected = await cdp.send('Runtime.evaluate', { expression:axeSource });
     if (injected.exceptionDetails) throw new Error(`Could not load axe-core for ${label}.`);
   }
+  // Theme, hover and layout changes can still be transitioning after DOM checks
+  // pass. Audit their settled colors without disabling transitions or axe rules.
+  await evaluate(`(async () => {
+    await new Promise(requestAnimationFrame);
+    await Promise.all(document.getAnimations()
+      .filter(animation => animation instanceof CSSTransition)
+      .map(animation => animation.finished.catch(() => {})));
+  })()`);
   const violations = await evaluate(`axe.run(document, {
     runOnly:{ type:'tag', values:['wcag2a','wcag2aa','wcag21aa','wcag22aa'] },
     resultTypes:['violations']
   }).then(({ violations }) => violations.map((violation) => ({
     id:violation.id, impact:violation.impact, help:violation.help,
-    targets:violation.nodes.slice(0,5).map((node) => node.target.join(' '))
+    targets:violation.nodes.slice(0,5).map((node) => ({target:node.target.join(' '), summary:node.failureSummary}))
   })))`);
   assert(violations.length === 0, `${label} has accessibility violations: ${JSON.stringify(violations)}`);
 }
