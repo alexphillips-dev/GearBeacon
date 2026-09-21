@@ -150,9 +150,16 @@ async function request(path, options = {}) {
 }
 
 async function waitFor(path = '/api/status') {
-  for (let attempt = 0; attempt < 80; attempt += 1) {
+  // First-use Windows key protection can outlast the former eight-second
+  // startup budget on shared runners. Keep requests bounded and fail promptly
+  // if the server exits instead of concealing a real startup failure.
+  const deadline = Date.now() + 30000;
+  while (Date.now() < deadline) {
+    if (child && (child.exitCode !== null || child.signalCode !== null)) {
+      throw new Error(`GearBeacon test server exited before becoming ready at ${path} (exit ${child.exitCode ?? child.signalCode})`);
+    }
     try {
-      const result = await fetchJson(path, {}, 200);
+      const result = await fetchJson(path, { signal:AbortSignal.timeout(1000) }, 200);
       if (path !== '/api/status' || result.body.lastSuccessAt) return result.body;
     } catch {}
     await delay(100);
