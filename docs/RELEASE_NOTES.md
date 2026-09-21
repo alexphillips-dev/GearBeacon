@@ -41,7 +41,7 @@ See [owner security and recovery](https://github.com/alexphillips-dev/GearBeacon
 - Source and standalone packaging include the new backend modules while excluding companion state and keys. Companion dependencies receive their own Dependabot checks.
 - Updated pinned actions: CodeQL **4.38.1**, Docker Buildx setup **4.4.1**, Docker build/push **7.4.0**, and QEMU setup **4.4.0**. CodeQL actions update together and are enforced by the security contract.
 - Release promotion uses a merge commit, then fast-forwards dev to the reviewed main commit. This preserves shared ancestry and prevents already-released development commits from appearing ahead of main again.
-- Expanded backend, browser, profile, recovery, and security regression coverage. Fixed relative-time fixture races, contrast scans during CSS transitions, updater deadline timing, and slow first-use Windows startup. Updater fixtures also cover delayed health and retries.
+- Expanded backend, browser, profile, recovery, and security regression coverage, including the v1.3.0 upgrade. Fixed relative-time fixture races, contrast scans during CSS transitions, updater deadline timing, slow first-use Windows startup, and mock webhook/application port collisions. Updater fixtures also cover delayed health and retries.
 
 ## Upgrading from v1.3.0
 

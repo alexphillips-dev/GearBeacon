@@ -14,7 +14,6 @@ const dataDir = await mkdtemp(join(tmpdir(), 'gearbeacon-alert-delivery-'));
 const socket = net.createServer();
 await new Promise((done) => socket.listen(0, '127.0.0.1', done));
 const port = socket.address().port;
-await new Promise((done) => socket.close(done));
 const base = `http://127.0.0.1:${port}`;
 const received = []; let rejectWebhook = false;
 const webhook = http.createServer((req, res) => {
@@ -22,6 +21,10 @@ const webhook = http.createServer((req, res) => {
   req.on('end', () => { received.push({ channel:req.url === '/ntfy' ? 'ntfy' : 'webhook', body:req.url === '/ntfy' ? body : JSON.parse(body) }); res.writeHead(rejectWebhook && req.url !== '/ntfy' ? 503 : 200); res.end('ok'); });
 });
 await new Promise((done) => webhook.listen(0, '127.0.0.1', done));
+// Keep the app port reserved until the webhook has its own listener. Otherwise
+// the OS can immediately reuse it and route startup probes to the webhook.
+assert.notEqual(webhook.address().port, port, 'Webhook reused the reserved app port');
+await new Promise((done) => socket.close(done));
 const parent = 'uvc-g5-ptz'; const black = `${parent}::mock-black`; const white = `${parent}::mock-white`;
 let variants = [
   { id:'mock-black', slug:'uvc-g5-ptz-black', sku:'MOCK-B', title:'Black', status:'SoldOut', displayPrice:'$299.00' },

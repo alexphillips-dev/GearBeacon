@@ -8,6 +8,7 @@ Released September 21, 2026. Includes every change since v1.3.0. See the [comple
 
 - Updated CodeQL to 4.38.1, Docker Buildx setup to 4.4.1, Docker build/push to 7.4.0, and QEMU setup to 4.4.0 with full commit pins. Grouped CodeQL dependency updates, added companion dependency monitoring, and required all CodeQL actions in the security contract. Release promotion now preserves merge ancestry and fast-forwards dev to main before development resumes.
 - Added explicit v1.3.0/schema-v13 upgrade coverage for validated migration backups, retained watches, and monitoring after the v1.4.0/schema-v15 upgrade.
+- Kept the alert-delivery fixture's application port reserved until its mock webhook has a separate listener, preventing OS port reuse from routing startup probes to the wrong server.
 
 - Stabilized CI accessibility checks by waiting for active CSS transitions before measuring contrast, made updater-fixture deadlines deterministic with coverage for delayed startup and retries, and allowed slower first-use Windows key protection during test-server startup while failing promptly if the process exits.
 - Hardened general application security: removed the unauthenticated remote-bind escape hatch and stopped startup on invalid saved configuration; added configurable absolute session expiry and idle locking that excludes background polling, fresh owner verification for sensitive settings/data transfers, and optional authenticator codes with single-use recovery codes. Schema v15 signs existing browsers out once after a validated migration backup.
