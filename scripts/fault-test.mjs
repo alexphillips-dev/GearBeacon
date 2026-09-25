@@ -301,8 +301,18 @@ try {
   }
   if (process.platform !== 'win32') await chmod(secondaryDir, 0o750);
   const secondaryMode = (await stat(secondaryDir)).mode & 0o777;
+  const ownerBeforeFirstCopy = new DatabaseSync(databaseFile);
+  try { ownerBeforeFirstCopy.prepare("DELETE FROM meta WHERE key='secondary_backup_owner_id'").run(); }
+  finally { ownerBeforeFirstCopy.close(); }
   const preservedCopy = await post('/api/data/backup');
   assert(preservedCopy.backup.secondary?.ok, 'Backup failed in a shared secondary destination.');
+  const snapshot = new DatabaseSync(preservedCopy.backup.path, { readOnly:true });
+  const current = new DatabaseSync(databaseFile, { readOnly:true });
+  try {
+    const snapshotOwner = snapshot.prepare("SELECT value FROM meta WHERE key='secondary_backup_owner_id'").get()?.value;
+    const currentOwner = current.prepare("SELECT value FROM meta WHERE key='secondary_backup_owner_id'").get()?.value;
+    assert(snapshotOwner && snapshotOwner === currentOwner && preservedCopy.backup.secondary.filename.startsWith(`gearbeacon-${snapshotOwner}-`), 'The first secondary backup owner ID was absent from its primary snapshot.');
+  } finally { snapshot.close(); current.close(); }
   assert(preservedCopy.summary.secondary.count === 1, 'Unrelated files were counted as GearBeacon recovery copies.');
   const replacementCopy = await post('/api/data/backup');
   assert(replacementCopy.backup.secondary?.ok && replacementCopy.summary.secondary.count === 1, 'Secondary retention did not keep one owned recovery copy.');

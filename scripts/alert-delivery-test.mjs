@@ -15,11 +15,19 @@ const socket = net.createServer();
 await new Promise((done) => socket.listen(0, '127.0.0.1', done));
 const port = socket.address().port;
 const base = `http://127.0.0.1:${port}`;
-const received = []; let rejectWebhook = false; let dropWebhook = false;
+const received = []; let rejectWebhook = false; let dropWebhook = false; let interruptWebhook = false;
 const webhook = http.createServer((req, res) => {
   if (dropWebhook && req.url !== '/ntfy') { req.socket.destroy(); return; }
   let body = ''; req.on('data', (chunk) => { body += chunk; });
-  req.on('end', () => { received.push({ channel:req.url === '/ntfy' ? 'ntfy' : 'webhook', body:req.url === '/ntfy' ? body : JSON.parse(body) }); res.writeHead(rejectWebhook && req.url !== '/ntfy' ? 503 : 200); res.end('ok'); });
+  req.on('end', () => {
+    if (interruptWebhook && req.url !== '/ntfy') {
+      res.writeHead(200); res.write('partial');
+      setImmediate(() => res.socket?.destroy());
+      return;
+    }
+    received.push({ channel:req.url === '/ntfy' ? 'ntfy' : 'webhook', body:req.url === '/ntfy' ? body : JSON.parse(body) });
+    res.writeHead(rejectWebhook && req.url !== '/ntfy' ? 503 : 200); res.end('ok');
+  });
 });
 await new Promise((done) => webhook.listen(0, '127.0.0.1', done));
 // Keep the app port reserved until the webhook has its own listener. Otherwise
@@ -194,6 +202,19 @@ try {
   await waitFor(()=>queue().find(row=>row.id===outageJob.id)?.status==='sent','Outage recovery did not resend the failed job');
   assert.equal((await request('/api/operations')).notifications.queue.failed,0);
   assert.ok(query("SELECT status FROM notification_log WHERE event_id=? AND status='failed'",outageJob.event_id).length,'Recovery erased failed delivery history');
+
+  // A peer can send response headers and then abort the body during an outage.
+  await restock();
+  const interruptedJob=pending()[0]; assert.ok(interruptedJob);
+  edit('UPDATE notification_queue SET max_attempts=1,next_attempt_at=? WHERE id=?',new Date(Date.now()-1000).toISOString(),interruptedJob.id);
+  interruptWebhook=true;
+  await request('/api/notifications/retry-failed',{});
+  await waitFor(()=>queue().find(row=>row.id===interruptedJob.id)?.status==='failed','Interrupted response did not exhaust its retry limit');
+  assert.equal(queue().find(row=>row.id===interruptedJob.id).last_error,'Notification response was interrupted.');
+  await request('/api/mock/fault',{rateLimitOnceSeconds:1}); await request('/api/check',{},'POST',502);
+  interruptWebhook=false;
+  await request('/api/mock/fault',{reset:true}); await check();
+  await waitFor(()=>queue().find(row=>row.id===interruptedJob.id)?.status==='sent','Outage recovery did not resend the interrupted response');
 
   // A partial Store response must not close the recovery window.
   await restock();

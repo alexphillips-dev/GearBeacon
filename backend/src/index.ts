@@ -649,6 +649,11 @@ function createDatabaseBackup(reason = 'manual') {
   try {
     const sourceIntegrity = databaseIntegrity();
     if (!sourceIntegrity.ok) throw new Error(`Database integrity check failed: ${sourceIntegrity.messages.join('; ')}`);
+    let secondaryOwnerError = null;
+    if (SECONDARY_BACKUP_DIR && runtimeReadyForRecoveryCopies) {
+      try { secondaryBackupOwnerId(); }
+      catch (err) { secondaryOwnerError = err; }
+    }
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     const filename = `${safeFilePart(reason)}-${stamp}.sqlite3`;
     const destination = path.join(BACKUP_DIR, filename);
@@ -667,7 +672,9 @@ function createDatabaseBackup(reason = 'manual') {
     trimBackups();
     const size = fs.statSync(destination).size;
     const primary = { filename, path: destination, size, createdAt: isoNow(), reason, validated: true };
-    const secondary = createSecondaryRecoveryCopy(primary, reason);
+    const secondary = secondaryOwnerError
+      ? { configured:true, ok:false, error:'Could not save the secondary backup owner ID before snapshotting.' }
+      : createSecondaryRecoveryCopy(primary, reason);
     if (tableExists('backup_log')) db.prepare('INSERT INTO backup_log(filename,reason,status,size,detail,created_at) VALUES(?,?,?,?,?,?)').run(filename, reason, 'validated', size, secondary ? JSON.stringify({ secondary }) : null, isoNow());
     return { ...primary, secondary };
   } catch (err) {
@@ -2674,7 +2681,7 @@ function retryDelaySeconds(attempts) {
 }
 
 function transientDeliveryFailure(message) {
-  return /\b(?:fetch failed|network (?:error|connection failed)|socket hang up|connection (?:closed|reset|refused|timed out)|timeout|timed out|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH|ENETUNREACH|HTTP (?:429|50[0234])|SMTP (?:4\d\d|connection closed))\b/i.test(String(message || ''));
+  return /\b(?:fetch failed|network (?:error|connection failed)|notification response was interrupted|aborted|premature close|socket hang up|connection (?:closed|reset|refused|timed out)|timeout|timed out|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH|ENETUNREACH|HTTP (?:429|50[0234])|SMTP (?:4\d\d|connection closed))\b/i.test(String(message || ''));
 }
 
 function recoverFailedDeliveriesAfterOutage(region) {

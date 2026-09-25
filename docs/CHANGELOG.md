@@ -17,6 +17,7 @@ Prepared September 25, 2026. Includes every change since v1.4.0. See the [comple
 - Added failed notification controls in Operations > Delivery: retry, dismiss one, or dismiss all. The attention banner opens that section, and dismissal clears the active warning while retaining delivery history. After a failed Store check recovers, network-related terminal delivery failures from that outage are requeued for one bounded retry cycle; alert expiry and channel rules still apply.
 - Kept automatic delivery recovery pending through partial Store catalogs and service restarts. A complete Store check resumes eligible failed jobs once and clears the persisted recovery window.
 - Removed abandoned primary and secondary backup temporary files after a crash once they are at least a day old and their creating process has exited. Startup and periodic cleanup leave completed backups, recent files, and unrelated files untouched.
+- Store the secondary backup owner ID before the first primary snapshot so its recovery copy remains discoverable after a restore. An interrupted notification response now qualifies for the bounded outage recovery retry.
 
 ## V1.4.0 — Optional purchasing, stronger security, and clearer Activity
 
