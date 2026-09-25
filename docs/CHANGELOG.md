@@ -2,9 +2,9 @@
 
 The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. The first release promoted to `main` is V1.0.0.
 
-## V1.4.0 — Optional purchasing, stronger security, and clearer Activity
+## V1.4.1 — Delivery recovery and safer state changes
 
-Released September 21, 2026. Includes every change since v1.3.0. See the [complete release notes](RELEASE_NOTES.md).
+Prepared September 25, 2026. Includes every change since v1.4.0. See the [complete release notes](RELEASE_NOTES.md).
 
 - Adding a watch with an alert rule now commits both together, and bulk pause, resume, purchased, and wanted actions commit all selected watches together. Failed writes roll back rules, collection purchase state, and delivery changes.
 - Watch removals now commit the database and collection baselines before updating the live watchlist. Failed single or bulk removals leave every selected watch in place, including after a later Store check.
@@ -17,6 +17,10 @@ Released September 21, 2026. Includes every change since v1.3.0. See the [comple
 - Added failed notification controls in Operations > Delivery: retry, dismiss one, or dismiss all. The attention banner opens that section, and dismissal clears the active warning while retaining delivery history. After a failed Store check recovers, network-related terminal delivery failures from that outage are requeued for one bounded retry cycle; alert expiry and channel rules still apply.
 - Kept automatic delivery recovery pending through partial Store catalogs and service restarts. A complete Store check resumes eligible failed jobs once and clears the persisted recovery window.
 - Removed abandoned primary and secondary backup temporary files after a crash once they are at least a day old and their creating process has exited. Startup and periodic cleanup leave completed backups, recent files, and unrelated files untouched.
+
+## V1.4.0 — Optional purchasing, stronger security, and clearer Activity
+
+Released September 21, 2026. Includes every change since v1.3.0. See the [1.4.0 release notes](https://github.com/alexphillips-dev/GearBeacon/releases/tag/v1.4.0).
 
 - Updated CodeQL to 4.38.1, Docker Buildx setup to 4.4.1, Docker build/push to 7.4.0, and QEMU setup to 4.4.0 with full commit pins. Grouped CodeQL dependency updates, added companion dependency monitoring, and required all CodeQL actions in the security contract. Release promotion now preserves merge ancestry and fast-forwards dev to main before development resumes.
 - Added explicit v1.3.0/schema-v13 upgrade coverage for validated migration backups, retained watches, and monitoring after the v1.4.0/schema-v15 upgrade.

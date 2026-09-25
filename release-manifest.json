@@ -1,11 +1,11 @@
 {
   "name": "GearBeacon",
-  "latestVersion": "1.4.0",
-  "publishedAt": "2026-09-21T00:00:00Z",
-  "downloadUrl": "https://github.com/alexphillips-dev/GearBeacon/releases/tag/v1.4.0",
-  "releasePageUrl": "https://github.com/alexphillips-dev/GearBeacon/releases/tag/v1.4.0",
+  "latestVersion": "1.4.1",
+  "publishedAt": "2026-09-25T00:00:00Z",
+  "downloadUrl": "https://github.com/alexphillips-dev/GearBeacon/releases/tag/v1.4.1",
+  "releasePageUrl": "https://github.com/alexphillips-dev/GearBeacon/releases/tag/v1.4.1",
   "minimumSchemaVersion": 4,
   "maximumSchemaVersion": 15,
   "minimumNodeVersion": "22.13.0",
-  "releaseNotes": "GearBeacon 1.4.0 includes all changes since 1.3.0: optional experimental auto-buy with exact-variant limits, a sandboxed checkout companion, clearer setup and profile verification; NEW TO STORE and NOW AVAILABLE Activity badges; configurable session locking, fresh owner verification and optional authenticator codes; Windows account-protected installation keys, restricted notification destinations, and signed update provenance. CI timing, dependency maintenance, and release ancestry are improved. Upgrade creates a validated backup before schema v13 to v15 migration and signs browsers out once. Exports use format v10 and restore purchase instructions paused. Existing saved-card support is required for auto-buy; authenticated live checkout compatibility remains unverified. Read the complete release notes for private-host approvals and Windows key transfer/rollback guidance."
+  "releaseNotes": "GearBeacon 1.4.1 includes all changes since 1.4.0: failed-delivery retry and dismissal controls with one bounded recovery cycle after an outage; atomic Store observations, activity, delivery jobs, watch and rule changes, and collection purchase actions; Store response-body timeouts; validated primary backups, rollback-safe restore, and installation-scoped cleanup of secondary copies and abandoned temporary files; Windows checkout vault DPAPI and ACL protection; reliable Windows service web replacement; and Operations refresh on reconnection. Schema v15 and export format v10 are unchanged. Read the complete release notes for recovery, upgrade, and optional companion guidance."
 }

@@ -15,7 +15,7 @@ GearBeacon is a private, self-hosted Ubiquiti and UniFi Store inventory monitor 
 
 One installation serves one owner. Monitoring and external notification delivery run on your server, even when the browser is closed. There is no GearBeacon cloud account, subscription, hosted database, analytics, or telemetry, and monitoring requires no Ubiquiti login. Optional auto-buy uses your own Store session in a separate checkout companion.
 
-**Current version: 1.4.0** · [Downloads](https://github.com/alexphillips-dev/GearBeacon/releases) · [Release notes](docs/RELEASE_NOTES.md) · [Wiki](https://github.com/alexphillips-dev/GearBeacon/wiki)
+**Current version: 1.4.1** · [Downloads](https://github.com/alexphillips-dev/GearBeacon/releases) · [Release notes](docs/RELEASE_NOTES.md) · [Wiki](https://github.com/alexphillips-dev/GearBeacon/wiki)
 
 Save named views, use a compact Watchlist, receive budget-aware collection alerts, and read [live Activity cards](docs/ACTIVITY.md) with current availability, watch and price context, delivery explanations, and automatic arrivals that preserve your reading position. GearBeacon supports [per-watch and collection delivery channels, delayed-alert context and expiry, and product freshness](docs/ALERT_DELIVERY.md), [Settings section tabs](docs/SETTINGS.md), and [branch-aware update notices](docs/UPDATES.md). It uses schema v15 and recovery export format v10, with a validated backup before migration.
 
