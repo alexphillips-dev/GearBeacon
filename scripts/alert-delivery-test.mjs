@@ -15,8 +15,9 @@ const socket = net.createServer();
 await new Promise((done) => socket.listen(0, '127.0.0.1', done));
 const port = socket.address().port;
 const base = `http://127.0.0.1:${port}`;
-const received = []; let rejectWebhook = false;
+const received = []; let rejectWebhook = false; let dropWebhook = false;
 const webhook = http.createServer((req, res) => {
+  if (dropWebhook && req.url !== '/ntfy') { req.socket.destroy(); return; }
   let body = ''; req.on('data', (chunk) => { body += chunk; });
   req.on('end', () => { received.push({ channel:req.url === '/ntfy' ? 'ntfy' : 'webhook', body:req.url === '/ntfy' ? body : JSON.parse(body) }); res.writeHead(rejectWebhook && req.url !== '/ntfy' ? 503 : 200); res.end('ok'); });
 });
@@ -175,6 +176,42 @@ try {
   const failed=pending()[0]; assert.equal(failed.attempts,1);
   agePending(2); received.length=0; await deliver(); assert.equal(received.length,0);
   assert.equal(queue().find(row=>row.id===failed.id).status,'cancelled');
+
+  // A Store outage recovery requeues only transient terminal delivery failures.
+  await rules(black,{maxAlertAgeMinutes:null}); await restock();
+  const outageJob=pending()[0]; assert.ok(outageJob);
+  edit('UPDATE notification_queue SET max_attempts=1,next_attempt_at=? WHERE id=?',new Date(Date.now()-1000).toISOString(),outageJob.id);
+  dropWebhook=true;
+  await request('/api/notifications/retry-failed',{});
+  await waitFor(()=>queue().find(row=>row.id===outageJob.id)?.status==='failed','Outage job did not exhaust its retry limit');
+  assert.equal(queue().find(row=>row.id===outageJob.id).last_error,'Notification network connection failed.');
+  const failedOperations=await request('/api/operations');
+  assert.equal(failedOperations.notifications.queue.failed,1);
+  assert.equal(failedOperations.summary.issues.find(item=>item.settingsSection==='delivery')?.settingsTab,'operations');
+  await request('/api/mock/fault',{rateLimitOnceSeconds:1}); await request('/api/check',{},'POST',502);
+  dropWebhook=false;
+  await request('/api/mock/fault',{reset:true}); await check();
+  await waitFor(()=>queue().find(row=>row.id===outageJob.id)?.status==='sent','Outage recovery did not resend the failed job');
+  assert.equal((await request('/api/operations')).notifications.queue.failed,0);
+  assert.ok(query("SELECT status FROM notification_log WHERE event_id=? AND status='failed'",outageJob.event_id).length,'Recovery erased failed delivery history');
+
+  await restock();
+  const dismissedJob=pending()[0]; assert.ok(dismissedJob);
+  edit('UPDATE notification_queue SET max_attempts=1,next_attempt_at=? WHERE id=?',new Date(Date.now()-1000).toISOString(),dismissedJob.id);
+  rejectWebhook=true; await request('/api/notifications/retry-failed',{});
+  await waitFor(()=>queue().find(row=>row.id===dismissedJob.id)?.status==='failed','Dismiss fixture did not fail');
+  assert.equal((await request('/api/notifications/dismiss-failed',{id:0},'POST',400)).error,'Choose a failed delivery job to dismiss.');
+  assert.equal((await request('/api/notifications/dismiss-failed',{id:dismissedJob.id+999999},'POST',404)).error,'That failed delivery job is no longer available.');
+  assert.equal((await request('/api/notifications/dismiss-failed',{id:dismissedJob.id})).dismissed,1);
+  assert.equal(queue().find(row=>row.id===dismissedJob.id).status,'cancelled');
+  assert.equal((await request('/api/operations')).notifications.queue.failed,0);
+  assert.ok(query("SELECT status FROM notification_log WHERE event_id=? AND status='failed'",dismissedJob.event_id).length,'Dismissal erased failure history');
+  assert.equal((await request('/api/activity?scope=us')).events.find(event=>event.id===dismissedJob.event_id)?.serverAlert.label,'Dismissed');
+  edit("UPDATE notification_queue SET status='failed' WHERE id=?",dismissedJob.id);
+  assert.equal((await request('/api/notifications/dismiss-failed',{all:true})).dismissed,1);
+  assert.equal(queue().find(row=>row.id===dismissedJob.id).status,'cancelled');
+  rejectWebhook=false;
+  await deliver(); received.length=0;
 
   await rules(black,{maxAlertAgeMinutes:null}); await restock();
   agePending(2); await observe({status:'SoldOut'});

@@ -6,6 +6,8 @@ The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. 
 
 Released September 21, 2026. Includes every change since v1.3.0. See the [complete release notes](RELEASE_NOTES.md).
 
+- Added failed notification controls in Operations > Delivery: retry, dismiss one, or dismiss all. The attention banner opens that section, and dismissal clears the active warning while retaining delivery history. After a failed Store check recovers, network-related terminal delivery failures from that outage are requeued for one bounded retry cycle; alert expiry and channel rules still apply.
+
 - Updated CodeQL to 4.38.1, Docker Buildx setup to 4.4.1, Docker build/push to 7.4.0, and QEMU setup to 4.4.0 with full commit pins. Grouped CodeQL dependency updates, added companion dependency monitoring, and required all CodeQL actions in the security contract. Release promotion now preserves merge ancestry and fast-forwards dev to main before development resumes.
 - Added explicit v1.3.0/schema-v13 upgrade coverage for validated migration backups, retained watches, and monitoring after the v1.4.0/schema-v15 upgrade.
 - Kept the alert-delivery fixture's application port reserved until its mock webhook has a separate listener, preventing OS port reuse from routing startup probes to the wrong server.

@@ -2574,7 +2574,8 @@ function eventServerAlertSummary(event, decision, queueRows = [], logRows = []) 
   if (statuses.has('cancelled')) {
     const expired = currentRows.some(row => (row.last_error || row.detail) === 'Alert expired before delivery.');
     const removed = currentRows.some(row => (row.last_error || row.detail) === 'Channel removed from this alert route.');
-    return { state:'muted', label:expired ? 'Expired' : 'Cancelled', detail:expired ? 'The alert expired before delivery; its original observation remains in Activity.' : removed ? 'Pending delivery was cancelled because this channel was removed from the alert route.' : decision.reason === 'purchased' ? 'Pending delivery was cancelled when this watch was marked purchased.' : 'Server delivery was cancelled by a watch or channel change.', channels, mode:event.serverAlert?.mode || null, deliverAt:event.serverAlert?.deliverAt || null };
+    const dismissed = currentRows.some(row => (row.last_error || row.detail) === 'Dismissed by owner after delivery failure.');
+    return { state:'muted', label:expired ? 'Expired' : dismissed ? 'Dismissed' : 'Cancelled', detail:expired ? 'The alert expired before delivery; its original observation remains in Activity.' : dismissed ? 'The failed delivery was dismissed without sending it again; its failed attempt remains in delivery history.' : removed ? 'Pending delivery was cancelled because this channel was removed from the alert route.' : decision.reason === 'purchased' ? 'Pending delivery was cancelled when this watch was marked purchased.' : 'Server delivery was cancelled by a watch or channel change.', channels, mode:event.serverAlert?.mode || null, deliverAt:event.serverAlert?.deliverAt || null };
   }
 
   const snapshot = event.serverAlert;
@@ -2603,6 +2604,24 @@ function eventServerAlertSummary(event, decision, queueRows = [], logRows = []) 
 
 function retryDelaySeconds(attempts) {
   return Math.min(30 * 60, 30 * (2 ** Math.max(0, attempts - 1)));
+}
+
+function transientDeliveryFailure(message) {
+  return /\b(?:fetch failed|network (?:error|connection failed)|socket hang up|connection (?:closed|reset|refused|timed out)|timeout|timed out|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH|ENETUNREACH|HTTP (?:429|50[0234])|SMTP (?:4\d\d|connection closed))\b/i.test(String(message || ''));
+}
+
+function recoverFailedDeliveriesAfterOutage(region, previousSuccessAt) {
+  const now = isoNow();
+  const rows = db.prepare("SELECT id,last_error FROM notification_queue WHERE region=? AND status='failed' AND updated_at>?").all(region, previousSuccessAt || '');
+  const eligible = rows.filter((row) => transientDeliveryFailure(row.last_error));
+  const update = db.prepare("UPDATE notification_queue SET status='pending',attempts=0,next_attempt_at=?,last_error=NULL,updated_at=? WHERE id=? AND status='failed'");
+  let queued = 0;
+  for (const row of eligible) queued += Number(update.run(now, now, row.id).changes || 0);
+  if (queued) {
+    writeAppLog('info', 'notifications', `Requeued ${queued} failed delivery job(s) after Store connectivity recovered.`);
+    processNotificationQueue().catch((err) => writeAppLog('error', 'notifications', 'Recovery queue worker failed.', { error:err?.message || String(err) }));
+  }
+  return queued;
 }
 
 function alertExpired(event, currentPolicy = eventAlertDelivery(event), now = Date.now()) {
@@ -2980,6 +2999,8 @@ function applyCombinedWatchConditions(events, prefs) {
 async function checkStore(reason = 'timer') {
   if (monitor.checking) return { skipped: true, reason: 'already checking' };
   const startedAt = Date.now();
+  const recoveringFromFailure = monitor.consecutiveFailures > 0;
+  const previousSuccessAt = monitor.lastSuccessAt;
   monitor.checking = true;
   monitor.lastCheckAt = isoNow();
   monitor.lastError = null;
@@ -3149,6 +3170,7 @@ async function checkStore(reason = 'timer') {
     console.log(`[monitor] success: ${monitor.productCount} products, ${notifications.length} notification event(s)`);
     writeAppLog('info', 'monitor', `Store check succeeded for ${currentRegion()}.`, { reason, products: monitor.productCount, notificationEvents: notifications.length, catalogHealth: monitor.catalogHealth, pendingChanges:monitor.pendingChanges });
     recordMonitorCheck('success', startedAt, monitor.partialErrors.length ? 'Catalog was usable but one or more categories failed.' : null);
+    if (recoveringFromFailure && !monitor.partialErrors.length) recoverFailedDeliveriesAfterOutage(currentRegion(), previousSuccessAt);
     return { ok: true, products: monitor.productCount, notifications: notifications.length, catalogHealth: monitor.catalogHealth, pendingChanges:monitor.pendingChanges };
   } catch (err) {
     coverageSessions.delete(currentRegion());
@@ -3633,7 +3655,7 @@ function operationsSummary() {
   const secondaryUnavailable = storage.backup.secondary.configured && storage.backup.latest && !storage.backup.secondary.latest;
   const issues = [
     ...warnings.map((item) => ({ severity:item.severity === 'high' ? 'action' : 'degraded', message:item.message, settingsTab:item.settingsTab })),
-    ...(queue.failed ? [{ severity:'action', message:`${queue.failed} notification delivery job${queue.failed === 1 ? '' : 's'} failed.`, settingsTab:'notifications' }] : []),
+    ...(queue.failed ? [{ severity:'action', message:`${queue.failed} notification delivery job${queue.failed === 1 ? '' : 's'} failed.`, settingsTab:'operations', settingsSection:'delivery' }] : []),
     ...(!storage.integrity.ok ? [{ severity:'action', message:'Database integrity check failed.', settingsTab:'data' }] : []),
     ...(latestSecondaryAttempt?.ok === false || secondaryUnavailable ? [{ severity:'degraded', message:'The latest primary backup succeeded, but the secondary recovery copy is unavailable.', settingsTab:'data' }] : []),
     ...(unhealthyRegions.length ? [{ severity:'degraded', message:`${unhealthyRegions.length} store region${unhealthyRegions.length === 1 ? ' is' : 's are'} unhealthy.` }] : []),
@@ -5236,6 +5258,23 @@ async function handleApi(req, res, url) {
     const result = db.prepare("UPDATE notification_queue SET status='pending',attempts=0,next_attempt_at=?,last_error=NULL,updated_at=? WHERE status='failed'").run(isoNow(), isoNow());
     processNotificationQueue().catch(() => {});
     return sendJson(res, 200, { ok: true, queued: Number(result.changes || 0) });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/notifications/dismiss-failed') {
+    const body = await readJsonBody(req);
+    if (body?.all !== true && (!Number.isSafeInteger(body?.id) || body.id < 1)) return sendJson(res, 400, { error:'Choose a failed delivery job to dismiss.' });
+    const rows = body.all === true
+      ? db.prepare("SELECT id,event_id,channel FROM notification_queue WHERE status='failed'").all()
+      : db.prepare("SELECT id,event_id,channel FROM notification_queue WHERE id=? AND status='failed'").all(body.id);
+    if (!body.all && !rows.length) return sendJson(res, 404, { error:'That failed delivery job is no longer available.' });
+    const update = db.prepare("UPDATE notification_queue SET status='cancelled',last_error='Dismissed by owner after delivery failure.',updated_at=? WHERE id=? AND status='failed'");
+    let dismissed = 0;
+    for (const row of rows) {
+      if (!update.run(isoNow(), row.id).changes) continue;
+      logNotification(row.event_id, row.channel, 'cancelled', 'Dismissed by owner after delivery failure.');
+      dismissed++;
+    }
+    return sendJson(res, 200, { ok:true, dismissed });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/update/prepare') {

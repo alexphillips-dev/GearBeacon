@@ -57,7 +57,10 @@ async function notificationFetch(url, options = {}, timeoutMs = 10000, { allowed
       response.on('error',reject);
       response.on('end',() => resolve(new Response([204,205,304].includes(response.statusCode) ? null : Buffer.concat(chunks), { status:response.statusCode, headers:response.headers })));
     });
-    request.on('error',() => reject(new Error('Notification request failed or was blocked. Check the destination, TLS certificate, and private-host approval.')));
+    request.on('error',(err) => {
+      const networkCodes = new Set(['ECONNREFUSED','ECONNRESET','ETIMEDOUT','EHOSTUNREACH','ENETUNREACH','EPIPE','ABORT_ERR']);
+      reject(new Error(networkCodes.has(err?.code) ? 'Notification network connection failed.' : 'Notification request failed or was blocked. Check the destination, TLS certificate, and private-host approval.'));
+    });
     request.end(options.body);
   });
 }

@@ -57,6 +57,7 @@ try {
   const dns=async()=>[{address:'127.0.0.1',family:4}];
   await assert.rejects(notificationFetch(named,{},1000,{allowedUrls:[named],lookup:dns}));
   assert.equal(await (await notificationFetch(named,{},1000,{allowedUrls:[named],lookup:dns,privateHosts:['notify.example.test']})).text(),'ok');
+  await assert.rejects(notificationFetch(base,{},1000,{allowedUrls:[base]}),/Notification network connection failed/);
   console.log('Security checks: outbound request protections passed.');
   child=spawn(process.execPath,['--no-warnings','backend/dist/index.js'],{ env:{...process.env,MOCK_MODE:'1',PORT:String(port),REGIONS:'us',GEARBEACON_DATA_DIR:data,GEARBEACON_SKIP_LEGACY_IMPORT:'1',GEARBEACON_GITHUB_RELEASE_API:'',GEARBEACON_AUTO_UPDATE_CHECKS:'0',GEARBEACON_ACCESS_MODE:'private',GEARBEACON_BIND_HOST:'127.0.0.1',GEARBEACON_OWNER_PASSWORD:password,GEARBEACON_OWNER_PASSWORD_FILE:'',GEARBEACON_BACKUP_INTERVAL_HOURS:'0'},stdio:['ignore','pipe','pipe'],windowsHide:true });
   child.stdout.on('data',value=>output+=value); child.stderr.on('data',value=>output+=value);

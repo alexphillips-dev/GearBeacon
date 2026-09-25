@@ -16,6 +16,12 @@ Collection delivery choices apply to collection-ready events. Member watches ret
 
 Removing a channel cancels its pending and failed deliveries. Adding a channel affects future events; it does not resend earlier events. A send already in progress cannot be recalled.
 
+## Recover or dismiss failed deliveries
+
+Open **Settings > Operations > Delivery** from the attention banner to review failed jobs and their errors. **Retry failed** requeues all failed jobs. **Dismiss** clears one failed job without sending it; **Dismiss all failed** clears them all after confirmation. Dismissal removes the active warning but retains the failed attempt in Activity and the delivery log. It cannot recall a message already sent.
+
+GearBeacon retries pending sends with bounded backoff. If those attempts are exhausted during a connection outage, a later successful, complete Store check requeues network-related failures from that outage for one more bounded retry cycle. Permanent errors such as rejected credentials require correcting the channel and using **Retry failed**. If Store checks remain unavailable, use manual retry after connectivity returns. Expiry and current channel settings are checked again before any retry is sent.
+
 ## Optional alert expiry
 
 Set **Expire time-sensitive alerts after (minutes)** to a whole number from 1 to 10,080, or leave it blank for no expiry. The default is no expiry.

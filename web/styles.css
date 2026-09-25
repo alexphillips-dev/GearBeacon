@@ -447,6 +447,7 @@ button.ghost { background: transparent; }
 .ops-row { display:flex; align-items:center; gap:10px; border-bottom:1px solid var(--border); padding:11px 0; }
 .ops-row > div { flex:1; min-width:0; }.ops-row strong,.ops-row small { display:block; }.ops-row strong { font-size:12px; }.ops-row small { color:var(--muted); font-size:10px; }.ops-row b { color:var(--muted); font-size:10px; }
 .failure-list { margin-top:12px; border-top:1px solid var(--border); }.failure-row { padding:8px 0; border-bottom:1px solid var(--border); }.failure-row strong,.failure-row small { display:block; }.failure-row strong { font-size:10px; color:var(--text); }.failure-row strong.bad-text { color:var(--bad); }.failure-row small { font-size:10px; color:var(--muted); margin-top:2px; overflow-wrap:anywhere; }
+.failure-row button { min-height:34px; margin-top:8px; padding:6px 10px; font-size:10px; }
 .warning-list { display:flex; flex-direction:column; gap:7px; margin-bottom:14px; }
 .warning { display:flex; align-items:center; gap:11px; border:1px solid var(--warn); color:var(--warn); border-radius:10px; padding:10px 12px; font-size:12px; }
 .warning.high { border-color:var(--bad); color:var(--bad); }.warning.good { border-color:var(--good); color:var(--good); }.warning strong { font-size:9px; letter-spacing:.08em; }.warning span { color:var(--text); flex:1; }.warning button { padding:6px 9px; font-size:10px; }

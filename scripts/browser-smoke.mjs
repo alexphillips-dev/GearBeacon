@@ -679,6 +679,33 @@ try {
 
   await evaluate("document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabOperations').click()");
   await waitForBrowser("document.getElementById('settings').classList.contains('active') && !document.getElementById('settingsPanelOperations').hidden && app.operations?.summary?.state && document.getElementById('operationsSummary').textContent.trim().length > 0", 'Settings Operations summary did not render');
+  await evaluate(`(async () => {
+    window.deliveryOriginalFetch=window.fetch;
+    window.deliveryActions=[];
+    const fixture=structuredClone(app.operations);
+    fixture.notifications.queue.failed=1;
+    fixture.notifications.queue.recentFailures=[{id:987654,channel:'webhook',region:'us',attempts:5,max_attempts:5,last_error:'HTTP 503'}];
+    fixture.summary={state:'action',label:'Action required',issues:[{severity:'action',message:'1 notification delivery job failed.',settingsTab:'operations',settingsSection:'delivery'}]};
+    window.fetch=(path,options={})=>{
+      if (String(path).startsWith('/api/operations?')) return Promise.resolve(new Response(JSON.stringify(fixture),{status:200,headers:{'Content-Type':'application/json'}}));
+      if (String(path).startsWith('/api/notifications/dismiss-failed?')) {
+        window.deliveryActions.push(JSON.parse(options.body));
+        return Promise.resolve(new Response(JSON.stringify({ok:true,dismissed:1}),{status:200,headers:{'Content-Type':'application/json'}}));
+      }
+      return window.deliveryOriginalFetch(path,options);
+    };
+    await refreshOperations();
+  })()`);
+  assert(await evaluate("document.getElementById('attentionAction').textContent==='Open Delivery' && Boolean(document.querySelector('#operationsDelivery [data-dismiss-failed]')) && Boolean(document.querySelector('#operationsDelivery [data-dismiss-all-failed]')) && Boolean(document.querySelector('#operationsSummary [data-settings-target=\"delivery\"]'))"), 'Failed deliveries did not expose recovery and dismissal controls');
+  await evaluate("document.getElementById('attentionAction').click()");
+  assert(await evaluate("!document.getElementById('settingsOperationsDeliveryPanel').hidden"), 'Attention banner did not open Operations delivery');
+  await assertAccessible('Failed delivery controls');
+  await evaluate("document.querySelector('#operationsDelivery [data-dismiss-failed]').click()");
+  await waitForBrowser("window.deliveryActions.length===1", 'Individual dismissal did not reach the API');
+  await evaluate("window.deliveryOriginalConfirm=window.confirm; window.confirm=()=>true; document.querySelector('#operationsDelivery [data-dismiss-all-failed]').click()");
+  await waitForBrowser("window.deliveryActions.length===2", 'Bulk dismissal did not reach the API');
+  assert(JSON.stringify(await evaluate("window.deliveryActions"))===JSON.stringify([{id:987654},{all:true}]), 'Dismiss controls sent the wrong job selection');
+  await evaluate("(async()=>{window.fetch=window.deliveryOriginalFetch; window.confirm=window.deliveryOriginalConfirm; delete window.deliveryOriginalFetch; delete window.deliveryOriginalConfirm; await refreshOperations()})()");
   await assertAccessible('Operations dashboard');
   await evaluate("document.querySelector('[data-settings-subtab=\"operations/diagnostics\"]').click(); document.getElementById('runDiagnostics').click()");
   await waitForBrowser("!document.getElementById('runDiagnostics').disabled && document.querySelectorAll('#diagnosticsPanel .diagnostic-item').length >= 7", 'Installation diagnostics did not render');
