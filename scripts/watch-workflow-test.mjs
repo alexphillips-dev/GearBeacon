@@ -194,6 +194,38 @@ try {
   } finally { faultDb.exec('DROP TRIGGER workflow_add_failure'); faultDb.close(); }
   await add({slug:'udm-se',collectionId:id,quantity:2});
   assert.equal(await watched('udm-se'),true);
+  // Failed removals must leave both the database and the live watchlist unchanged,
+  // including when a bulk delete fails after its first successful row deletion.
+  const removalDb=new DatabaseSync(join(dataDir,'gearbeacon.mock.sqlite3'));
+  try {
+    removalDb.exec("CREATE TRIGGER workflow_single_delete_failure BEFORE DELETE ON watchlist WHEN OLD.slug='uvc-g5-ptz' BEGIN SELECT RAISE(ABORT,'mock delete failure'); END");
+    await request(`/api/watch/${parent}`,undefined,'DELETE',500);
+    assert.equal(await watched(parent),true,'Failed single delete changed the live watchlist.');
+    assert.equal(query('SELECT slug FROM watchlist WHERE region=? AND slug=?','us',parent).length,1);
+    await check();
+    assert.equal(await watched(parent),true,'A later check removed a watch after its failed deletion.');
+    assert.equal(query('SELECT slug FROM watchlist WHERE region=? AND slug=?','us',parent).length,1);
+    removalDb.exec('DROP TRIGGER workflow_single_delete_failure');
+    await request(`/api/watch/${parent}`,undefined,'DELETE');
+    assert.equal(await watched(parent),false);
+    assert.equal(query('SELECT slug FROM watchlist WHERE region=? AND slug=?','us',parent).length,0);
+    await add({slug:parent});
+
+    const membersBefore=(await collection(id)).items;
+    removalDb.exec("CREATE TRIGGER workflow_bulk_delete_failure BEFORE DELETE ON watchlist WHEN OLD.slug='uvc-g5-ptz::mock-white' BEGIN SELECT RAISE(ABORT,'mock delete failure'); END");
+    await request('/api/watch/bulk',{action:'remove',slugs:['udm-se',white]},'POST',500);
+    for (const slug of ['udm-se',white]) {
+      assert.equal(await watched(slug),true,`Failed bulk delete changed the live watchlist for ${slug}.`);
+      assert.equal(query('SELECT slug FROM watchlist WHERE region=? AND slug=?','us',slug).length,1);
+    }
+    assert.deepEqual((await collection(id)).items,membersBefore,'Failed bulk delete changed collection membership.');
+    await check();
+    for (const slug of ['udm-se',white]) {
+      assert.equal(await watched(slug),true,`A later check removed ${slug} after failed bulk deletion.`);
+      assert.equal(query('SELECT slug FROM watchlist WHERE region=? AND slug=?','us',slug).length,1);
+    }
+    assert.deepEqual((await collection(id)).items,membersBefore);
+  } finally { removalDb.exec('DROP TRIGGER IF EXISTS workflow_single_delete_failure'); removalDb.exec('DROP TRIGGER IF EXISTS workflow_bulk_delete_failure'); removalDb.close(); }
   const regional=await request('/api/products?region=ca');
   assert.deepEqual(regional.overview.readyToBuy,[]); assert.deepEqual(regional.collections,[]);
   const invalid=structuredClone(plain); invalid.regions.us.collections[0].archived='yes';
@@ -212,6 +244,11 @@ try {
   await observe({status:'Available'});
   assert.ok((await overview()).readyToBuy.includes(black),'A new project with remaining units was hidden by an older shared purchased flag.');
   assert.equal((await collection(future)).items[0].purchasedQuantity,0);
-  console.log('WATCH WORKFLOW TEST PASSED: confirmed overview/variants/targets/quantities, direct Add/deduplication/atomic rollback, archive/restore/overlap/queued alerts, undo conflicts, restart, regional isolation, and recovery.');
+  await request('/api/watch/bulk',{action:'remove',slugs:[black,white]});
+  for (const slug of [black,white]) {
+    assert.equal(await watched(slug),false,`Successful bulk removal retained ${slug} in memory.`);
+    assert.equal(query('SELECT slug FROM watchlist WHERE region=? AND slug=?','us',slug).length,0);
+  }
+  console.log('WATCH WORKFLOW TEST PASSED: confirmed overview/variants/targets/quantities, direct Add/deduplication/atomic rollback, removal failure recovery, archive/restore/overlap/queued alerts, undo conflicts, restart, regional isolation, and recovery.');
 } catch (err) { console.error(output.slice(-4000)); throw err; }
 finally { await stop(); await new Promise(done=>webhook.close(done)); await rm(dataDir,{recursive:true,force:true}); }

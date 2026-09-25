@@ -5413,6 +5413,22 @@ async function handleApi(req, res, url) {
   return await regionContext.run(requestedRegion, () => handleRegionApi(req, res, url));
 }
 
+function removeWatches(slugs, region = currentRegion()) {
+  const removing = new Set(slugs);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const affected = watchCollections(region).filter((collection) => collection.slugs.some((slug) => removing.has(slug))).map((collection) => collection.id);
+    const removeWatch = db.prepare('DELETE FROM watchlist WHERE region=? AND slug=?');
+    for (const slug of removing) removeWatch.run(region, slug);
+    baselineCollections(region, affected);
+    db.exec('COMMIT');
+  } catch (err) {
+    try { db.exec('ROLLBACK'); } catch {}
+    throw err;
+  }
+  states[region].watchlist = states[region].watchlist.filter((slug) => !removing.has(slug));
+}
+
 async function handleRegionApi(req, res, url) {
   const alertMatch = url.pathname.match(/^\/api\/(watch|collections)\/([^/]+)\/alerts$/);
   if (alertMatch && req.method === 'GET') {
@@ -5801,11 +5817,7 @@ async function handleRegionApi(req, res, url) {
     } else if (action === 'purchased' || action === 'wanted') {
       for (const slug of slugs) saveWatchRule(slug, { purchasedAt:action === 'purchased' ? isoNow() : null });
     } else {
-      const affected = watchCollections().filter((collection) => collection.slugs.some((slug) => slugs.includes(slug))).map((collection) => collection.id);
-      state.watchlist = state.watchlist.filter((slug) => !slugs.includes(slug));
-      const removeWatch = db.prepare('DELETE FROM watchlist WHERE region=? AND slug=?');
-      for (const slug of slugs) removeWatch.run(currentRegion(), slug);
-      baselineCollections(currentRegion(), affected);
+      removeWatches(slugs);
     }
     return sendJson(res, 200, { ok:true, action, affected:slugs.length, pausedUntil, products:slugs.map((slug) => productForApi(state.products[slug])).filter(Boolean) });
   }
@@ -5835,10 +5847,7 @@ async function handleRegionApi(req, res, url) {
 
   if (req.method === 'DELETE' && url.pathname.startsWith('/api/watch/')) {
     const slug = decodeURIComponent(url.pathname.slice('/api/watch/'.length));
-    const affected = watchCollections().filter((collection) => collection.slugs.includes(slug)).map((collection) => collection.id);
-    state.watchlist = state.watchlist.filter((x) => x !== slug);
-    db.prepare('DELETE FROM watchlist WHERE region=? AND slug=?').run(currentRegion(), slug);
-    baselineCollections(currentRegion(), affected);
+    removeWatches([slug]);
     return sendJson(res, 200, { ok: true, watchlist: state.watchlist });
   }
 
