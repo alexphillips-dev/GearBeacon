@@ -282,8 +282,8 @@ try {
   if (apiCache.response.headers.get('cache-control') !== 'no-store') throw new Error('Authenticated API responses are cacheable.');
   const rebinding = await rawJson('/api/status', { headers: { Host:'attacker.invalid:8899', Origin:'http://attacker.invalid:8899' } }, 421);
   if (rebinding.headers['access-control-allow-origin']) throw new Error('Rejected DNS-rebinding request reflected its hostile Origin.');
-  const unexpectedFailure = await fetchJson('/api/products/%', {}, 500);
-  if (!/check Operations logs/i.test(unexpectedFailure.body.error || '') || /URIError|decodeURIComponent|backend[\\/]src|\bat\b/i.test(unexpectedFailure.body.error || '')) throw new Error('Unexpected HTTP errors expose internal exception details.');
+  const invalidPath = await fetchJson('/api/products/%', {}, 400);
+  if (invalidPath.body.error !== 'Request URL contains invalid encoding.') throw new Error('Malformed API paths did not return a safe client error.');
 
   const schemaDb = new DatabaseSync(join(localData, 'gearbeacon.mock.sqlite3'));
   const pushTable = schemaDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='push_tokens'").get();

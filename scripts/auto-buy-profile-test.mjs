@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stripVTControlCharacters } from 'node:util';
 import { openVault, VaultError } from '../checkout/vault.mjs';
+import { windowsOperation } from '../checkout/windows-protection.mjs';
 import { PROFILE_FIELDS, profileMatches, savedProfileReport, setupProfile } from '../checkout/profiles.mjs';
 import { createTerminal } from '../checkout/terminal.mjs';
 
@@ -75,6 +76,21 @@ export async function testProfileSetup() {
     assert.equal(empty.code,1);assert.match(empty.stdout,/No address profile is saved/);
     assert.deepEqual(await readdir(root),[],'Inspecting missing setup created private vault files');
     const vault = openVault(directory);vault.write(state);
+    if (process.platform === 'win32') {
+      const keyFile = join(directory, 'checkout.key');
+      const protectedKey = await readFile(keyFile, 'utf8');
+      assert.match(protectedKey, /^dpapi-v1:/, 'The checkout key was stored unprotected on Windows.');
+      const legacyKey = Buffer.from(windowsOperation(keyFile, 'unprotect', protectedKey.slice(9)), 'base64');
+      await writeFile(keyFile, legacyKey);
+      assert.equal(openVault(directory,{readOnly:true}).read().token, secret, 'A legacy key could not be read without changing it.');
+      assert.deepEqual(await readFile(keyFile), legacyKey, 'Read-only inspection migrated the legacy key.');
+      assert.equal(openVault(directory).read().token, secret, 'Migrating a legacy key changed the vault contents.');
+      assert.match(await readFile(keyFile, 'utf8'), /^dpapi-v1:/, 'A writable open did not protect the legacy key.');
+      await promisify(execFile)('icacls', [directory, '/grant', '*S-1-1-0:(OI)(CI)R'], { windowsHide:true });
+      assert.throws(()=>openVault(directory,{readOnly:true}), /Unable to secure the private checkout vault/, 'Read-only inspection accepted a broadly readable vault directory.');
+      assert.equal(openVault(directory).read().token, secret, 'Restricting the vault ACL changed its contents.');
+      assert.equal(openVault(directory,{readOnly:true}).read().token, secret, 'The repaired vault ACL was not verifiable.');
+    }
     const oldBytes = await readFile(join(directory,'vault.checkout-state'));
     let writes = 0, prompts = 0, inspections = 0, emptyChecks = 0;
     const logs = [];

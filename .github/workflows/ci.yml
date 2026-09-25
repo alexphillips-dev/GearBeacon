@@ -56,6 +56,9 @@ jobs:
         run: npm run test:update-helpers
       - name: Verify source launchers from outside the checkout
         run: npm run test:launchers
+      - name: Verify Windows checkout vault protection and legacy key migration
+        if: runner.os == 'Windows'
+        run: node --input-type=module -e "import { testProfileSetup } from './scripts/auto-buy-profile-test.mjs'; await testProfileSetup()"
       - name: Validate shell launchers and installers
         if: runner.os != 'Windows'
         run: for file in launchers/*.sh deploy/*.sh; do sh -n "$file"; done

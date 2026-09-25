@@ -55,6 +55,9 @@ writeFileSync(process.env.GEARBEACON_LAUNCHER_PROBE, JSON.stringify({
       })
       : spawnSync('sh', [launcher], { cwd: unrelatedCwd, env, encoding: 'utf8', timeout: 15_000 });
     if (result.error || result.status !== 0) throw new Error(`${name} failed: ${result.error?.message || result.stderr || result.stdout}`);
+    if (!result.stdout.includes('Starting GearBeacon ') || /Starting GearBeacon V\d/i.test(result.stdout)) {
+      throw new Error(`${name} displayed a missing or stale launcher banner.`);
+    }
     const observed = JSON.parse(await readFile(resultFile, 'utf8'));
     const expectedMode = variant === 'private-' ? 'private' : 'local';
     const expectedBind = variant === 'private-' ? '0.0.0.0' : '127.0.0.1';

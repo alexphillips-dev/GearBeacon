@@ -471,15 +471,22 @@ function schemaVersion() {
   return Number(db.prepare('SELECT COALESCE(MAX(version),0) AS version FROM schema_migrations').get()?.version || 0);
 }
 
+const BACKUP_FILE_BASE = String.raw`(?:manual|scheduled|pre-import|pre-update-[a-zA-Z0-9._-]+)-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z`;
+const PRIMARY_BACKUP_FILE = new RegExp(`^${BACKUP_FILE_BASE}\\.sqlite3$`, 'i');
+const SECONDARY_BACKUP_FILE = new RegExp(`^${BACKUP_FILE_BASE}(?:\\.sqlite3|\\.encrypted\\.gearbeacon\\.json)$`, 'i');
+
 function listBackups(directory = BACKUP_DIR) {
   if (!directory || !fs.existsSync(directory)) return [];
   try {
+    const pattern = path.resolve(directory) === path.resolve(BACKUP_DIR) ? PRIMARY_BACKUP_FILE : SECONDARY_BACKUP_FILE;
     return fs.readdirSync(directory)
-      .filter((name) => name.endsWith('.sqlite3') || name.endsWith('.json'))
-      .map((name) => {
+      .filter((name) => pattern.test(name))
+      .flatMap((name) => {
         const full = path.join(directory, name);
-        const stat = fs.statSync(full);
-        return { name, path: full, size: stat.size, createdAt: stat.mtime.toISOString() };
+        try {
+          const stat = fs.lstatSync(full);
+          return stat.isFile() && !stat.isSymbolicLink() ? [{ name, path: full, size: stat.size, createdAt: stat.mtime.toISOString() }] : [];
+        } catch { return []; }
       })
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   } catch { return []; }
@@ -498,7 +505,6 @@ function ensureSecondaryBackupDirectory() {
   const stat = fs.lstatSync(SECONDARY_BACKUP_DIR);
   if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('Secondary backup destination is not a regular directory.');
   fs.accessSync(SECONDARY_BACKUP_DIR, fs.constants.R_OK | fs.constants.W_OK);
-  try { if (process.platform !== 'win32') fs.chmodSync(SECONDARY_BACKUP_DIR, 0o700); } catch {}
   return SECONDARY_BACKUP_DIR;
 }
 
@@ -517,7 +523,7 @@ function trimSecondaryBackups() {
 
 const BACKUP_TEMP_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const BACKUP_TEMP_SWEEP_MS = 6 * 60 * 60 * 1000;
-const BACKUP_TEMP_BASE = String.raw`(?:manual|scheduled|pre-import|pre-update-[a-zA-Z0-9._-]+)-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z`;
+const BACKUP_TEMP_BASE = BACKUP_FILE_BASE;
 const PRIMARY_BACKUP_TEMP = new RegExp(`^${BACKUP_TEMP_BASE}\\.sqlite3\\.tmp-(\\d+)-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?:-(?:journal|wal|shm))?$`, 'i');
 const SECONDARY_BACKUP_TEMP = new RegExp(`^${BACKUP_TEMP_BASE}(?:\\.sqlite3|\\.encrypted\\.gearbeacon\\.json)\\.tmp-(\\d+)$`, 'i');
 
@@ -584,6 +590,7 @@ function createSecondaryRecoveryCopy(primaryBackup, reason) {
       destination = path.join(SECONDARY_BACKUP_DIR, filename);
       temporary = `${destination}.tmp-${process.pid}`;
       fs.copyFileSync(primaryBackup.path, temporary, fs.constants.COPYFILE_EXCL);
+      if (process.platform !== 'win32') fs.chmodSync(temporary, 0o600);
       const integrity = databaseIntegrity(temporary);
       if (!integrity.ok) throw new Error(`Secondary copy integrity failed: ${integrity.messages.join('; ')}`);
       fs.renameSync(temporary, destination);
@@ -5925,7 +5932,11 @@ const server = http.createServer(async (req, res) => {
       });
       return sendJson(res, ready ? 200 : 503, { ok: ready, version: APP_VERSION });
     }
-    if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
+    if (url.pathname.startsWith('/api/')) {
+      try { decodeURIComponent(url.pathname); }
+      catch (err) { if (err instanceof URIError) return sendJson(res, 400, { error:'Request URL contains invalid encoding.' }); throw err; }
+      return await handleApi(req, res, url);
+    }
 
     if (!['GET', 'HEAD'].includes(req.method || 'GET')) return sendText(res, 405, 'Method not allowed');
 

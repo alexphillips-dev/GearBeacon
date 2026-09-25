@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
-import { mkdtemp, mkdir, readFile, readdir, rm, unlink, utimes, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, readdir, rm, stat, unlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -253,6 +253,20 @@ try {
   assert(unavailableCopy.backup?.validated && unavailableCopy.backup.secondary?.ok === false, 'Unavailable secondary storage prevented a safe primary backup or was not reported.');
   await unlink(secondaryDir);
   await mkdir(secondaryDir);
+  const unrelatedSecondary = Array.from({ length:12 }, (_, index) => `other-app-${index}.sqlite3`);
+  unrelatedSecondary.push('shared-settings.json');
+  for (const name of unrelatedSecondary) {
+    const file = join(secondaryDir, name);
+    await writeFile(file, `unrelated fixture: ${name}`);
+    await utimes(file, old, old);
+  }
+  if (process.platform !== 'win32') await chmod(secondaryDir, 0o750);
+  const secondaryMode = (await stat(secondaryDir)).mode & 0o777;
+  const preservedCopy = await post('/api/data/backup');
+  assert(preservedCopy.backup.secondary?.ok, 'Backup failed in a shared secondary destination.');
+  assert(preservedCopy.summary.secondary.count === 1, 'Unrelated files were counted as GearBeacon recovery copies.');
+  for (const name of unrelatedSecondary) assert((await readFile(join(secondaryDir, name), 'utf8')) === `unrelated fixture: ${name}`, `Secondary retention changed ${name}.`);
+  assert(((await stat(secondaryDir)).mode & 0o777) === secondaryMode, 'Backup changed an existing secondary directory mode.');
 
   // Restore tests must reject a corrupt primary SQLite backup.
   const primaryBackup = await post('/api/data/backup');
