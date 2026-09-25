@@ -1,13 +1,28 @@
 [CmdletBinding()]
 param([string]$InstallDir = "$env:ProgramFiles\GearBeacon", [string]$DataDir = "$env:ProgramData\GearBeacon")
 $ErrorActionPreference = 'Stop'
+function Install-GearBeaconWeb {
+  param([string]$SourceDir, [string]$DestinationDir)
+  $installRoot = [IO.Path]::GetFullPath($DestinationDir)
+  $webDir = [IO.Path]::GetFullPath((Join-Path $installRoot 'web'))
+  $sourceWeb = Join-Path $SourceDir 'web'
+  if ((Split-Path $webDir -Parent) -ne $installRoot) { throw 'Web directory must remain inside the installation.' }
+  if (-not (Test-Path -LiteralPath $sourceWeb -PathType Container)) { throw 'Package web directory is missing.' }
+  foreach ($target in @($installRoot, $webDir)) {
+    if ((Test-Path -LiteralPath $target) -and ((Get-Item -LiteralPath $target).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Installation paths must not be links or junctions.' }
+  }
+  if (Test-Path -LiteralPath $webDir) { Remove-Item -LiteralPath $webDir -Recurse -Force }
+  Copy-Item -LiteralPath $sourceWeb -Destination $webDir -Recurse -Force
+}
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Run this installer from an elevated PowerShell window.' }
 $source = Split-Path -Parent $MyInvocation.MyCommand.Path
 New-Item -ItemType Directory -Force -Path $InstallDir, $DataDir | Out-Null
 & icacls.exe $DataDir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-19:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Could not restrict the GearBeacon data-directory ACL.' }
+$existingTask = Get-ScheduledTask -TaskName 'GearBeacon' -ErrorAction SilentlyContinue
+if ($existingTask -and $existingTask.State -eq 'Running') { Stop-ScheduledTask -TaskName 'GearBeacon' -ErrorAction Stop }
 Copy-Item -LiteralPath "$source\GearBeacon.exe" -Destination "$InstallDir\GearBeacon.exe" -Force
-Copy-Item -LiteralPath "$source\web" -Destination "$InstallDir\web" -Recurse -Force
+Install-GearBeaconWeb -SourceDir $source -DestinationDir $InstallDir
 Copy-Item -LiteralPath "$source\release-manifest.json" -Destination "$InstallDir\release-manifest.json" -Force
 $launcher = @"
 `$env:GEARBEACON_DATA_DIR = '$($DataDir.Replace("'", "''"))'

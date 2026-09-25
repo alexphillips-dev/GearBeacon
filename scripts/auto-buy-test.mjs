@@ -60,7 +60,11 @@ try {
   await arm('us',{maxTotalMinor:NaN},400);
   await arm('us',{expiresAt:'bad'},400);
   await arm('us',{slug:parent},400);
-  const first=(await arm()).rule;
+  await request(`/api/watch/${encodeURIComponent(slug)}`,undefined,'DELETE');
+  await arm('us',{watchIfNeeded:true,authorized:false},400);
+  assert.equal((await request(`/api/products/${encodeURIComponent(slug)}`)).product.watched,false,'Rejected auto-buy authorization left an added watch.');
+  const first=(await arm('us',{watchIfNeeded:true})).rule;
+  assert.equal((await request(`/api/products/${encodeURIComponent(slug)}`)).product.watched,true,'Successful auto-buy did not add its exact variant watch.');
   await arm('us',{revision:0},409);
   await check(); await check();
   assert.equal((await status()).attempts.length,1,'Duplicate catalog observations queued duplicate purchases');
@@ -115,6 +119,10 @@ try {
   readDb(db=>{db.exec('PRAGMA busy_timeout=5000');const r=db.prepare('SELECT config_json FROM auto_buy_rules WHERE id=?').get(a.ruleId);const c=JSON.parse(r.config_json);c.expiresAt=new Date(Date.now()-1000).toISOString();db.prepare('UPDATE auto_buy_rules SET config_json=? WHERE id=?').run(JSON.stringify(c),a.ruleId);});
   await worker(`attempts/${a.id}/authorize`,proof(a),409);assert.equal((await status()).rules.find(r=>r.id===a.ruleId).state,'expired');
   await arm();
+  const incompatible={format:'GearBeaconBackup',formatVersion:10,regions:{eu:{watchlist:[],products:{},events:[]}},settings:{}};
+  await request('/api/data/import',{backup:incompatible},'POST',400);
+  assert.equal((await status()).rules.find(r=>r.region==='us' && r.slug===slug).state,'armed','Rejected inactive-region import paused an existing purchase rule.');
+  assert.ok((await status()).connection,'Rejected inactive-region import disconnected the companion.');
   const exported=await request('/api/data/export');assert.equal(exported.formatVersion,10);
   assert.ok(exported.autoBuy.rules.every(r=>r.state!=='armed'));assert.ok(!JSON.stringify(exported).includes(token));
   await request('/api/data/backup',{});

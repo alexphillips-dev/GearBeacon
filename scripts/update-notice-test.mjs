@@ -26,7 +26,7 @@ const mock=http.createServer(async(req,res)=>{
     value={status:scenario.comparison || 'ahead'};
   } else if (url.pathname==='/repo/contents/release-manifest.json') {
     assert.equal(url.searchParams.get('ref'),scenario.head || latest,'Version lookup was not pinned to the selected dev commit');
-    value={type:'file',encoding:'base64',content:Buffer.from(JSON.stringify({latestVersion:scenario.version || '1.4.0',releaseNotes:'Development notes',releasePageUrl:release('1.4.0').html_url})).toString('base64')};
+    value={type:'file',encoding:'base64',content:Buffer.from(JSON.stringify({latestVersion:scenario.version || '1.4.1',releaseNotes:'Development notes',releasePageUrl:release('1.4.1').html_url})).toString('base64')};
   } else if (url.pathname.startsWith('/repo/contents/docs/') && !scenario.noNotes) value={type:'file',encoding:'base64',content:Buffer.from('# Development changes').toString('base64')};
   else if (url.pathname.startsWith('/repo/releases/tags/') && scenario.tagged) value=release(scenario.version);
   else if (url.pathname.startsWith('/repo/commits/v') && scenario.tagged) value={sha:latest};
@@ -55,7 +55,7 @@ async function start({channel='main',automatic=false,metadata={},env={},gitBranc
   for(const file of ['index.js','email.js','autobuy.js','security.js','key-protection.js','outbound.js']) await copyFile(join(root,'backend','dist',file),join(appRoot,'backend','dist',file));
   await copyFile(join(root,'release-manifest.json'),join(appRoot,'release-manifest.json'));
   await copyFile(join(root,'backend','package.json'),join(appRoot,'backend','package.json'));
-  await writeFile(join(appRoot,'build-info.json'),JSON.stringify({version:'1.4.0',packageVersion:'1.4.0',branch:channel,commit:current,...metadata}));
+  await writeFile(join(appRoot,'build-info.json'),JSON.stringify({version:'1.4.1',packageVersion:'1.4.1',branch:channel,commit:current,...metadata}));
   if (gitBranch) {
     execFileSync('git',['init','-b',gitBranch],{cwd:appRoot,stdio:'ignore',windowsHide:true});
     execFileSync('git',['add','backend/package.json'],{cwd:appRoot,stdio:'ignore',windowsHide:true});
@@ -89,7 +89,7 @@ try {
   assert.equal(calls.length,limited,'Manual check bypassed Retry-After');assert.ok(Date.parse(result.nextCheckAt)>Date.now()+7000000);
 
   scenario={};await start({channel:'dev'});assert.equal(calls.length,0,'Disabling automatic checks still contacted the update source');
-  result=await request();assert.equal(result.channel,'dev');assert.equal(result.updateAvailable,true);assert.equal(result.latestVersion,'1.4.0','Same-version dev commits lost their version label');
+  result=await request();assert.equal(result.channel,'dev');assert.equal(result.updateAvailable,true);assert.equal(result.latestVersion,'1.4.1','Same-version dev commits lost their version label');
   assert.ok(result.releaseNotesUrl.endsWith(`/blob/${latest}/docs/CHANGELOG.md`));assert.ok(!calls.includes('/repo/releases/latest'),'Dev checked stable releases');
   scenario={head:current};result=await request();assert.equal(result.updateAvailable,false,'Current dev commit was flagged as old');
   for(const comparison of ['behind','diverged','unknown']) {scenario={comparison};result=await request();assert.equal(result.updateAvailable,false,`Unsafe dev comparison: ${comparison}`);}
@@ -98,28 +98,28 @@ try {
   scenario={notesFailure:true};result=await request();assert.equal(result.updateAvailable,true,'Optional notes failure hid a confirmed update');assert.equal(result.releaseNotesUrl,null);
   scenario={version:'1.5.0-dev.2',tagged:true};result=await request();assert.equal(result.releaseNotesUrl,release('1.5.0-dev.2').html_url,'Exact prerelease notes were not preferred');
 
-  scenario={manifest:{channel:'dev',latestVersion:'1.4.0-rc.10',releaseNotesUrl:'javascript:alert(1)'}};
-  await start({channel:'dev',metadata:{packageVersion:'1.4.0-rc.2'},env:{GEARBEACON_UPDATE_MANIFEST_URL:source+'/manifest/{channel}'}});
+  scenario={manifest:{channel:'dev',latestVersion:'1.4.1-rc.10',releaseNotesUrl:'javascript:alert(1)'}};
+  await start({channel:'dev',metadata:{packageVersion:'1.4.1-rc.2'},env:{GEARBEACON_UPDATE_MANIFEST_URL:source+'/manifest/{channel}'}});
   result=await request();assert.equal(result.updateAvailable,true,'Prerelease identifiers were not compared numerically');assert.equal(result.releaseNotesUrl,null);
-  assert.equal((await request('/healthz')).packageVersion,'1.4.0-rc.2');assert.deepEqual(calls,['/manifest/dev']);
-  scenario={manifest:{channel:'main',latestVersion:'9.0.0'}};result=await request();assert.equal(result.latestVersion,'1.4.0-rc.10','Wrong-channel manifest replaced the verified dev update');assert.equal(result.stale,true);
+  assert.equal((await request('/healthz')).packageVersion,'1.4.1-rc.2');assert.deepEqual(calls,['/manifest/dev']);
+  scenario={manifest:{channel:'main',latestVersion:'9.0.0'}};result=await request();assert.equal(result.latestVersion,'1.4.1-rc.10','Wrong-channel manifest replaced the verified dev update');assert.equal(result.stale,true);
 
   scenario={releases:release('9.0.0-rc.1')};await start();result=await request();assert.equal(result.updateAvailable,false);assert.equal(result.verified,false,'Unknown update state claimed to be current');
   scenario={};await start({env:{GEARBEACON_GITHUB_RELEASE_API:''},automatic:true});result=await request();assert.equal(calls.length,0);assert.equal(result.updateAvailable,false);assert.equal(result.verified,false);
   const checkout=await start({channel:'main',gitBranch:'dev'});result=await request();assert.equal(result.channel,'dev','Source branch did not override stale package metadata');
-  const built=buildMetadata(checkout,'1.4.0',{});assert.equal(built.branch,'dev');assert.match(built.commit,/^[a-f0-9]{40}$/);
+  const built=buildMetadata(checkout,'1.4.1',{});assert.equal(built.branch,'dev');assert.match(built.commit,/^[a-f0-9]{40}$/);
   assert.equal(result.currentCommit,built.commit,'Source commit did not override stale package metadata');
-  assert.equal(buildMetadata(checkout,'1.4.0-rc.1',{GITHUB_REF:'refs/tags/v1.4.0-rc.1'}).branch,'dev');
-  assert.equal(buildMetadata(checkout,'1.4.0-rc.1',{GITHUB_REF:'refs/heads/main'}).branch,'dev','A candidate dispatched from main followed stable updates');
-  assert.equal(buildMetadata(checkout,'1.4.0',{GITHUB_REF:'refs/heads/main'}).branch,'main');
-  assert.equal(buildMetadata(checkout,'1.4.0',{GITHUB_REF:'refs/tags/v1.4.0'}).branch,'main');
+  assert.equal(buildMetadata(checkout,'1.4.1-rc.1',{GITHUB_REF:'refs/tags/v1.4.1-rc.1'}).branch,'dev');
+  assert.equal(buildMetadata(checkout,'1.4.1-rc.1',{GITHUB_REF:'refs/heads/main'}).branch,'dev','A candidate dispatched from main followed stable updates');
+  assert.equal(buildMetadata(checkout,'1.4.1',{GITHUB_REF:'refs/heads/main'}).branch,'main');
+  assert.equal(buildMetadata(checkout,'1.4.1',{GITHUB_REF:'refs/tags/v1.4.1'}).branch,'main');
   assert.throws(()=>buildMetadata(checkout,'../unsafe',{}));
   const staged=join(scratch,'source-package');await mkdir(staged);
-  execFileSync(process.execPath,[join(root,'scripts','build-metadata.mjs'),staged,'1.4.0'],{cwd:root,stdio:'ignore',windowsHide:true,
+  execFileSync(process.execPath,[join(root,'scripts','build-metadata.mjs'),staged,'1.4.1'],{cwd:root,stdio:'ignore',windowsHide:true,
     env:{...process.env,GEARBEACON_BUILD_BRANCH:'dev',GEARBEACON_BUILD_COMMIT:current}});
   const packaged=JSON.parse(await readFile(join(staged,'build-info.json'),'utf8'));
-  assert.equal(packaged.branch,'dev');assert.equal(packaged.commit,current);assert.equal(packaged.packageVersion,'1.4.0');
-  await start({env:{GEARBEACON_BUILD_BRANCH:'dev',GEARBEACON_BUILD_COMMIT:current,GEARBEACON_PACKAGE_VERSION:'v1.4.0',GEARBEACON_IMAGE:'ghcr.io/alexphillips-dev/gearbeacon:dev'}});
+  assert.equal(packaged.branch,'dev');assert.equal(packaged.commit,current);assert.equal(packaged.packageVersion,'1.4.1');
+  await start({env:{GEARBEACON_BUILD_BRANCH:'dev',GEARBEACON_BUILD_COMMIT:current,GEARBEACON_PACKAGE_VERSION:'v1.4.1',GEARBEACON_IMAGE:'ghcr.io/alexphillips-dev/gearbeacon:dev'}});
   result=await request();assert.equal(result.channel,'dev','Container build branch was ignored');assert.equal(result.currentCommit,current);assert.equal(result.updateAvailable,true);
   await start({channel:'dev',env:{GEARBEACON_UPDATE_CHANNEL:'main'}});assert.equal((await request()).channel,'main','Explicit channel override was ignored');
   console.log('UPDATE NOTICE TEST PASSED: startup/daily scheduling, shared checks, offline/rate limits, stable isolation, exact dev comparisons, prerelease ordering, notes/fallbacks, safe links, disabled checks, Git and packaged identity.');

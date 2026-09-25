@@ -1,4 +1,4 @@
-// GearBeacon V1.4.0 backend
+// GearBeacon V1.4.1 backend
 // Private, owner-operated stock monitoring for local and self-hosted installs.
 // @ts-nocheck
 
@@ -17,9 +17,9 @@ const { renderEmail, buildMimeEmail, numericPrice } = require('./email');
 const { createAutoBuy, AUTO_BUY_SCHEMA, neutralizeAutoBuyBackup } = require('./autobuy');
 const { createOwnerSecurity } = require('./security');
 const { secureDataDirectory, loadProtectedKey } = require('./key-protection');
-const { notificationFetch, normalizePrivateHosts } = require('./outbound');
+const { notificationFetch, normalizePrivateHosts, fetchWithTimeout } = require('./outbound');
 
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.4.1';
 const DATABASE_SCHEMA_VERSION = 15;
 const STORE_BASE = 'https://store.ui.com';
 const REGIONS = {
@@ -471,15 +471,43 @@ function schemaVersion() {
   return Number(db.prepare('SELECT COALESCE(MAX(version),0) AS version FROM schema_migrations').get()?.version || 0);
 }
 
+const BACKUP_FILE_BASE = String.raw`(?:manual|scheduled|pre-import|pre-update-[a-zA-Z0-9._-]+)-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z`;
+const PRIMARY_BACKUP_FILE = new RegExp(`^${BACKUP_FILE_BASE}\\.sqlite3$`, 'i');
+const SECONDARY_BACKUP_FILE = new RegExp(`^(?:gearbeacon-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}-)?${BACKUP_FILE_BASE}(?:\\.sqlite3|\\.encrypted\\.gearbeacon\\.json)$`, 'i');
+
+function secondaryBackupOwnerId() {
+  const saved = getMeta('secondary_backup_owner_id');
+  if (saved && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(saved)) return saved;
+  const created = crypto.randomUUID();
+  setMeta('secondary_backup_owner_id', created);
+  return created;
+}
+
+function secondaryBackupNames() {
+  const owned = new Set();
+  if (!tableExists('backup_log')) return owned;
+  for (const row of db.prepare("SELECT detail FROM backup_log WHERE status='validated' AND detail IS NOT NULL").all()) {
+    const secondary = safeJsonParse(row.detail, null)?.secondary;
+    if (secondary?.ok && typeof secondary.filename === 'string') owned.add(secondary.filename);
+  }
+  return owned;
+}
+
 function listBackups(directory = BACKUP_DIR) {
   if (!directory || !fs.existsSync(directory)) return [];
   try {
+    const primary = path.resolve(directory) === path.resolve(BACKUP_DIR);
+    const pattern = primary ? PRIMARY_BACKUP_FILE : SECONDARY_BACKUP_FILE;
+    const owned = primary ? null : secondaryBackupNames();
+    const ownerPrefix = primary ? '' : `gearbeacon-${secondaryBackupOwnerId()}-`;
     return fs.readdirSync(directory)
-      .filter((name) => name.endsWith('.sqlite3') || name.endsWith('.json'))
-      .map((name) => {
+      .filter((name) => pattern.test(name) && (primary || name.startsWith(ownerPrefix) || owned.has(name)))
+      .flatMap((name) => {
         const full = path.join(directory, name);
-        const stat = fs.statSync(full);
-        return { name, path: full, size: stat.size, createdAt: stat.mtime.toISOString() };
+        try {
+          const stat = fs.lstatSync(full);
+          return stat.isFile() && !stat.isSymbolicLink() ? [{ name, path: full, size: stat.size, createdAt: stat.mtime.toISOString() }] : [];
+        } catch { return []; }
       })
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   } catch { return []; }
@@ -498,7 +526,6 @@ function ensureSecondaryBackupDirectory() {
   const stat = fs.lstatSync(SECONDARY_BACKUP_DIR);
   if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('Secondary backup destination is not a regular directory.');
   fs.accessSync(SECONDARY_BACKUP_DIR, fs.constants.R_OK | fs.constants.W_OK);
-  try { if (process.platform !== 'win32') fs.chmodSync(SECONDARY_BACKUP_DIR, 0o700); } catch {}
   return SECONDARY_BACKUP_DIR;
 }
 
@@ -510,9 +537,54 @@ function backupLocationsShareDevice() {
 
 function trimSecondaryBackups() {
   if (!SECONDARY_BACKUP_DIR) return;
-  for (const old of listBackups(SECONDARY_BACKUP_DIR).slice(BACKUP_RETENTION)) {
+  const ownerPrefix = `gearbeacon-${secondaryBackupOwnerId()}-`;
+  for (const old of listBackups(SECONDARY_BACKUP_DIR).filter((item) => item.name.startsWith(ownerPrefix)).slice(BACKUP_RETENTION)) {
     try { fs.unlinkSync(old.path); } catch {}
   }
+}
+
+const BACKUP_TEMP_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const BACKUP_TEMP_SWEEP_MS = 6 * 60 * 60 * 1000;
+const BACKUP_TEMP_BASE = BACKUP_FILE_BASE;
+const PRIMARY_BACKUP_TEMP = new RegExp(`^${BACKUP_TEMP_BASE}\\.sqlite3\\.tmp-(\\d+)-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?:-(?:journal|wal|shm))?$`, 'i');
+function secondaryBackupTempPattern() {
+  return new RegExp(`^gearbeacon-${secondaryBackupOwnerId()}-${BACKUP_TEMP_BASE}(?:\\.sqlite3|\\.encrypted\\.gearbeacon\\.json)\\.tmp-(\\d+)$`, 'i');
+}
+
+function processMayBeRunning(pid) {
+  if (!Number.isSafeInteger(pid) || pid < 1) return true;
+  try { process.kill(pid, 0); return true; }
+  catch (err) { return err?.code !== 'ESRCH'; }
+}
+
+function cleanupBackupTempDirectory(directory, pattern, now) {
+  if (!directory) return 0;
+  let names;
+  try {
+    const root = fs.lstatSync(directory);
+    if (!root.isDirectory() || root.isSymbolicLink()) return 0;
+    names = fs.readdirSync(directory);
+  } catch { return 0; }
+  let removed = 0;
+  for (const name of names) {
+    const match = pattern.exec(name);
+    if (!match || processMayBeRunning(Number(match[1]))) continue;
+    const file = path.join(directory, name);
+    try {
+      const stat = fs.lstatSync(file);
+      if (!stat.isFile() || stat.isSymbolicLink() || now - stat.mtimeMs < BACKUP_TEMP_MAX_AGE_MS) continue;
+      fs.unlinkSync(file);
+      removed++;
+    } catch {}
+  }
+  return removed;
+}
+
+function cleanupAbandonedBackupTemps() {
+  const now = Date.now();
+  const removed = cleanupBackupTempDirectory(BACKUP_DIR, PRIMARY_BACKUP_TEMP, now)
+    + (SECONDARY_BACKUP_DIR ? cleanupBackupTempDirectory(SECONDARY_BACKUP_DIR, secondaryBackupTempPattern(), now) : 0);
+  if (removed) writeAppLog('info', 'backups', `Removed ${removed} abandoned backup temporary file(s).`);
 }
 
 let runtimeReadyForRecoveryCopies = false;
@@ -528,7 +600,7 @@ function createSecondaryRecoveryCopy(primaryBackup, reason) {
     if (SECONDARY_ENCRYPTED_EXPORTS) {
       const passphrase = String(storedSecrets().secondaryBackupPassphrase || '');
       if (passphrase.length < 12) throw new Error('Scheduled encrypted recovery copies require a saved passphrase of at least 12 characters.');
-      filename = `${safeFilePart(reason)}-${stamp}.encrypted.gearbeacon.json`;
+      filename = `gearbeacon-${secondaryBackupOwnerId()}-${safeFilePart(reason)}-${stamp}.encrypted.gearbeacon.json`;
       destination = path.join(SECONDARY_BACKUP_DIR, filename);
       temporary = `${destination}.tmp-${process.pid}`;
       const encrypted = encryptSnapshot(exportSnapshot(), passphrase);
@@ -538,10 +610,11 @@ function createSecondaryRecoveryCopy(primaryBackup, reason) {
       fs.renameSync(temporary, destination);
     } else {
       if (!primaryBackup?.path) throw new Error('A validated primary backup is required for the recovery copy.');
-      filename = primaryBackup.filename;
+      filename = `gearbeacon-${secondaryBackupOwnerId()}-${primaryBackup.filename}`;
       destination = path.join(SECONDARY_BACKUP_DIR, filename);
       temporary = `${destination}.tmp-${process.pid}`;
       fs.copyFileSync(primaryBackup.path, temporary, fs.constants.COPYFILE_EXCL);
+      if (process.platform !== 'win32') fs.chmodSync(temporary, 0o600);
       const integrity = databaseIntegrity(temporary);
       if (!integrity.ok) throw new Error(`Secondary copy integrity failed: ${integrity.messages.join('; ')}`);
       fs.renameSync(temporary, destination);
@@ -572,30 +645,43 @@ function databaseIntegrity(file = DB_FILE) {
 
 function createDatabaseBackup(reason = 'manual') {
   if (!fs.existsSync(DB_FILE)) return null;
+  let temporary = null;
   try {
     const sourceIntegrity = databaseIntegrity();
     if (!sourceIntegrity.ok) throw new Error(`Database integrity check failed: ${sourceIntegrity.messages.join('; ')}`);
+    let secondaryOwnerError = null;
+    if (SECONDARY_BACKUP_DIR && runtimeReadyForRecoveryCopies) {
+      try { secondaryBackupOwnerId(); }
+      catch (err) { secondaryOwnerError = err; }
+    }
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     const filename = `${safeFilePart(reason)}-${stamp}.sqlite3`;
     const destination = path.join(BACKUP_DIR, filename);
+    if (fs.existsSync(destination)) throw new Error('A backup with this timestamp already exists. Retry the backup.');
+    temporary = `${destination}.tmp-${process.pid}-${crypto.randomUUID()}`;
     db.exec('PRAGMA wal_checkpoint(FULL)');
-    db.exec(`VACUUM INTO '${sqliteQuote(destination)}'`);
-    const backupDb = new DatabaseSync(destination);
+    db.exec(`VACUUM INTO '${sqliteQuote(temporary)}'`);
+    const backupDb = new DatabaseSync(temporary);
     try { neutralizeAutoBuyBackup(backupDb); } finally { backupDb.close(); }
-    const backupIntegrity = databaseIntegrity(destination);
+    const backupIntegrity = databaseIntegrity(temporary);
     if (!backupIntegrity.ok) {
-      try { fs.unlinkSync(destination); } catch {}
       throw new Error(`Backup validation failed: ${backupIntegrity.messages.join('; ')}`);
     }
+    fs.renameSync(temporary, destination);
+    temporary = null;
     trimBackups();
     const size = fs.statSync(destination).size;
     const primary = { filename, path: destination, size, createdAt: isoNow(), reason, validated: true };
-    const secondary = createSecondaryRecoveryCopy(primary, reason);
+    const secondary = secondaryOwnerError
+      ? { configured:true, ok:false, error:'Could not save the secondary backup owner ID before snapshotting.' }
+      : createSecondaryRecoveryCopy(primary, reason);
     if (tableExists('backup_log')) db.prepare('INSERT INTO backup_log(filename,reason,status,size,detail,created_at) VALUES(?,?,?,?,?,?)').run(filename, reason, 'validated', size, secondary ? JSON.stringify({ secondary }) : null, isoNow());
     return { ...primary, secondary };
   } catch (err) {
     if (tableExists('backup_log')) db.prepare('INSERT INTO backup_log(filename,reason,status,size,detail,created_at) VALUES(?,?,?,?,?,?)').run(null, reason, 'failed', null, String(err?.message || err).slice(0, 1000), isoNow());
     throw err;
+  } finally {
+    if (temporary && fs.existsSync(temporary)) { try { fs.unlinkSync(temporary); } catch {} }
   }
 }
 
@@ -1306,7 +1392,7 @@ function loadState(region = currentRegion()) {
 }
 
 function persistState(nextState, region = currentRegion(), { replaceEvents = false } = {}) {
-  db.exec('BEGIN IMMEDIATE');
+  db.exec('SAVEPOINT persist_state');
   try {
     const wanted = new Set(nextState.watchlist || []);
     for (const row of db.prepare('SELECT slug FROM watchlist WHERE region=?').all(region)) {
@@ -1326,9 +1412,9 @@ function persistState(nextState, region = currentRegion(), { replaceEvents = fal
         addEvent.run(event.id, region, event.detectedAt || isoNow(), JSON.stringify(event), event.type || null, event.slug || null, event.name || null, event.alertKind || event.type || null);
       }
     }
-    db.exec('COMMIT');
+    db.exec('RELEASE persist_state');
   } catch (err) {
-    try { db.exec('ROLLBACK'); } catch {}
+    try { db.exec('ROLLBACK TO persist_state'); db.exec('RELEASE persist_state'); } catch {}
     throw err;
   }
 }
@@ -1370,6 +1456,9 @@ for (const region of ACTIVE_REGIONS) {
   for (const product of Object.values(states[region].products)) recordProductObservation(product, 'migration-baseline', region);
 }
 runtimeReadyForRecoveryCopies = true;
+cleanupAbandonedBackupTemps();
+const backupTempCleanupTimer = setInterval(cleanupAbandonedBackupTemps, BACKUP_TEMP_SWEEP_MS);
+backupTempCleanupTimer.unref();
 function contextualProxy(values) {
   return new Proxy({}, {
     get(_target, property) { return values[currentRegion()][property]; },
@@ -1390,7 +1479,7 @@ const autoBuy = createAutoBuy({
     return product ? { ...product, autoBuyFresh:productFreshness(product,region).state === 'confirmed' } : null;
   },
   eligible:(region,slug,collectionId,quantity) => {
-    if (!states[region]?.watchlist.includes(slug) || watchRule(slug,region).purchasedAt) return false;
+    if (!db.prepare('SELECT 1 FROM watchlist WHERE region=? AND slug=?').get(region,slug) || watchRule(slug,region).purchasedAt) return false;
     if (!collectionId) return true;
     const member = db.prepare(`SELECT m.quantity,m.purchased_quantity,c.archived FROM watch_collection_members m
       JOIN watch_collections c ON c.region=m.region AND c.id=m.collection_id WHERE m.region=? AND m.slug=? AND m.collection_id=?`).get(region,slug,collectionId);
@@ -1414,22 +1503,7 @@ const autoBuy = createAutoBuy({
   },
   notify:(region,title,detail) => regionContext.run(region,()=>enqueueOperationalAlert('auto-buy',title,detail,region)),
 });
-const saveTimers = new Map();
-function saveStateSoon() {
-  const region = currentRegion();
-  if (saveTimers.has(region)) return;
-  const timer = setTimeout(() => {
-    saveTimers.delete(region);
-    persistState(states[region], region);
-  }, 100);
-  saveTimers.set(region, timer);
-}
-
 function flushState(region = currentRegion()) {
-  if (saveTimers.has(region)) {
-    clearTimeout(saveTimers.get(region));
-    saveTimers.delete(region);
-  }
   persistState(states[region], region);
 }
 
@@ -1451,6 +1525,16 @@ const monitors = Object.fromEntries(ACTIVE_REGIONS.map((region) => [region, {
   lastAlertAt: null,
 }]));
 const monitor = contextualProxy(monitors);
+const recoveryWindowKey = (region) => `monitor_recovery_since_${region}`;
+const recoveryWindows = Object.fromEntries(ACTIVE_REGIONS.map((region) => [region, getMeta(recoveryWindowKey(region)) || null]));
+
+function preserveRecoveryWindow(region, startedAt) {
+  if (recoveryWindows[region]) return;
+  const lastComplete = db.prepare("SELECT checked_at FROM monitor_checks WHERE region=? AND outcome='success' AND detail IS NULL ORDER BY id DESC LIMIT 1").get(region)?.checked_at;
+  const since = lastComplete || new Date(startedAt).toISOString();
+  setMeta(recoveryWindowKey(region), since);
+  recoveryWindows[region] = since;
+}
 
 const mockOverrides = {};
 if (MOCK_MODE && process.env.GEARBEACON_MOCK_OVERRIDES_JSON) {
@@ -1513,16 +1597,6 @@ function mockCatalog() {
       lastSeenAt: isoNow(),
     }];
   });
-}
-
-async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...options, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 function storeHttpError(response, context) {
@@ -2574,7 +2648,8 @@ function eventServerAlertSummary(event, decision, queueRows = [], logRows = []) 
   if (statuses.has('cancelled')) {
     const expired = currentRows.some(row => (row.last_error || row.detail) === 'Alert expired before delivery.');
     const removed = currentRows.some(row => (row.last_error || row.detail) === 'Channel removed from this alert route.');
-    return { state:'muted', label:expired ? 'Expired' : 'Cancelled', detail:expired ? 'The alert expired before delivery; its original observation remains in Activity.' : removed ? 'Pending delivery was cancelled because this channel was removed from the alert route.' : decision.reason === 'purchased' ? 'Pending delivery was cancelled when this watch was marked purchased.' : 'Server delivery was cancelled by a watch or channel change.', channels, mode:event.serverAlert?.mode || null, deliverAt:event.serverAlert?.deliverAt || null };
+    const dismissed = currentRows.some(row => (row.last_error || row.detail) === 'Dismissed by owner after delivery failure.');
+    return { state:'muted', label:expired ? 'Expired' : dismissed ? 'Dismissed' : 'Cancelled', detail:expired ? 'The alert expired before delivery; its original observation remains in Activity.' : dismissed ? 'The failed delivery was dismissed without sending it again; its failed attempt remains in delivery history.' : removed ? 'Pending delivery was cancelled because this channel was removed from the alert route.' : decision.reason === 'purchased' ? 'Pending delivery was cancelled when this watch was marked purchased.' : 'Server delivery was cancelled by a watch or channel change.', channels, mode:event.serverAlert?.mode || null, deliverAt:event.serverAlert?.deliverAt || null };
   }
 
   const snapshot = event.serverAlert;
@@ -2603,6 +2678,37 @@ function eventServerAlertSummary(event, decision, queueRows = [], logRows = []) 
 
 function retryDelaySeconds(attempts) {
   return Math.min(30 * 60, 30 * (2 ** Math.max(0, attempts - 1)));
+}
+
+function transientDeliveryFailure(message) {
+  return /\b(?:fetch failed|network (?:error|connection failed)|notification response was interrupted|aborted|premature close|socket hang up|connection (?:closed|reset|refused|timed out)|timeout|timed out|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH|ENETUNREACH|HTTP (?:429|50[0234])|SMTP (?:4\d\d|connection closed))\b/i.test(String(message || ''));
+}
+
+function recoverFailedDeliveriesAfterOutage(region) {
+  const since = recoveryWindows[region];
+  if (!since) return 0;
+  const now = isoNow();
+  let queued = 0;
+  db.exec('SAVEPOINT monitor_recovery');
+  try {
+    const rows = db.prepare("SELECT id,last_error FROM notification_queue WHERE region=? AND status='failed' AND updated_at>?").all(region, since);
+    const update = db.prepare("UPDATE notification_queue SET status='pending',attempts=0,next_attempt_at=?,last_error=NULL,updated_at=? WHERE id=? AND status='failed'");
+    for (const row of rows) {
+      if (transientDeliveryFailure(row.last_error)) queued += Number(update.run(now, now, row.id).changes || 0);
+    }
+    setMeta(recoveryWindowKey(region), '');
+    db.exec('RELEASE monitor_recovery');
+  } catch (err) {
+    db.exec('ROLLBACK TO monitor_recovery');
+    db.exec('RELEASE monitor_recovery');
+    throw err;
+  }
+  recoveryWindows[region] = null;
+  if (queued) {
+    writeAppLog('info', 'notifications', `Requeued ${queued} failed delivery job(s) after Store connectivity recovered.`);
+    processNotificationQueue().catch((err) => writeAppLog('error', 'notifications', 'Recovery queue worker failed.', { error:err?.message || String(err) }));
+  }
+  return queued;
 }
 
 function alertExpired(event, currentPolicy = eventAlertDelivery(event), now = Date.now()) {
@@ -2768,7 +2874,7 @@ function recordInventoryCoverage(at = isoNow()) {
   const previous = coverageSessions.get(region);
   const continuous = previous && new Date(at).getTime() - new Date(previous.at).getTime() <= coverageToleranceMs();
   const pending = new Set(db.prepare('SELECT DISTINCT slug FROM pending_transitions WHERE region=?').all(region).map((row) => row.slug));
-  db.exec('BEGIN IMMEDIATE');
+  db.exec('SAVEPOINT inventory_coverage');
   try {
     let id;
     if (continuous) {
@@ -2789,9 +2895,9 @@ function recordInventoryCoverage(at = isoNow()) {
         extend.run(at, last.id);
       } else insert.run(region, product.slug, at, at, product.status, product.inStock ? 1 : 0, price, priceValue(price), REGIONS[region].currency);
     }
-    db.exec('COMMIT');
+    db.exec('RELEASE inventory_coverage');
     coverageSessions.set(region, { id, at });
-  } catch (err) { db.exec('ROLLBACK'); throw err; }
+  } catch (err) { db.exec('ROLLBACK TO inventory_coverage'); db.exec('RELEASE inventory_coverage'); throw err; }
 }
 
 function productInsights(slug, days = 30, now = Date.now()) {
@@ -2910,7 +3016,7 @@ function evaluateCollectionAlerts() {
     if (!result.ready && !result.confirmedNotReady) continue; // Unknown never rearms.
     const previous = db.prepare('SELECT ready_state FROM watch_collections WHERE region=? AND id=?').get(currentRegion(), collection.id)?.ready_state;
     const shouldAlert = !collection.archived && collection.notifyReady && result.ready && previous === 0;
-    db.exec('BEGIN IMMEDIATE');
+    db.exec('SAVEPOINT collection_readiness');
     const eventsBefore = state.events.slice();
     try {
       db.prepare('UPDATE watch_collections SET ready_state=? WHERE region=? AND id=?').run(result.ready ? 1 : 0, currentRegion(), collection.id);
@@ -2925,8 +3031,8 @@ function evaluateCollectionAlerts() {
         recordEvent(event);
         enqueueAlert(event);
       }
-      db.exec('COMMIT');
-    } catch (err) { db.exec('ROLLBACK'); state.events = eventsBefore; throw err; }
+      db.exec('RELEASE collection_readiness');
+    } catch (err) { db.exec('ROLLBACK TO collection_readiness'); db.exec('RELEASE collection_readiness'); state.events = eventsBefore; throw err; }
   }
 }
 
@@ -2980,6 +3086,8 @@ function applyCombinedWatchConditions(events, prefs) {
 async function checkStore(reason = 'timer') {
   if (monitor.checking) return { skipped: true, reason: 'already checking' };
   const startedAt = Date.now();
+  let observationSnapshot = null;
+  let observationOpen = false;
   monitor.checking = true;
   monitor.lastCheckAt = isoNow();
   monitor.lastError = null;
@@ -2995,6 +3103,14 @@ async function checkStore(reason = 'timer') {
     if (!MOCK_MODE && knownCount >= 20 && catalogCount < Math.max(10, Math.floor(knownCount * MIN_CATALOG_RATIO))) {
       throw new Error(`Catalog health guard rejected ${catalogCount} products; previous baseline has ${knownCount}. No stock state was changed.`);
     }
+    const region = currentRegion();
+    observationSnapshot = {
+      products:state.products, events:state.events.slice(),
+      monitor:{ productCount:monitor.productCount, lastSuccessAt:monitor.lastSuccessAt, consecutiveFailures:monitor.consecutiveFailures, catalogHealth:monitor.catalogHealth, pendingChanges:monitor.pendingChanges },
+      recoveryWindow:recoveryWindows[region],
+    };
+    db.exec('SAVEPOINT monitor_observation');
+    observationOpen = true;
 
     const incoming = {};
     const notifications = [];
@@ -3136,22 +3252,38 @@ async function checkStore(reason = 'timer') {
     monitor.pendingChanges = Number(db.prepare('SELECT COUNT(*) AS count FROM pending_transitions WHERE region=?').get(currentRegion())?.count || 0);
     pruneProductObservations();
     pruneEvents();
-    saveStateSoon();
 
     for (const event of notifications) enqueueAlert(event);
     if (!monitor.partialErrors.length) autoBuy.observe(currentRegion(), state.products);
     if (!monitor.partialErrors.length) evaluateCollectionAlerts();
+    persistState(states[region], region);
     try {
       const stat = typeof fs.statfsSync === 'function' ? fs.statfsSync(USER_DATA_DIR) : null;
       const free = stat ? Number(stat.bavail) * Number(stat.bsize) : null;
       if (free !== null && free < 1024 * 1024 * 1024) enqueueOperationalAlert('disk', 'Storage space is low', `Only ${Math.max(0, Math.round(free / 1024 / 1024))} MB remains in the GearBeacon data filesystem.`);
     } catch {}
-    console.log(`[monitor] success: ${monitor.productCount} products, ${notifications.length} notification event(s)`);
     writeAppLog('info', 'monitor', `Store check succeeded for ${currentRegion()}.`, { reason, products: monitor.productCount, notificationEvents: notifications.length, catalogHealth: monitor.catalogHealth, pendingChanges:monitor.pendingChanges });
+    if (monitor.partialErrors.length) preserveRecoveryWindow(currentRegion(), startedAt);
     recordMonitorCheck('success', startedAt, monitor.partialErrors.length ? 'Catalog was usable but one or more categories failed.' : null);
+    db.exec('RELEASE monitor_observation');
+    observationOpen = false;
+    console.log(`[monitor] success: ${monitor.productCount} products, ${notifications.length} notification event(s)`);
+    if (!monitor.partialErrors.length) {
+      try { recoverFailedDeliveriesAfterOutage(currentRegion()); }
+      catch (err) { writeAppLog('error', 'notifications', 'Delivery recovery after Store check failed.', { error:String(err?.message || err) }); }
+    }
     return { ok: true, products: monitor.productCount, notifications: notifications.length, catalogHealth: monitor.catalogHealth, pendingChanges:monitor.pendingChanges };
   } catch (err) {
+    if (observationOpen) {
+      db.exec('ROLLBACK TO monitor_observation');
+      db.exec('RELEASE monitor_observation');
+      state.products = observationSnapshot.products;
+      state.events = observationSnapshot.events;
+      Object.assign(monitor, observationSnapshot.monitor);
+      recoveryWindows[currentRegion()] = observationSnapshot.recoveryWindow;
+    }
     coverageSessions.delete(currentRegion());
+    preserveRecoveryWindow(currentRegion(), startedAt);
     monitor.consecutiveFailures += 1;
     monitor.lastError = err?.message || String(err);
     monitor.retryAfterAt = err?.retryAfterAt || null;
@@ -3324,13 +3456,13 @@ function setWatchCollections(slug, ids, region = currentRegion()) {
   const existingIds = affected.slice(unique.length);
   if (unique.length === existingIds.length && unique.every((id) => existingIds.includes(id))) return;
   if (unique.some((id) => !db.prepare('SELECT id FROM watch_collections WHERE region=? AND id=?').get(region, id))) throw new Error('Collection not found in this region.');
-  db.exec('BEGIN IMMEDIATE');
+  db.exec('SAVEPOINT set_watch_collections');
   try {
     for (const id of existingIds) if (!unique.includes(id)) db.prepare('DELETE FROM watch_collection_members WHERE region=? AND collection_id=? AND slug=?').run(region,id,slug);
     for (const id of unique) if (!existingIds.includes(id)) insertCollectionMember(region,id,slug);
     cancelSuppressedItemAlerts(region);
-    db.exec('COMMIT');
-  } catch (err) { db.exec('ROLLBACK'); throw err; }
+    db.exec('RELEASE set_watch_collections');
+  } catch (err) { db.exec('ROLLBACK TO set_watch_collections'); db.exec('RELEASE set_watch_collections'); throw err; }
   baselineCollections(region, affected);
 }
 
@@ -3633,7 +3765,7 @@ function operationsSummary() {
   const secondaryUnavailable = storage.backup.secondary.configured && storage.backup.latest && !storage.backup.secondary.latest;
   const issues = [
     ...warnings.map((item) => ({ severity:item.severity === 'high' ? 'action' : 'degraded', message:item.message, settingsTab:item.settingsTab })),
-    ...(queue.failed ? [{ severity:'action', message:`${queue.failed} notification delivery job${queue.failed === 1 ? '' : 's'} failed.`, settingsTab:'notifications' }] : []),
+    ...(queue.failed ? [{ severity:'action', message:`${queue.failed} notification delivery job${queue.failed === 1 ? '' : 's'} failed.`, settingsTab:'operations', settingsSection:'delivery' }] : []),
     ...(!storage.integrity.ok ? [{ severity:'action', message:'Database integrity check failed.', settingsTab:'data' }] : []),
     ...(latestSecondaryAttempt?.ok === false || secondaryUnavailable ? [{ severity:'degraded', message:'The latest primary backup succeeded, but the secondary recovery copy is unavailable.', settingsTab:'data' }] : []),
     ...(unhealthyRegions.length ? [{ severity:'degraded', message:`${unhealthyRegions.length} store region${unhealthyRegions.length === 1 ? ' is' : 's are'} unhealthy.` }] : []),
@@ -4190,12 +4322,18 @@ function validateSnapshotInsights(regions) {
 
 function importSnapshot(snapshot) {
   const normalized = normalizeImportedSnapshot(snapshot);
+  const importedRegions = Object.keys(normalized.regions).filter((region) => ACTIVE_REGIONS.includes(region));
+  if (!importedRegions.length) throw new Error(`This backup does not contain any configured region (${ACTIVE_REGIONS.join(', ')}).`);
   for (const region of ACTIVE_REGIONS) flushState(region);
   const safety = createDatabaseBackup('pre-import');
-  autoBuy.restore();
   let watchCount = 0;
   let eventCount = 0;
-  const importedRegions = [];
+  const previousStates = new Map(importedRegions.map((region) => [region, states[region]]));
+  const previousPairing = autoBuy.pairingForRollback();
+  let importedConfig = null;
+  let importedSecrets = null;
+  db.exec('BEGIN IMMEDIATE');
+  try {
   for (const [region, regionState] of Object.entries(normalized.regions)) {
     if (!ACTIVE_REGIONS.includes(region)) continue;
     persistState(regionState, region, { replaceEvents:true });
@@ -4224,9 +4362,6 @@ function importSnapshot(snapshot) {
       addHistory.run(region, String(item.slug), observed.toISOString(), String(item.changeType || 'imported').slice(0, 80), item.status ? String(item.status) : null, item.inStock ? 1 : 0, item.price ? String(item.price) : null, priceValue(item.priceValue ?? item.price));
     }
     states[region] = loadState(region);
-    coverageSessions.delete(region);
-    db.exec('BEGIN IMMEDIATE');
-    try {
       db.prepare('DELETE FROM monitor_coverage WHERE region=?').run(region);
       db.prepare('DELETE FROM inventory_history WHERE region=?').run(region);
       const addCoverage = db.prepare('INSERT INTO monitor_coverage(region,started_at,ended_at,checks) VALUES(?,?,?,?)');
@@ -4235,14 +4370,9 @@ function importSnapshot(snapshot) {
       for (const row of regionState.inventoryHistory) addInventory.run(region, row.slug, row.startedAt, row.endedAt, row.status, row.inStock ? 1 : 0, row.price, row.priceValue, row.currency);
       cancelSuppressedItemAlerts(region);
       db.prepare("UPDATE notification_queue SET status='cancelled',updated_at=? WHERE region=? AND status IN ('pending','failed') AND json_extract(payload_json,'$.type')='collection_ready'").run(isoNow(), region);
-      db.exec('COMMIT');
-    } catch (err) { db.exec('ROLLBACK'); throw err; }
-    monitors[region].productCount = Object.values(states[region].products).filter((product) => !product.variantId).length;
     watchCount += states[region].watchlist.length;
     eventCount += states[region].events.length;
-    importedRegions.push(region);
   }
-  if (!importedRegions.length) throw new Error(`This backup does not contain any configured region (${ACTIVE_REGIONS.join(', ')}).`);
   if (tableExists('settings')) {
     const importedKeys = new Set(Object.keys(normalized.settings));
     const remove = db.prepare('DELETE FROM settings WHERE key=?');
@@ -4254,11 +4384,23 @@ function importSnapshot(snapshot) {
     for (const [key, value] of Object.entries(normalized.settings)) {
       if (!/password|secret|token|credential|session|^owner_(?:security_policy|totp(?:_pending)?)$|^notification_private_hosts$/i.test(key)) put.run(String(key), String(value), isoNow());
     }
-    applyAppConfig(storedAppConfig(), storedSecrets());
-    scheduleBackups();
+    importedConfig = storedAppConfig();
+    importedSecrets = storedSecrets();
   }
   autoBuy.importData(snapshot.autoBuy);
   setMeta('last_import_at', isoNow());
+  db.exec('COMMIT');
+  } catch (err) {
+    try { db.exec('ROLLBACK'); } catch {}
+    for (const [region, previous] of previousStates) states[region] = previous;
+    autoBuy.restorePairingAfterRollback(previousPairing);
+    throw err;
+  }
+  for (const region of importedRegions) {
+    coverageSessions.delete(region);
+    monitors[region].productCount = Object.values(states[region].products).filter((product) => !product.variantId).length;
+  }
+  if (importedConfig) { applyAppConfig(importedConfig, importedSecrets); scheduleBackups(); }
   return { ok: true, watchCount, eventCount, importedRegions, safetyBackup: safety };
 }
 
@@ -5095,7 +5237,17 @@ async function handleApi(req, res, url) {
       if (req.method === 'PUT' && url.pathname === '/api/auto-buy/rules') {
         const region = String(url.searchParams.get('region') || DEFAULT_REGION).toLowerCase();
         if (!ACTIVE_REGIONS.includes(region)) return sendJson(res,400,{ error:'Choose an active Store region.' });
-        return sendJson(res,200,{ rule:autoBuy.save(region,String(body.slug || ''),body) });
+        const slug = String(body.slug || '');
+        const addWatch = body.watchIfNeeded === true && !states[region].watchlist.includes(slug);
+        db.exec('SAVEPOINT arm_auto_buy');
+        let rule;
+        try {
+          if (addWatch) db.prepare('INSERT INTO watchlist(region,slug,created_at) VALUES(?,?,?)').run(region,slug,isoNow());
+          rule = autoBuy.save(region,slug,body);
+          db.exec('RELEASE arm_auto_buy');
+        } catch (err) { db.exec('ROLLBACK TO arm_auto_buy'); db.exec('RELEASE arm_auto_buy'); throw err; }
+        if (addWatch) states[region].watchlist.push(slug);
+        return sendJson(res,200,{ rule });
       }
       const pause = url.pathname.match(/^\/api\/auto-buy\/rules\/([a-f0-9-]{36})\/pause$/);
       if (req.method === 'POST' && pause) return sendJson(res,200,{ rule:autoBuy.pause(pause[1]) });
@@ -5238,6 +5390,23 @@ async function handleApi(req, res, url) {
     return sendJson(res, 200, { ok: true, queued: Number(result.changes || 0) });
   }
 
+  if (req.method === 'POST' && url.pathname === '/api/notifications/dismiss-failed') {
+    const body = await readJsonBody(req);
+    if (body?.all !== true && (!Number.isSafeInteger(body?.id) || body.id < 1)) return sendJson(res, 400, { error:'Choose a failed delivery job to dismiss.' });
+    const rows = body.all === true
+      ? db.prepare("SELECT id,event_id,channel FROM notification_queue WHERE status='failed'").all()
+      : db.prepare("SELECT id,event_id,channel FROM notification_queue WHERE id=? AND status='failed'").all(body.id);
+    if (!body.all && !rows.length) return sendJson(res, 404, { error:'That failed delivery job is no longer available.' });
+    const update = db.prepare("UPDATE notification_queue SET status='cancelled',last_error='Dismissed by owner after delivery failure.',updated_at=? WHERE id=? AND status='failed'");
+    let dismissed = 0;
+    for (const row of rows) {
+      if (!update.run(isoNow(), row.id).changes) continue;
+      logNotification(row.event_id, row.channel, 'cancelled', 'Dismissed by owner after delivery failure.');
+      dismissed++;
+    }
+    return sendJson(res, 200, { ok:true, dismissed });
+  }
+
   if (req.method === 'POST' && url.pathname === '/api/update/prepare') {
     try { return sendJson(res, 200, updatePreparation()); }
     catch (err) {
@@ -5249,6 +5418,22 @@ async function handleApi(req, res, url) {
   const requestedRegion = String(url.searchParams.get('region') || DEFAULT_REGION).toLowerCase();
   if (!ACTIVE_REGIONS.includes(requestedRegion)) return sendJson(res, 400, { error: `Region must be one of: ${ACTIVE_REGIONS.join(', ')}.` });
   return await regionContext.run(requestedRegion, () => handleRegionApi(req, res, url));
+}
+
+function removeWatches(slugs, region = currentRegion()) {
+  const removing = new Set(slugs);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const affected = watchCollections(region).filter((collection) => collection.slugs.some((slug) => removing.has(slug))).map((collection) => collection.id);
+    const removeWatch = db.prepare('DELETE FROM watchlist WHERE region=? AND slug=?');
+    for (const slug of removing) removeWatch.run(region, slug);
+    baselineCollections(region, affected);
+    db.exec('COMMIT');
+  } catch (err) {
+    try { db.exec('ROLLBACK'); } catch {}
+    throw err;
+  }
+  states[region].watchlist = states[region].watchlist.filter((slug) => !removing.has(slug));
 }
 
 async function handleRegionApi(req, res, url) {
@@ -5556,7 +5741,6 @@ async function handleRegionApi(req, res, url) {
         throw err;
       }
       state.watchlist.push(...additions);
-      saveStateSoon();
       writeAppLog('info', 'watchlist', `Imported ${additions.length} product${additions.length === 1 ? '' : 's'} into the ${REGIONS[currentRegion()].label} watchlist.`, { slugs:additions });
     }
     return sendJson(res, 200, {
@@ -5606,23 +5790,30 @@ async function handleRegionApi(req, res, url) {
       db.exec('COMMIT');
     } catch (err) { db.exec('ROLLBACK'); throw err; }
     if (!alreadyWatched) state.watchlist.push(slug);
-    saveStateSoon();
     return sendJson(res,200,{ok:true,alreadyWatched,alreadyMember,collectionId:id || null,product:productForApi(state.products[slug]),...watchWorkspace()});
   }
 
   if (req.method === 'POST' && url.pathname === '/api/watch') {
     const body = await readJsonBody(req);
+    const region = currentRegion();
     const slug = String(body?.slug || '').trim();
     if (!slug) return sendJson(res, 400, { error: 'slug is required' });
     if (!Object.hasOwn(state.products, slug)) return sendJson(res, 404, { error:'Product not found in this region.' });
     let rule;
     try { rule = body?.rule ? normalizeWatchRule(body.rule, watchRule(slug)) : null; } catch (err) { return sendJson(res, 400, { error:err.message }); }
-    if (!state.watchlist.includes(slug)) {
-      db.prepare('INSERT INTO watchlist(region,slug,created_at) VALUES(?,?,?) ON CONFLICT(region,slug) DO NOTHING').run(currentRegion(), slug, isoNow());
-      state.watchlist.push(slug);
+    const alreadyWatched = state.watchlist.includes(slug);
+    if (!alreadyWatched || rule) {
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        if (!alreadyWatched) db.prepare('INSERT INTO watchlist(region,slug,created_at) VALUES(?,?,?) ON CONFLICT(region,slug) DO NOTHING').run(region, slug, isoNow());
+        if (rule) saveWatchRule(slug, rule, region);
+        db.exec('COMMIT');
+      } catch (err) {
+        try { db.exec('ROLLBACK'); } catch {}
+        throw err;
+      }
     }
-    if (rule) saveWatchRule(slug, rule);
-    saveStateSoon();
+    if (!alreadyWatched) state.watchlist.push(slug);
     return sendJson(res, 200, { ok: true, product: productForApi(state.products[slug]), watchlist: state.watchlist });
   }
 
@@ -5633,22 +5824,28 @@ async function handleRegionApi(req, res, url) {
     if (!slugs.length) return sendJson(res, 400, { error:'Select at least one watched product.' });
     if (!['pause', 'resume', 'remove', 'purchased', 'wanted'].includes(action)) return sendJson(res, 400, { error:'Choose pause, resume, remove, purchased, or wanted.' });
     let pausedUntil = null;
+    let ruleChange;
     if (action === 'pause') {
       const minutes = Number(body?.minutes || 0);
       pausedUntil = minutes > 0 ? new Date(Date.now() + Math.min(minutes, 525600) * 60000).toISOString() : 'indefinite';
-      for (const slug of slugs) saveWatchRule(slug, { pausedUntil });
+      ruleChange = { pausedUntil };
     } else if (action === 'resume') {
-      for (const slug of slugs) saveWatchRule(slug, { enabled:true, pausedUntil:null });
+      ruleChange = { enabled:true, pausedUntil:null };
     } else if (action === 'purchased' || action === 'wanted') {
-      for (const slug of slugs) saveWatchRule(slug, { purchasedAt:action === 'purchased' ? isoNow() : null });
-    } else {
-      const affected = watchCollections().filter((collection) => collection.slugs.some((slug) => slugs.includes(slug))).map((collection) => collection.id);
-      state.watchlist = state.watchlist.filter((slug) => !slugs.includes(slug));
-      const removeWatch = db.prepare('DELETE FROM watchlist WHERE region=? AND slug=?');
-      for (const slug of slugs) removeWatch.run(currentRegion(), slug);
-      baselineCollections(currentRegion(), affected);
+      ruleChange = { purchasedAt:action === 'purchased' ? isoNow() : null };
     }
-    saveStateSoon();
+    if (action === 'remove') {
+      removeWatches(slugs);
+    } else {
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        for (const slug of slugs) saveWatchRule(slug, ruleChange);
+        db.exec('COMMIT');
+      } catch (err) {
+        try { db.exec('ROLLBACK'); } catch {}
+        throw err;
+      }
+    }
     return sendJson(res, 200, { ok:true, action, affected:slugs.length, pausedUntil, products:slugs.map((slug) => productForApi(state.products[slug])).filter(Boolean) });
   }
 
@@ -5662,17 +5859,22 @@ async function handleRegionApi(req, res, url) {
     const slug = decodeURIComponent(url.pathname.slice('/api/watch/'.length, -'/rules'.length));
     if (!state.watchlist.includes(slug)) return sendJson(res, 404, { error:'Product is not on the watchlist.' });
     const body = await readJsonBody(req);
-    try { return sendJson(res, 200, { ok:true, slug, rule:saveWatchRule(slug, body?.rule || body || {}) }); }
+    try {
+      db.exec('SAVEPOINT save_watch_settings');
+      let rule;
+      try {
+        rule = saveWatchRule(slug, body?.rule || body || {});
+        if (body?.collections !== undefined) setWatchCollections(slug, body.collections);
+        db.exec('RELEASE save_watch_settings');
+      } catch (err) { db.exec('ROLLBACK TO save_watch_settings'); db.exec('RELEASE save_watch_settings'); throw err; }
+      return sendJson(res, 200, { ok:true, slug, rule, ...(body?.collections !== undefined ? { product:productForApi(state.products[slug]), ...watchWorkspace() } : {}) });
+    }
     catch (err) { return sendJson(res, 400, { error:err.message }); }
   }
 
   if (req.method === 'DELETE' && url.pathname.startsWith('/api/watch/')) {
     const slug = decodeURIComponent(url.pathname.slice('/api/watch/'.length));
-    const affected = watchCollections().filter((collection) => collection.slugs.includes(slug)).map((collection) => collection.id);
-    state.watchlist = state.watchlist.filter((x) => x !== slug);
-    db.prepare('DELETE FROM watchlist WHERE region=? AND slug=?').run(currentRegion(), slug);
-    baselineCollections(currentRegion(), affected);
-    saveStateSoon();
+    removeWatches([slug]);
     return sendJson(res, 200, { ok: true, watchlist: state.watchlist });
   }
 
@@ -5793,7 +5995,11 @@ const server = http.createServer(async (req, res) => {
       });
       return sendJson(res, ready ? 200 : 503, { ok: ready, version: APP_VERSION });
     }
-    if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
+    if (url.pathname.startsWith('/api/')) {
+      try { decodeURIComponent(url.pathname); }
+      catch (err) { if (err instanceof URIError) return sendJson(res, 400, { error:'Request URL contains invalid encoding.' }); throw err; }
+      return await handleApi(req, res, url);
+    }
 
     if (!['GET', 'HEAD'].includes(req.method || 'GET')) return sendText(res, 405, 'Method not allowed');
 

@@ -17,6 +17,8 @@ Use Tab to reach either row of tabs, then Left/Right arrow keys to select a neig
 
 Operations links open the relevant configuration section directly. The installation health banner and legacy `#operations` links open Settings > Operations > Overview. Run diagnostics and download support bundles under Diagnostics; filter or download application logs under Logs.
 
+When the health banner reports failed notification delivery, its button opens Operations > Delivery. Review the failed job, retry it after fixing the channel, or dismiss it to clear the active warning while keeping the failure history. See [delivery recovery](ALERT_DELIVERY.md#recover-or-dismiss-failed-deliveries).
+
 For recovery settings, use Data > Schedule & retention. Create or test backups and import/export data under Data > Backups & transfer. Check for updates or prepare a safe update under General > Application.
 
 Security > Password includes optional authenticator setup and one-time recovery codes. Security > Sessions includes the sign-in lifetime, idle lock, and approved private notification hostnames. Sensitive changes and data transfers ask for fresh owner verification when needed. See [Owner security and recovery](SECURITY_CONTROLS.md) for setup, Windows key protection, and recovery instructions.

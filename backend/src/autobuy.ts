@@ -47,7 +47,7 @@ const reasons = {
 
 function createAutoBuy({ db, regions, mock, getProduct, eligible, purchased, notify }) {
   let pairing = null;
-  const tx = fn => { db.exec('BEGIN IMMEDIATE'); try { const result = fn(); db.exec('COMMIT'); return result; } catch (err) { db.exec('ROLLBACK'); throw err; } };
+  const tx = fn => { db.exec('SAVEPOINT auto_buy_change'); try { const result = fn(); db.exec('RELEASE auto_buy_change'); return result; } catch (err) { db.exec('ROLLBACK TO auto_buy_change'); db.exec('RELEASE auto_buy_change'); throw err; } };
   const connection = () => db.prepare('SELECT * FROM auto_buy_connection WHERE id=1').get();
   const ruleRow = id => db.prepare('SELECT * FROM auto_buy_rules WHERE id=?').get(id);
   const attemptRow = id => db.prepare('SELECT * FROM auto_buy_attempts WHERE id=?').get(id);
@@ -314,11 +314,14 @@ function createAutoBuy({ db, regions, mock, getProduct, eligible, purchased, not
       }
     });
   }
+  // A failed outer restore rolls back SQLite; keep its pending local pairing too.
+  const pairingForRollback = () => pairing;
+  const restorePairingAfterRollback = value => { pairing = value; };
   // Startup never repeats a browser action whose outcome has not been established.
   for (const row of db.prepare("SELECT * FROM auto_buy_attempts WHERE state IN ('preparing','submitting')").all()) {
     attention(row,row.state === 'submitting' ? 'unknown' : 'interrupted',row.state === 'submitting' ? 'unknown' : 'attention');
   }
-  return { status, save, pause, pauseAll, observe, authenticate, heartbeat, claim, authorize, complete, report, resolve, disconnect, startPairing, pair, restore, exportData, validateImport, importData,
+  return { status, save, pause, pauseAll, observe, authenticate, heartbeat, claim, authorize, complete, report, resolve, disconnect, startPairing, pair, restore, exportData, validateImport, importData, pairingForRollback, restorePairingAfterRollback,
     rule:(region,slug)=>publicRule(db.prepare('SELECT * FROM auto_buy_rules WHERE region=? AND slug=?').get(region,slug)),
     attempt:(c,id)=>publicAttempt(owned(c,id)),
   };

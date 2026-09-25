@@ -2,9 +2,26 @@
 
 The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. The first release promoted to `main` is V1.0.0.
 
+## V1.4.1 — Delivery recovery and safer state changes
+
+Prepared September 25, 2026. Includes every change since v1.4.0. See the [complete release notes](RELEASE_NOTES.md).
+
+- Adding a watch with an alert rule now commits both together, and bulk pause, resume, purchased, and wanted actions commit all selected watches together. Failed writes roll back rules, collection purchase state, and delivery changes.
+- Watch removals now commit the database and collection baselines before updating the live watchlist. Failed single or bulk removals leave every selected watch in place, including after a later Store check.
+- Removed a redundant delayed whole-state save after watchlist changes. Watch and rule updates already commit before the API responds; the extra timer could crash the server if another SQLite writer held a lock.
+- Store checks now commit product state, activity, delivery jobs, and observation evidence together before reporting success, so an abrupt stop cannot leave a recorded restock with stale stock data.
+- Secondary recovery copies now carry an installation ID. Retention and abandoned-temp cleanup touch only copies made by that installation; older copies remain available when recorded in backup history, but must be removed manually when no longer needed.
+- Reinstalling the Windows service now replaces its web assets without nesting a second `web` directory. Operations refreshes visible counts and warnings during background polling and on reconnection while preserving keyboard focus.
+- Secondary backup retention now recognizes only GearBeacon backup filenames and leaves unrelated files in a shared destination alone. GearBeacon no longer changes the permissions of an existing secondary directory; plaintext copies receive owner-only file permissions on Unix. Windows checkout vaults now use private ACLs and account-scoped DPAPI protection for their key, with automatic migration of older raw keys on writable open. Source launchers no longer show a stale version, and malformed API paths return a client error.
+- Kept the Store request deadline active through response-body parsing so a stalled catalog cannot stop the monitor loop. Backup restores now reject incompatible regions before changing purchase state and roll back all regions and settings together on failure. Primary SQLite backups become visible only after validation; failed copies are removed. Product alert settings and auto-buy arming now save their related watch changes atomically.
+- Added failed notification controls in Operations > Delivery: retry, dismiss one, or dismiss all. The attention banner opens that section, and dismissal clears the active warning while retaining delivery history. After a failed Store check recovers, network-related terminal delivery failures from that outage are requeued for one bounded retry cycle; alert expiry and channel rules still apply.
+- Kept automatic delivery recovery pending through partial Store catalogs and service restarts. A complete Store check resumes eligible failed jobs once and clears the persisted recovery window.
+- Removed abandoned primary and secondary backup temporary files after a crash once they are at least a day old and their creating process has exited. Startup and periodic cleanup leave completed backups, recent files, and unrelated files untouched.
+- Store the secondary backup owner ID before the first primary snapshot so its recovery copy remains discoverable after a restore. An interrupted notification response now qualifies for the bounded outage recovery retry.
+
 ## V1.4.0 — Optional purchasing, stronger security, and clearer Activity
 
-Released September 21, 2026. Includes every change since v1.3.0. See the [complete release notes](RELEASE_NOTES.md).
+Released September 21, 2026. Includes every change since v1.3.0. See the [1.4.0 release notes](https://github.com/alexphillips-dev/GearBeacon/releases/tag/v1.4.0).
 
 - Updated CodeQL to 4.38.1, Docker Buildx setup to 4.4.1, Docker build/push to 7.4.0, and QEMU setup to 4.4.0 with full commit pins. Grouped CodeQL dependency updates, added companion dependency monitoring, and required all CodeQL actions in the security contract. Release promotion now preserves merge ancestry and fast-forwards dev to main before development resumes.
 - Added explicit v1.3.0/schema-v13 upgrade coverage for validated migration backups, retained watches, and monitoring after the v1.4.0/schema-v15 upgrade.

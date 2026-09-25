@@ -1297,10 +1297,9 @@ async function saveProductRule(form) {
   button.disabled = true; button.textContent = 'Saving…';
   try {
     if (!app.currentProductDetails?.capabilities?.alertDelivery) throw new Error('Update and restart GearBeacon before saving these alert settings.');
-    const result = await api(`/api/watch/${encodeURIComponent(form.dataset.ruleSlug)}/rules`, { method:'PUT', body:JSON.stringify({ rule }) });
-    const membership = await api(`/api/watch/${encodeURIComponent(form.dataset.ruleSlug)}/collections`, { method:'PUT', body:JSON.stringify({ collections:[...form.querySelectorAll('[name="collection"]:checked')].map((input) => input.value) }) });
-    app.collections = membership.collections; updateWatchAlertSummaries(membership); app.watchOverview=membership.overview || app.watchOverview;
-    const product = app.products.find((item) => item.slug === form.dataset.ruleSlug); if (product) Object.assign(product, membership.product, { watchRule:result.rule });
+    const result = await api(`/api/watch/${encodeURIComponent(form.dataset.ruleSlug)}/rules`, { method:'PUT', body:JSON.stringify({ rule, collections:[...form.querySelectorAll('[name="collection"]:checked')].map((input) => input.value) }) });
+    app.collections = result.collections; updateWatchAlertSummaries(result); app.watchOverview=result.overview || app.watchOverview;
+    const product = app.products.find((item) => item.slug === form.dataset.ruleSlug); if (product) Object.assign(product, result.product, { watchRule:result.rule });
     renderProducts(true); await openProductDialog(form.dataset.ruleSlug, true); toast('Product alert rules saved');
   } catch (err) { resultBox.classList.remove('hidden'); resultBox.textContent = err.message; button.disabled = false; button.textContent = 'Save alert rules'; }
 }
@@ -1597,6 +1596,7 @@ function renderAttentionBanner() {
   banner.className = `attention-banner ${summary.state === 'action' ? 'action' : ''}`;
   $('attentionTitle').textContent = summary.label || 'GearBeacon needs attention';
   $('attentionDetail').textContent = first?.message || 'Open Operations for details.';
+  $('attentionAction').textContent = first?.settingsSection === 'delivery' ? 'Open Delivery' : 'Open Operations';
   banner.classList.remove('hidden');
 }
 
@@ -2036,18 +2036,22 @@ async function refreshOperations() {
   try {
     const ops = await api('/api/operations');
     if (requestVersion !== operationsRefreshVersion) return;
+    const focused = document.activeElement;
+    const focusContainer = focused?.closest('#operationsSummary, #securityWarnings, #operationsMonitoring, #operationsDelivery, #operationsBackups, #operationsGrid');
+    const focusIndex = focusContainer ? [...focusContainer.querySelectorAll('button')].indexOf(focused) : -1;
+    const focusData = focusIndex < 0 ? null : Object.fromEntries(Object.entries(focused.dataset).filter(([key]) => key !== ''));
     app.operations = ops;
     app.lastOperationsRefresh = Date.now();
     $('operationsError').classList.add('hidden');
     $('runtimeBadge').textContent = `${ops.runtime.platform} · ${ops.runtime.standalone ? 'standalone' : ops.runtime.node}`;
     $('operationsSummary').className = `operations-summary ${escapeHtml(ops.summary.state)}`;
-    $('operationsSummary').innerHTML = `<div><span class="summary-state-dot"></span><div><strong>${escapeHtml(ops.summary.label)}</strong><small>${ops.summary.issues.length ? `${ops.summary.issues.length} item${ops.summary.issues.length === 1 ? '' : 's'} need review` : 'Monitoring, delivery, storage, and security checks are healthy'}</small></div></div>${ops.summary.issues.slice(0,3).map((item) => `<button ${item.settingsTab ? `data-settings-link="${escapeHtml(item.settingsTab)}"` : ''}>${escapeHtml(item.message)}</button>`).join('')}`;
+    $('operationsSummary').innerHTML = `<div><span class="summary-state-dot"></span><div><strong>${escapeHtml(ops.summary.label)}</strong><small>${ops.summary.issues.length ? `${ops.summary.issues.length} item${ops.summary.issues.length === 1 ? '' : 's'} need review` : 'Monitoring, delivery, storage, and security checks are healthy'}</small></div></div>${ops.summary.issues.slice(0,3).map((item) => `<button ${item.settingsTab ? `data-settings-link="${escapeHtml(item.settingsTab)}"` : ''}${item.settingsSection ? ` data-settings-target="${escapeHtml(item.settingsSection)}"` : ''}>${escapeHtml(item.message)}</button>`).join('')}`;
     $('securityWarnings').innerHTML = ops.securityWarnings.length ? ops.securityWarnings.map((item) => `<div class="warning ${escapeHtml(item.severity)}"><strong>${escapeHtml(item.severity.toUpperCase())}</strong><span>${escapeHtml(item.message)}</span>${item.settingsTab ? `<button data-settings-link="${escapeHtml(item.settingsTab)}"${item.code === 'smtp-certificates' ? ' data-settings-target="channels"' : ''}>Open setting</button>` : ''}</div>`).join('') : '<div class="warning good"><strong>SECURE</strong><span>No configuration warnings detected.</span></div>';
     const queue = ops.notifications.queue;
-    const failures = (queue.recentFailures || []).map((item) => `<div class="failure-row"><strong class="bad-text">${escapeHtml(item.channel)} · ${escapeHtml(item.region.toUpperCase())}</strong><small>${escapeHtml(item.last_error || 'Unknown delivery error')} · ${item.attempts}/${item.max_attempts} attempts</small></div>`).join('');
+    const failures = (queue.recentFailures || []).map((item) => `<div class="failure-row"><strong class="bad-text">${escapeHtml(item.channel)} · ${escapeHtml(item.region.toUpperCase())}</strong><small>${escapeHtml(item.last_error || 'Unknown delivery error')} · ${item.attempts}/${item.max_attempts} attempts</small><button type="button" data-dismiss-failed="${item.id}" aria-label="Dismiss failed ${escapeHtml(item.channel)} delivery for ${escapeHtml(item.region.toUpperCase())}">Dismiss</button></div>`).join('');
     const backupHistory = (ops.backups.history || []).slice(0, 6).map((item) => `<div class="failure-row"><strong class="${item.status === 'failed' ? 'bad-text' : ''}">${escapeHtml(item.reason)} · ${escapeHtml(item.status)}</strong><small>${escapeHtml(item.filename || item.detail || 'No file')} · ${escapeHtml(relativeTime(item.created_at))}</small></div>`).join('');
     $('operationsMonitoring').innerHTML = `<article class="settings-card"><span class="settings-kicker">Regions</span><h3>Store health</h3>${ops.regions.map((r) => `<div class="ops-row"><span class="connection-dot ${r.lastSuccessAt && !r.lastError ? 'enabled' : ''}"></span><div><strong>${escapeHtml(r.label)}</strong><small>${r.lastError ? escapeHtml(r.lastError) : `Last check ${escapeHtml(relativeTime(r.lastSuccessAt))} · next ${escapeHtml(relativeTime(r.nextCheckAt))}`}</small></div><b>${r.productCount || 0} products</b></div>`).join('')}</article>`;
-    $('operationsDelivery').innerHTML = `<article class="settings-card"><span class="settings-kicker">Delivery</span><h3>Notification queue</h3><dl class="settings-details"><div><dt>Pending</dt><dd>${queue.pending}</dd></div><div><dt>Delivered</dt><dd>${queue.sent}</dd></div><div><dt>Failed</dt><dd>${queue.failed}</dd></div><div><dt>Next scheduled</dt><dd>${queue.nextDeliveryAt ? escapeHtml(relativeTime(queue.nextDeliveryAt)) : 'None'}</dd></div></dl>${failures ? `<div class="failure-list">${failures}</div>` : ''}<div class="settings-actions wrap">${queue.failed ? '<button data-retry-failed>Retry failed</button>' : ''}<button data-settings-link="notifications" data-settings-target="delivery">Delivery settings</button></div></article>`;
+    $('operationsDelivery').innerHTML = `<article class="settings-card"><span class="settings-kicker">Delivery</span><h3>Notification queue</h3><dl class="settings-details"><div><dt>Pending</dt><dd>${queue.pending}</dd></div><div><dt>Delivered</dt><dd>${queue.sent}</dd></div><div><dt>Failed</dt><dd>${queue.failed}</dd></div><div><dt>Next scheduled</dt><dd>${queue.nextDeliveryAt ? escapeHtml(relativeTime(queue.nextDeliveryAt)) : 'None'}</dd></div></dl>${failures ? `<div class="failure-list">${failures}</div>` : ''}${queue.failed ? '<p>Retry sends these alerts again. Dismiss clears the warning without sending; delivery history remains in Activity.</p>' : ''}<div class="settings-actions wrap">${queue.failed ? '<button data-retry-failed>Retry failed</button><button data-dismiss-all-failed>Dismiss all failed</button>' : ''}<button data-settings-link="notifications" data-settings-target="delivery">Delivery settings</button></div></article>`;
     $('operationsBackups').innerHTML = `<article class="settings-card"><span class="settings-kicker">Data safety</span><h3>Backups</h3><dl class="settings-details"><div><dt>Validated</dt><dd>${ops.backups.count}</dd></div><div><dt>Integrity</dt><dd>${ops.backups.integrity.ok ? 'OK' : 'Failed'}</dd></div><div><dt>Latest</dt><dd>${ops.backups.latest ? escapeHtml(relativeTime(ops.backups.latest.createdAt)) : 'None'}</dd></div></dl>${backupHistory ? `<div class="failure-list">${backupHistory}</div>` : ''}<div class="settings-actions"><button data-settings-link="data" data-settings-target="backups">Data settings</button></div></article>`;
     $('operationsGrid').innerHTML = `<article class="settings-card"><span class="settings-kicker">Storage & build</span><h3>Installation</h3><dl class="settings-details"><div><dt>Database</dt><dd>${bytes(ops.storage.databaseSize)}</dd></div><div><dt>Free space</dt><dd>${bytes(ops.storage.freeSpace)}</dd></div><div><dt>Version</dt><dd>V${escapeHtml(ops.runtime.version)}</dd></div><div><dt>Commit / image</dt><dd>${escapeHtml(ops.runtime.commit || ops.runtime.image || 'Source checkout')}</dd></div></dl></article>`;
     const confidence = ops.monitoringConfidence || { pending:[], count:0, recentChecks:[] };
@@ -2055,6 +2059,11 @@ async function refreshOperations() {
     const secondary = ops.backups.secondary || {};
     $('operationsMonitoring').insertAdjacentHTML('beforeend', `<article class="settings-card"><span class="settings-kicker">Monitoring confidence</span><h3>${confidence.count ? `${confidence.count} pending change${confidence.count === 1 ? '' : 's'}` : 'No pending changes'}</h3><p>${confidence.count ? 'GearBeacon is preserving last-known-good values until another complete observation confirms these changes.' : 'Every recorded transition is confirmed under the current monitoring policy.'}</p>${pendingRows ? `<div class="failure-list">${pendingRows}</div>` : ''}</article>`);
     $('operationsBackups').insertAdjacentHTML('beforeend', `<article class="settings-card"><span class="settings-kicker">Recovery copy</span><h3>${secondary.configured ? `${secondary.count} secondary cop${secondary.count === 1 ? 'y' : 'ies'}` : 'Not configured'}</h3><dl class="settings-details"><div><dt>Format</dt><dd>${secondary.configured ? secondary.encrypted ? 'Encrypted export' : 'Validated SQLite' : '—'}</dd></div><div><dt>Latest</dt><dd>${secondary.latest ? escapeHtml(relativeTime(secondary.latest.createdAt)) : 'None'}</dd></div><div><dt>Separate device</dt><dd>${secondary.sameFilesystem === null ? 'Unknown' : secondary.sameFilesystem ? 'No' : 'Yes'}</dd></div></dl><div class="settings-actions"><button data-settings-link="data" data-settings-target="schedule">Recovery settings</button></div></article>`);
+    if (focusIndex >= 0) {
+      const buttons = [...focusContainer.querySelectorAll('button')];
+      const sameAction = buttons.find((button) => Object.entries(focusData).every(([key, value]) => button.dataset[key] === value));
+      (sameAction || buttons[Math.min(focusIndex, buttons.length - 1)] || $('settingsTabOperations')).focus({ preventScroll:true });
+    }
     renderAttentionBanner();
     await refreshLogs();
   } catch (err) {
@@ -2406,7 +2415,7 @@ async function performRefresh(background) {
     renderAttentionBanner();
     if (wasDisconnected) toast('Connection restored', 'success');
     if (app.activeTab === 'activity') await refreshActivity(app.activity.page || 1, { background:true });
-    if (Date.now() - app.lastOperationsRefresh > 60000 && !(app.activeTab === 'settings' && app.activeSettingsTab === 'operations')) refreshOperations();
+    if (wasDisconnected || Date.now() - app.lastOperationsRefresh > 60000) refreshOperations();
   } catch (err) {
     if (region !== app.currentRegion || revision !== app.dataRevision || background && document.hidden) return;
     if (/Region must be one of/i.test(err.message) && app.currentRegion) {
@@ -3188,6 +3197,14 @@ document.addEventListener('click', (event) => {
   if (test) testChannel(test.dataset.testChannel, test);
   const retry = event.target.closest('[data-retry-failed]');
   if (retry) api('/api/notifications/retry-failed', { method:'POST' }).then((result) => { toast(`${result.queued} failed deliveries queued`); refreshOperations(); }).catch((err) => toast(err.message, 'error'));
+  const dismiss = event.target.closest('[data-dismiss-failed], [data-dismiss-all-failed]');
+  if (dismiss) {
+    const all = dismiss.hasAttribute('data-dismiss-all-failed');
+    if (all && !window.confirm('Dismiss all failed deliveries without sending them? Their failure history will remain in Activity.')) return;
+    api('/api/notifications/dismiss-failed', { method:'POST', body:JSON.stringify(all ? { all:true } : { id:Number(dismiss.dataset.dismissFailed) }) })
+      .then((result) => { toast(`${result.dismissed} failed deliver${result.dismissed === 1 ? 'y' : 'ies'} dismissed`); refreshOperations(); })
+      .catch((err) => toast(err.message, 'error'));
+  }
 });
 document.addEventListener('change', (event) => {
   const days = event.target.closest('[data-insight-days]');
@@ -3511,7 +3528,7 @@ $('channelConfigForm').addEventListener('submit', (event) => { event.preventDefa
 $('saveChannels').addEventListener('click', saveChannelConfiguration);
 $('refreshOperations').addEventListener('click', refreshOperations);
 $('runDiagnostics').addEventListener('click', runInstallationDiagnostics);
-$('attentionAction').addEventListener('click', () => openSettingsSection('operations', 'overview'));
+$('attentionAction').addEventListener('click', () => openSettingsSection('operations', app.operations?.summary?.issues?.[0]?.settingsSection === 'delivery' ? 'delivery' : 'overview'));
 $('activityFilters').addEventListener('submit', (event) => { event.preventDefault(); persistUiState(); refreshActivity(1); });
 $('activityPageSize').addEventListener('change', () => { persistUiState(); refreshActivity(1); });
 $('clearActivityFilters').addEventListener('click', resetActivityFilters);

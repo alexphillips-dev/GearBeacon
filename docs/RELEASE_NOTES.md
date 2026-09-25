@@ -1,60 +1,45 @@
-# GearBeacon 1.4.0 — Optional purchasing, stronger security, and clearer Activity
+# GearBeacon 1.4.1 — Delivery recovery and safer state changes
 
-This release includes **all changes since the last published main release, v1.3.0**: optional experimental auto-buy, a checkout companion with clearer setup and verification, new-product Activity labels, owner-access and local-data hardening, signed update verification, and release/CI maintenance.
+This patch includes every change since the last main release, v1.4.0. GearBeacon remains a private, single-owner, self-hosted UniFi Store monitor. Monitoring and notification delivery continue on the server while the browser is closed.
 
-GearBeacon remains a private, single-owner, self-hosted UniFi Store monitor. Monitoring and notifications need no Store account and continue when the browser is closed. Purchasing is optional and requires separate setup and explicit authorization.
+## Notification recovery and Operations
 
-## Optional experimental auto-buy
+- **Resolve failed deliveries:** Settings > Operations > Delivery now offers Retry failed, Dismiss, and Dismiss all failed. The attention banner opens that section. Dismissal clears the active warning and keeps the failed attempt in Activity and the delivery log; it does not send or recall a message.
+- **Recover after a connection outage:** after a failed Store check, the next successful, complete check requeues eligible network-related terminal delivery failures, including interrupted notification responses, for one more bounded retry cycle. The recovery window survives partial catalogs and service restarts. Expired alerts and channels that are no longer allowed remain ineligible. Credential or other permanent failures still need correction and manual retry.
+- **Stay current without losing focus:** Operations refreshes counts and warnings during background polling and after the connection returns while preserving keyboard focus.
 
-- **Authorize one exact purchase:** choose a watched variant, quantity, maximum final order total including shipping/tax/surcharges, expiry, and the watch or collection that receives the purchase record. Each authorization allows one successful order. Arming an already available item permits checkout after the next complete Store check.
-- **Dedicated checkout companion:** pair the optional Node.js/Playwright companion with a one-time code and sign in directly in its sandboxed Store browser. The server and companion must remain running; the dashboard can be closed. A NAS, Docker, or headless installation can use a companion on a separate browser-capable computer over HTTPS.
-- **Checkout checks and recovery:** validate the exact cart contents, quantity, region, currency, account, address fingerprints, shipping service, selected saved card, and final total. Unrecognized Store write endpoints, visible challenges, changed checkout details, or an uncertain submission stop further checkout and require review. The companion retains an encrypted browser session and durable submission journal locally.
-- **Dashboard controls:** Watchlist purchase setup/status, Settings > General > Auto-buy, pause/disconnect controls, and Settings > Operations > Purchases expose rules and outcomes. Recovery restores purchase instructions paused and does not reactivate old companion tokens.
-- **Setup that explains its result:** numbered steps, aligned checks, failed checks first, wrapped guidance, retries in the same browser, and explicit SAVED/cancelled summaries. The address label is a GearBeacon nickname, not an address created in the Store. Local `profiles` and browser `verify` commands check saved profiles without replacing them.
-- **Pairing improvements:** connection instructions expand automatically only while unpaired. The mode/expiry label sits beside a compact field that selects and copies only the pairing code; pairing clears both.
-- **Checkout setup fixes:** cart preparation is no longer blocked by purchase/payment words in response fragments; the guard checks executed mutation fields. Account confirmation is separate from visible challenge detection, so Stripe's one-pixel background helper no longer falsely reports a signed-out account. Expanded helpers and active challenges still require owner attention.
+See [notification delivery and recovery](https://github.com/alexphillips-dev/GearBeacon/blob/v1.4.1/docs/ALERT_DELIVERY.md) for the controls, retry limits, and manual recovery path.
 
-**Compatibility limitation:** unattended checkout requires an existing reusable saved card with a visible masked label. Entering a card number, expiry, and security code does not create a supported saved payment method. If Use saved payment has no usable card, auto-buy setup cannot finish; do not place an order just to try to save a card. The companion does not collect raw payment-field values, solve CAPTCHAs, or bypass MFA/payment challenges. Authenticated live Ubiquiti checkout, regional account behavior, and unattended payment compatibility remain unverified with a real owner account; automated coverage uses isolated checkout fixtures. Stock availability does not reserve an item or guarantee an order.
+## Monitoring, watches, and purchase state
 
-See the [auto-buy setup, profile verification, and troubleshooting guide](https://github.com/alexphillips-dev/GearBeacon/blob/v1.4.0/docs/AUTO_BUY.md). Standalone and Docker users install the companion separately from the matching Source archive; the base server does not install a browser.
+- The Store request timeout now covers response-body parsing, so a stalled response cannot hold the monitor loop indefinitely.
+- Each successful Store check commits product state, observation evidence, Activity events, and queued delivery jobs together. A failed commit cannot leave a recorded stock event with stale product state.
+- Adding a watch and its alert rule now commits as one operation. Single and bulk watch removals, bulk pause/resume/purchased/wanted actions, product alert settings, and auto-buy arming commit their related database changes together. If a write fails, the request leaves watches, rules, collection purchase state, and delivery state unchanged.
+- Removed a redundant delayed whole-state save after watch changes. It could previously fail after an otherwise successful request when another SQLite writer held a lock.
 
-## Clearer new-product Activity
+## Backups, restore, and local security
 
-- Teal **NEW TO STORE** badges distinguish newly discovered listings and show their availability at detection.
-- **NOW AVAILABLE** distinguishes Coming soon → In stock launches from ordinary restocks. Launch timing says Coming soon for; unchanged upcoming listings say Still coming soon.
-- The same context appears in accessible descriptions and event details. Events remain individual compact cards, including separate product and variant events, with live arrivals and reading-position preservation retained.
+- Primary SQLite backups become visible only after validation; failed copies are removed. A secondary-copy failure does not invalidate a successful primary backup.
+- Backup retention and abandoned-temp cleanup recognize only GearBeacon-owned copies. Secondary copies now carry an installation ID, saved before the first primary snapshot so the copy remains discoverable after restore. One installation leaves another installation's files alone. Old copies recorded in backup history remain available; unrecorded older copies may need manual cleanup. Abandoned primary and secondary temporary files are removed only when at least a day old and their creating process has exited.
+- Secondary retention leaves unrelated files in a shared destination alone. GearBeacon no longer changes permissions on an existing secondary directory; plaintext copies receive owner-only file permissions on Unix.
+- Portable restore rejects incompatible regions before changing purchase state and rolls back all regions and settings together if the restore fails.
+- The optional Windows checkout companion now protects its vault with private ACLs and an account-scoped DPAPI key. A writable open migrates an older raw key without replacing its underlying key bytes. The vault must stay with its original Windows account or use the documented recovery process.
 
-## Owner access and local-data security
+## Windows installation and diagnostics
 
-- **Fail-closed access:** local mode always refuses non-loopback binds, including the former insecure remote override. Invalid saved configuration stops startup instead of silently falling back to environment defaults.
-- **Session policy:** configurable absolute sign-in lifetime (default 24 hours) and inactivity lock (default 30 minutes). Background polling does not renew activity; monitoring, delivery, and an independently running companion continue while the dashboard is locked.
-- **Fresh owner verification:** sensitive configuration, data-transfer/recovery, password/session, and authenticator operations require a recent sign-in or verification. The verification dialog supports keyboard cancellation, focus recovery, mobile layouts, and both themes.
-- **Optional authenticator codes:** local TOTP enrollment, replay protection, and ten single-use recovery codes. No cloud account or external QR service is required. Setup secrets clear on lock/sign-out; MFA material and local security policy stay out of portable exports.
-- **Protected installation keys:** Windows uses account-scoped DPAPI and verified private ACLs for application data and the installation key, including existing raw-key migration without changing the underlying key. Linux/macOS retain owner-only directory/key permissions. These installation-key protections are separate from the companion's own local vault.
-- **Restricted notification requests:** exact configured origins, DNS-validated address pinning, redirect rejection, TLS validation, timeouts, bounded responses, and metadata/link-local/reserved-address blocking. Private DNS destinations require explicit hostname approval; configured private IPs and localhost remain supported.
+- Reinstalling the Windows service now replaces the web assets without nesting another web directory or keeping obsolete pages.
+- Source launchers no longer display a stale version. Malformed API paths return a client error.
+- Added deterministic coverage for watch and rule write failures, backup ownership and cleanup, restore rollback, outage recovery, Windows vault migration, service web replacement, and update startup behavior. CI includes the Windows checkout vault test.
 
-See [owner security and recovery](https://github.com/alexphillips-dev/GearBeacon/blob/v1.4.0/docs/SECURITY_CONTROLS.md) for session limits, authenticator setup, account recovery, and private-host approvals.
+## Upgrading from v1.4.0
 
-## Updates, packaging, and maintenance
+1. In Settings > General, choose Prepare safe update and confirm the backup before replacing application files. Keep a compatible database and the separate installation key for rollback.
+2. Install the matching 1.4.1 server files or image and restart GearBeacon. If you use the optional checkout companion, update it from the matching 1.4.1 Source archive and keep its private vault with the original Windows account.
+3. Hard-refresh the dashboard. Review Settings > Operations > Delivery for failures left by an outage; correct permanent channel errors before using Retry failed.
+4. GearBeacon remains on SQLite schema v15 and portable export format v10. This patch adds no schema migration or intentional sign-out. Existing watches, rules, collections, history, settings, encrypted integrations, and owner access are retained.
 
-- Native and Docker update helpers require GitHub artifact attestations tied to the official repository, signer workflow, release tag, and source commit, and reject self-hosted signer runners. Packages include signed verification bundles. Docker pins the verified immutable image digest. Updates remain owner-initiated and backup-confirmed; GitHub CLI is required by these helpers.
-- Source and standalone packaging include the new backend modules while excluding companion state and keys. Companion dependencies receive their own Dependabot checks.
-- Updated pinned actions: CodeQL **4.38.1**, Docker Buildx setup **4.4.1**, Docker build/push **7.4.0**, and QEMU setup **4.4.0**. CodeQL actions update together and are enforced by the security contract.
-- Release promotion uses a merge commit, then fast-forwards dev to the reviewed main commit. This preserves shared ancestry and prevents already-released development commits from appearing ahead of main again.
-- Expanded backend, browser, profile, recovery, and security regression coverage, including the v1.3.0 upgrade. Fixed relative-time fixture races, contrast scans during CSS transitions, updater deadline timing, slow first-use Windows startup, and mock webhook/application port collisions. Updater fixtures also cover delayed health and retries.
+Source installations require Node.js 22.13 or newer. Standalone packages include their server runtime. The optional auto-buy feature remains experimental: it requires an existing reusable saved card, explicit owner authorization, and a separately running companion. Authenticated live checkout compatibility remains unverified with a real owner account; automated tests use isolated fixtures. No automatic update or purchase is performed by this patch.
 
-## Upgrading from v1.3.0
-
-1. Use Prepare safe update and test the backup before replacing files. Keep the compatible pre-upgrade database **and pre-upgrade encryption key** for rollback. Stop an existing companion and update it to the matching version before reconnecting.
-2. Follow the installation-specific update procedure, restart GearBeacon, and hard-refresh the browser. Source and companion installs require Node.js 22.13 or newer; standalone packages include their server runtime.
-3. Startup validates a safety backup before upgrading **schema v13 to v15**. Existing watches, rules, collections, history, settings, encrypted integration secrets, and owner credentials are preserved. Existing browser sessions are signed out once; sign in again to continue.
-4. If notifications use a hostname resolving to a private LAN/VPN address, approve the exact hostname in Settings > Security > Sessions. Review access configuration if the removed insecure remote override was previously used.
-5. On Windows, the upgraded installation key is tied to its original account and DPAPI profile. Prepare an encrypted data export before moving machines or changing service identity; copying the wrapped key alone is insufficient.
-
-Recovery exports use **format v10**. Supported older exports remain importable. Portable exports exclude owner credentials, MFA material, browser sessions, private-network approvals, and local integration secrets. Purchase instructions restore paused; pair the companion again on a restored installation. Companion session files and keys stay on the companion host and are excluded from GearBeacon backups.
-
-Older applications cannot open a schema-v15 database, a format-v10 export, or a DPAPI-wrapped key. Rollback requires the compatible pre-upgrade database, pre-upgrade key, and matching older application. Update helpers do not automatically restore a database.
-
-[Full comparison: v1.3.0…v1.4.0](https://github.com/alexphillips-dev/GearBeacon/compare/v1.3.0...v1.4.0)
+[Full comparison: v1.4.0…v1.4.1](https://github.com/alexphillips-dev/GearBeacon/compare/v1.4.0...v1.4.1)
 
 GearBeacon remains independent from Ubiquiti. UniFi and Ubiquiti are trademarks of Ubiquiti Inc.

@@ -68,6 +68,19 @@ try {
       if ($case -notin @('checksum','provenance','missing-bundle')) { Assert (($result -join ' ').Contains('matching secrets.key')) 'Recovery instructions omitted the compatible database/key requirement.' }
     }
   }
+  $installerPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../deploy/install-windows-service.ps1'))
+  $parseErrors = $null
+  $tokens = $null
+  $installerAst = [Management.Automation.Language.Parser]::ParseFile($installerPath, [ref]$tokens, [ref]$parseErrors)
+  Assert ($parseErrors.Count -eq 0) 'Windows installer has PowerShell syntax errors.'
+  $webFunction = $installerAst.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Install-GearBeaconWeb' }, $true)
+  Assert ($null -ne $webFunction) 'Windows installer web replacement function is missing.'
+  . ([scriptblock]::Create($webFunction.Extent.Text))
+  Set-Content -LiteralPath "$install/web/obsolete.html" -Value 'old UI fixture'
+  Install-GearBeaconWeb -SourceDir "$fixture/$name" -DestinationDir $install
+  Assert (-not (Test-Path -LiteralPath "$install/web/obsolete.html")) 'Windows reinstall kept an obsolete web file.'
+  Assert (-not (Test-Path -LiteralPath "$install/web/web")) 'Windows reinstall nested the new web directory.'
+  Assert ((Get-Content -LiteralPath "$install/web/index.html" -Raw).Contains('new UI fixture')) 'Windows reinstall did not serve the new web files.'
   Write-Host 'Windows updater tests passed: checksum, stop/restart failures, wrong app/version, unreachable health, metadata and successful startup.'
 } finally {
   $resolved = [IO.Path]::GetFullPath($fixture)

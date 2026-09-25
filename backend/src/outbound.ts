@@ -28,6 +28,11 @@ function normalizePrivateHosts(value) {
     return bare;
   }))];
 }
+// Keep the signal alive while callers consume the response body. fetch() itself
+// resolves when headers arrive, which is too early to end a Store deadline.
+async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
+  return fetch(url, { ...options, signal:AbortSignal.timeout(timeoutMs) });
+}
 async function notificationFetch(url, options = {}, timeoutMs = 10000, { allowedUrls = [], privateHosts = [], lookup = dns.lookup } = {}) {
   const target = new URL(url);
   if (!['http:','https:'].includes(target.protocol) || target.username || target.password || !allowedUrls.some(value => value && new URL(value).origin === target.origin)) throw new Error('Notification destination is not configured.');
@@ -57,8 +62,11 @@ async function notificationFetch(url, options = {}, timeoutMs = 10000, { allowed
       response.on('error',reject);
       response.on('end',() => resolve(new Response([204,205,304].includes(response.statusCode) ? null : Buffer.concat(chunks), { status:response.statusCode, headers:response.headers })));
     });
-    request.on('error',() => reject(new Error('Notification request failed or was blocked. Check the destination, TLS certificate, and private-host approval.')));
+    request.on('error',(err) => {
+      const networkCodes = new Set(['ECONNREFUSED','ECONNRESET','ETIMEDOUT','EHOSTUNREACH','ENETUNREACH','EPIPE','ABORT_ERR']);
+      reject(new Error(networkCodes.has(err?.code) ? 'Notification network connection failed.' : 'Notification request failed or was blocked. Check the destination, TLS certificate, and private-host approval.'));
+    });
     request.end(options.body);
   });
 }
-module.exports = { notificationFetch, normalizePrivateHosts, addressPolicy };
+module.exports = { notificationFetch, normalizePrivateHosts, addressPolicy, fetchWithTimeout };

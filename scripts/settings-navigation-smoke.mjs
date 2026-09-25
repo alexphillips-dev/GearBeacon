@@ -133,6 +133,30 @@ export async function testSettingsNavigation({ evaluate, waitForBrowser, reloadB
   })()`);
   assert(operationsRecovery.visibleError && operationsRecovery.recovered && operationsRecovery.warningTarget === 'notifications/channels' && operationsRecovery.bannerTarget === 'operations/overview', `Operations errors or shortcuts failed across sections: ${JSON.stringify(operationsRecovery)}`);
 
+  const liveOperations = await evaluate(`(async () => {
+    const originalApi=api; const snapshot=app.operations;
+    try {
+      activateSettingsTab('operations'); activateSettingsSection('operations','delivery');
+      await refreshOperations();
+      const action=document.querySelector('#operationsDelivery [data-settings-link="notifications"]');
+      action.focus();
+      app.lastOperationsRefresh=0;
+      let operationsCalls=0;
+      api=async(path,options)=>{
+        if(path==='/api/operations') {
+          operationsCalls++;
+          return {...snapshot,notifications:{...snapshot.notifications,queue:{...snapshot.notifications.queue,pending:37}}};
+        }
+        return originalApi(path,options);
+      };
+      await performRefresh(false);
+      await new Promise(resolve=>setTimeout(resolve,50));
+      return {operationsCalls,pending:document.querySelector('#operationsDelivery dd')?.textContent,
+        focused:document.activeElement?.dataset.settingsLink,visible:!document.getElementById('settingsOperationsDeliveryPanel').hidden};
+    } finally { api=originalApi; await refreshOperations(); }
+  })()`);
+  assert(liveOperations.operationsCalls===1 && liveOperations.pending==='37' && liveOperations.focused==='notifications' && liveOperations.visible, `Active Operations did not refresh its live counts or preserve keyboard focus: ${JSON.stringify(liveOperations)}`);
+
   // Selection is saved independently for every parent, and restored before a reload displays it.
   for (const [category, children] of Object.entries(sections)) {
     await evaluate(`activateSettingsTab('${category}'); activateSettingsSection('${category}','${children.at(-1)}')`);
