@@ -205,12 +205,26 @@ try {
   // A future delivery job must remain queued across restart.
   let config = await fetchJson('/api/config');
   config = await fetchJson('/api/config', { method:'PUT', body:JSON.stringify({
-    config:{ ...config.config, digestEnabled:true, digestTime:'09:00', secondaryBackupDir:secondaryDir, secondaryEncryptedExports:true, channelEnabled:{ ...config.config.channelEnabled, webhook:true } },
+    config:{ ...config.config, digestEnabled:true, digestTime:'09:00', backupRetention:1, secondaryBackupDir:secondaryDir, secondaryEncryptedExports:true, channelEnabled:{ ...config.config.channelEnabled, webhook:true } },
     secrets:{ webhookUrl:'http://127.0.0.1:9/fault-test', secondaryBackupPassphrase:'v19 secondary fault passphrase' },
   }) });
   await post('/api/watch', { slug:'u7-pro-xgs' });
   await post('/api/mock/product/u7-pro-xgs', { status:'Available' });
   assert((await post('/api/check')).notifications === 1, 'Restock did not create a queued notification for restart testing.');
+  const checkedProcess = child;
+  child = null;
+  checkedProcess.kill('SIGKILL');
+  assert(await waitForChildExit(checkedProcess, 3000), 'Restock test server did not stop after SIGKILL.');
+  const committed = new DatabaseSync(databaseFile);
+  let persistedStock, restockEvents, persistedJobs;
+  try {
+    persistedStock = JSON.parse(committed.prepare("SELECT data_json FROM products WHERE region='us' AND slug='u7-pro-xgs'").get()?.data_json || '{}').inStock;
+    restockEvents = committed.prepare("SELECT COUNT(*) AS count FROM events WHERE region='us' AND slug='u7-pro-xgs' AND type='restock'").get().count;
+    persistedJobs = committed.prepare("SELECT COUNT(*) AS count FROM notification_queue WHERE region='us' AND status='pending'").get().count;
+  } finally { committed.close(); }
+  assert(persistedStock === true && restockEvents === 1 && persistedJobs >= 1, `Restock observation, event, and delivery job were not committed together before the check response: ${JSON.stringify({ persistedStock, restockEvents, persistedJobs })}`);
+  await startServer({ GEARBEACON_MOCK_OVERRIDES_JSON:JSON.stringify(persistentOverrides) });
+  assert((await fetchJson('/api/activity?type=restock&search=u7-pro-xgs')).count === 1, 'Restart duplicated the committed restock event.');
   const queuedBefore = (await fetchJson('/api/status')).notifications.queue;
   assert(queuedBefore.pending >= 1 && new Date(queuedBefore.nextDeliveryAt) > new Date(), 'Notification was not held for the future digest.');
   await stopServer();
@@ -220,16 +234,23 @@ try {
   await mkdir(secondaryDir, { recursive:true });
   const stamp = '2020-01-01T00-00-00-000Z';
   const uuid = '00000000-0000-4000-8000-000000000001';
+  const ownerDb = new DatabaseSync(databaseFile);
+  let ownerId;
+  try {
+    ownerId = ownerDb.prepare("SELECT value FROM meta WHERE key='secondary_backup_owner_id'").get()?.value || uuid;
+    ownerDb.prepare("INSERT INTO meta(key,value) VALUES('secondary_backup_owner_id',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(ownerId);
+  } finally { ownerDb.close(); }
   const stalePrimary = `manual-${stamp}.sqlite3.tmp-999999999-${uuid}`;
   const staleJournal = `${stalePrimary}-journal`;
-  const staleSecondary = `manual-${stamp}.sqlite3.tmp-999999999`;
-  const staleEncrypted = `manual-${stamp}.encrypted.gearbeacon.json.tmp-999999999`;
+  const staleSecondary = `gearbeacon-${ownerId}-manual-${stamp}.sqlite3.tmp-999999999`;
+  const staleEncrypted = `gearbeacon-${ownerId}-manual-${stamp}.encrypted.gearbeacon.json.tmp-999999999`;
+  const legacySecondary = `manual-${stamp}.sqlite3.tmp-999999999`;
   const recentPrimary = `scheduled-${stamp}.sqlite3.tmp-999999999-${uuid}`;
   const activePrimary = `pre-import-${stamp}.sqlite3.tmp-${process.pid}-${uuid}`;
   const unrelated = `notes-${stamp}.sqlite3.tmp-999999999-${uuid}`;
   const matchingDirectory = `manual-${stamp}.sqlite3.tmp-999999999-00000000-0000-4000-8000-000000000002`;
   const old = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
-  for (const [directory, name] of [[backupDirectory,stalePrimary],[backupDirectory,staleJournal],[secondaryDir,staleSecondary],[secondaryDir,staleEncrypted],[backupDirectory,activePrimary],[backupDirectory,unrelated]]) {
+  for (const [directory, name] of [[backupDirectory,stalePrimary],[backupDirectory,staleJournal],[secondaryDir,staleSecondary],[secondaryDir,staleEncrypted],[secondaryDir,legacySecondary],[backupDirectory,activePrimary],[backupDirectory,unrelated]]) {
     const file = join(directory,name);
     await writeFile(file,'temporary backup fixture');
     await utimes(file,old,old);
@@ -241,6 +262,7 @@ try {
   const primaryAfter = await readdir(backupDirectory);
   const secondaryAfter = await readdir(secondaryDir);
   assert(!primaryAfter.includes(stalePrimary) && !primaryAfter.includes(staleJournal) && !secondaryAfter.includes(staleSecondary) && !secondaryAfter.includes(staleEncrypted), 'Startup left abandoned backup temporary files or SQLite sidecars.');
+  assert(secondaryAfter.includes(legacySecondary), 'Startup removed an unowned legacy-style file from shared secondary storage.');
   assert(primaryAfter.includes(recentPrimary) && primaryAfter.includes(activePrimary) && primaryAfter.includes(unrelated) && primaryAfter.includes(matchingDirectory), 'Startup deleted a recent, active, unrelated, or non-file entry.');
   assert(completedBefore.every(name=>primaryAfter.includes(name)), 'Startup deleted a completed backup.');
   const queuedAfter = (await fetchJson('/api/status')).notifications.queue;
@@ -254,7 +276,7 @@ try {
   await unlink(secondaryDir);
   await mkdir(secondaryDir);
   const unrelatedSecondary = Array.from({ length:12 }, (_, index) => `other-app-${index}.sqlite3`);
-  unrelatedSecondary.push('shared-settings.json');
+  unrelatedSecondary.push('shared-settings.json', `manual-${stamp}.encrypted.gearbeacon.json`);
   for (const name of unrelatedSecondary) {
     const file = join(secondaryDir, name);
     await writeFile(file, `unrelated fixture: ${name}`);
@@ -265,6 +287,9 @@ try {
   const preservedCopy = await post('/api/data/backup');
   assert(preservedCopy.backup.secondary?.ok, 'Backup failed in a shared secondary destination.');
   assert(preservedCopy.summary.secondary.count === 1, 'Unrelated files were counted as GearBeacon recovery copies.');
+  const replacementCopy = await post('/api/data/backup');
+  assert(replacementCopy.backup.secondary?.ok && replacementCopy.summary.secondary.count === 1, 'Secondary retention did not keep one owned recovery copy.');
+  assert(!(await readdir(secondaryDir)).includes(preservedCopy.backup.secondary.filename), 'Secondary retention kept an obsolete owned recovery copy.');
   for (const name of unrelatedSecondary) assert((await readFile(join(secondaryDir, name), 'utf8')) === `unrelated fixture: ${name}`, `Secondary retention changed ${name}.`);
   assert(((await stat(secondaryDir)).mode & 0o777) === secondaryMode, 'Backup changed an existing secondary directory mode.');
 

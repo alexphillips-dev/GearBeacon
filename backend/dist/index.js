@@ -506,14 +506,36 @@ function schemaVersion() {
 }
 const BACKUP_FILE_BASE = String.raw `(?:manual|scheduled|pre-import|pre-update-[a-zA-Z0-9._-]+)-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z`;
 const PRIMARY_BACKUP_FILE = new RegExp(`^${BACKUP_FILE_BASE}\\.sqlite3$`, 'i');
-const SECONDARY_BACKUP_FILE = new RegExp(`^${BACKUP_FILE_BASE}(?:\\.sqlite3|\\.encrypted\\.gearbeacon\\.json)$`, 'i');
+const SECONDARY_BACKUP_FILE = new RegExp(`^(?:gearbeacon-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}-)?${BACKUP_FILE_BASE}(?:\\.sqlite3|\\.encrypted\\.gearbeacon\\.json)$`, 'i');
+function secondaryBackupOwnerId() {
+    const saved = getMeta('secondary_backup_owner_id');
+    if (saved && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(saved))
+        return saved;
+    const created = crypto.randomUUID();
+    setMeta('secondary_backup_owner_id', created);
+    return created;
+}
+function secondaryBackupNames() {
+    const owned = new Set();
+    if (!tableExists('backup_log'))
+        return owned;
+    for (const row of db.prepare("SELECT detail FROM backup_log WHERE status='validated' AND detail IS NOT NULL").all()) {
+        const secondary = safeJsonParse(row.detail, null)?.secondary;
+        if (secondary?.ok && typeof secondary.filename === 'string')
+            owned.add(secondary.filename);
+    }
+    return owned;
+}
 function listBackups(directory = BACKUP_DIR) {
     if (!directory || !fs.existsSync(directory))
         return [];
     try {
-        const pattern = path.resolve(directory) === path.resolve(BACKUP_DIR) ? PRIMARY_BACKUP_FILE : SECONDARY_BACKUP_FILE;
+        const primary = path.resolve(directory) === path.resolve(BACKUP_DIR);
+        const pattern = primary ? PRIMARY_BACKUP_FILE : SECONDARY_BACKUP_FILE;
+        const owned = primary ? null : secondaryBackupNames();
+        const ownerPrefix = primary ? '' : `gearbeacon-${secondaryBackupOwnerId()}-`;
         return fs.readdirSync(directory)
-            .filter((name) => pattern.test(name))
+            .filter((name) => pattern.test(name) && (primary || name.startsWith(ownerPrefix) || owned.has(name)))
             .flatMap((name) => {
             const full = path.join(directory, name);
             try {
@@ -562,7 +584,8 @@ function backupLocationsShareDevice() {
 function trimSecondaryBackups() {
     if (!SECONDARY_BACKUP_DIR)
         return;
-    for (const old of listBackups(SECONDARY_BACKUP_DIR).slice(BACKUP_RETENTION)) {
+    const ownerPrefix = `gearbeacon-${secondaryBackupOwnerId()}-`;
+    for (const old of listBackups(SECONDARY_BACKUP_DIR).filter((item) => item.name.startsWith(ownerPrefix)).slice(BACKUP_RETENTION)) {
         try {
             fs.unlinkSync(old.path);
         }
@@ -573,7 +596,9 @@ const BACKUP_TEMP_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const BACKUP_TEMP_SWEEP_MS = 6 * 60 * 60 * 1000;
 const BACKUP_TEMP_BASE = BACKUP_FILE_BASE;
 const PRIMARY_BACKUP_TEMP = new RegExp(`^${BACKUP_TEMP_BASE}\\.sqlite3\\.tmp-(\\d+)-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?:-(?:journal|wal|shm))?$`, 'i');
-const SECONDARY_BACKUP_TEMP = new RegExp(`^${BACKUP_TEMP_BASE}(?:\\.sqlite3|\\.encrypted\\.gearbeacon\\.json)\\.tmp-(\\d+)$`, 'i');
+function secondaryBackupTempPattern() {
+    return new RegExp(`^gearbeacon-${secondaryBackupOwnerId()}-${BACKUP_TEMP_BASE}(?:\\.sqlite3|\\.encrypted\\.gearbeacon\\.json)\\.tmp-(\\d+)$`, 'i');
+}
 function processMayBeRunning(pid) {
     if (!Number.isSafeInteger(pid) || pid < 1)
         return true;
@@ -618,7 +643,7 @@ function cleanupBackupTempDirectory(directory, pattern, now) {
 function cleanupAbandonedBackupTemps() {
     const now = Date.now();
     const removed = cleanupBackupTempDirectory(BACKUP_DIR, PRIMARY_BACKUP_TEMP, now)
-        + cleanupBackupTempDirectory(SECONDARY_BACKUP_DIR, SECONDARY_BACKUP_TEMP, now);
+        + (SECONDARY_BACKUP_DIR ? cleanupBackupTempDirectory(SECONDARY_BACKUP_DIR, secondaryBackupTempPattern(), now) : 0);
     if (removed)
         writeAppLog('info', 'backups', `Removed ${removed} abandoned backup temporary file(s).`);
 }
@@ -636,7 +661,7 @@ function createSecondaryRecoveryCopy(primaryBackup, reason) {
             const passphrase = String(storedSecrets().secondaryBackupPassphrase || '');
             if (passphrase.length < 12)
                 throw new Error('Scheduled encrypted recovery copies require a saved passphrase of at least 12 characters.');
-            filename = `${safeFilePart(reason)}-${stamp}.encrypted.gearbeacon.json`;
+            filename = `gearbeacon-${secondaryBackupOwnerId()}-${safeFilePart(reason)}-${stamp}.encrypted.gearbeacon.json`;
             destination = path.join(SECONDARY_BACKUP_DIR, filename);
             temporary = `${destination}.tmp-${process.pid}`;
             const encrypted = encryptSnapshot(exportSnapshot(), passphrase);
@@ -648,7 +673,7 @@ function createSecondaryRecoveryCopy(primaryBackup, reason) {
         else {
             if (!primaryBackup?.path)
                 throw new Error('A validated primary backup is required for the recovery copy.');
-            filename = primaryBackup.filename;
+            filename = `gearbeacon-${secondaryBackupOwnerId()}-${primaryBackup.filename}`;
             destination = path.join(SECONDARY_BACKUP_DIR, filename);
             temporary = `${destination}.tmp-${process.pid}`;
             fs.copyFileSync(primaryBackup.path, temporary, fs.constants.COPYFILE_EXCL);
@@ -3143,7 +3168,7 @@ function recordInventoryCoverage(at = isoNow()) {
     const previous = coverageSessions.get(region);
     const continuous = previous && new Date(at).getTime() - new Date(previous.at).getTime() <= coverageToleranceMs();
     const pending = new Set(db.prepare('SELECT DISTINCT slug FROM pending_transitions WHERE region=?').all(region).map((row) => row.slug));
-    db.exec('BEGIN IMMEDIATE');
+    db.exec('SAVEPOINT inventory_coverage');
     try {
         let id;
         if (continuous) {
@@ -3168,11 +3193,12 @@ function recordInventoryCoverage(at = isoNow()) {
             else
                 insert.run(region, product.slug, at, at, product.status, product.inStock ? 1 : 0, price, priceValue(price), REGIONS[region].currency);
         }
-        db.exec('COMMIT');
+        db.exec('RELEASE inventory_coverage');
         coverageSessions.set(region, { id, at });
     }
     catch (err) {
-        db.exec('ROLLBACK');
+        db.exec('ROLLBACK TO inventory_coverage');
+        db.exec('RELEASE inventory_coverage');
         throw err;
     }
 }
@@ -3305,7 +3331,7 @@ function evaluateCollectionAlerts() {
             continue; // Unknown never rearms.
         const previous = db.prepare('SELECT ready_state FROM watch_collections WHERE region=? AND id=?').get(currentRegion(), collection.id)?.ready_state;
         const shouldAlert = !collection.archived && collection.notifyReady && result.ready && previous === 0;
-        db.exec('BEGIN IMMEDIATE');
+        db.exec('SAVEPOINT collection_readiness');
         const eventsBefore = state.events.slice();
         try {
             db.prepare('UPDATE watch_collections SET ready_state=? WHERE region=? AND id=?').run(result.ready ? 1 : 0, currentRegion(), collection.id);
@@ -3320,10 +3346,11 @@ function evaluateCollectionAlerts() {
                 recordEvent(event);
                 enqueueAlert(event);
             }
-            db.exec('COMMIT');
+            db.exec('RELEASE collection_readiness');
         }
         catch (err) {
-            db.exec('ROLLBACK');
+            db.exec('ROLLBACK TO collection_readiness');
+            db.exec('RELEASE collection_readiness');
             state.events = eventsBefore;
             throw err;
         }
@@ -3382,6 +3409,8 @@ async function checkStore(reason = 'timer') {
     if (monitor.checking)
         return { skipped: true, reason: 'already checking' };
     const startedAt = Date.now();
+    let observationSnapshot = null;
+    let observationOpen = false;
     monitor.checking = true;
     monitor.lastCheckAt = isoNow();
     monitor.lastError = null;
@@ -3396,6 +3425,14 @@ async function checkStore(reason = 'timer') {
         if (!MOCK_MODE && knownCount >= 20 && catalogCount < Math.max(10, Math.floor(knownCount * MIN_CATALOG_RATIO))) {
             throw new Error(`Catalog health guard rejected ${catalogCount} products; previous baseline has ${knownCount}. No stock state was changed.`);
         }
+        const region = currentRegion();
+        observationSnapshot = {
+            products: state.products, events: state.events.slice(),
+            monitor: { productCount: monitor.productCount, lastSuccessAt: monitor.lastSuccessAt, consecutiveFailures: monitor.consecutiveFailures, catalogHealth: monitor.catalogHealth, pendingChanges: monitor.pendingChanges },
+            recoveryWindow: recoveryWindows[region],
+        };
+        db.exec('SAVEPOINT monitor_observation');
+        observationOpen = true;
         const incoming = {};
         const notifications = [];
         const prefs = notificationPreferences();
@@ -3542,13 +3579,13 @@ async function checkStore(reason = 'timer') {
         monitor.pendingChanges = Number(db.prepare('SELECT COUNT(*) AS count FROM pending_transitions WHERE region=?').get(currentRegion())?.count || 0);
         pruneProductObservations();
         pruneEvents();
-        saveStateSoon();
         for (const event of notifications)
             enqueueAlert(event);
         if (!monitor.partialErrors.length)
             autoBuy.observe(currentRegion(), state.products);
         if (!monitor.partialErrors.length)
             evaluateCollectionAlerts();
+        persistState(states[region], region);
         try {
             const stat = typeof fs.statfsSync === 'function' ? fs.statfsSync(USER_DATA_DIR) : null;
             const free = stat ? Number(stat.bavail) * Number(stat.bsize) : null;
@@ -3556,16 +3593,32 @@ async function checkStore(reason = 'timer') {
                 enqueueOperationalAlert('disk', 'Storage space is low', `Only ${Math.max(0, Math.round(free / 1024 / 1024))} MB remains in the GearBeacon data filesystem.`);
         }
         catch { }
-        console.log(`[monitor] success: ${monitor.productCount} products, ${notifications.length} notification event(s)`);
         writeAppLog('info', 'monitor', `Store check succeeded for ${currentRegion()}.`, { reason, products: monitor.productCount, notificationEvents: notifications.length, catalogHealth: monitor.catalogHealth, pendingChanges: monitor.pendingChanges });
         if (monitor.partialErrors.length)
             preserveRecoveryWindow(currentRegion(), startedAt);
         recordMonitorCheck('success', startedAt, monitor.partialErrors.length ? 'Catalog was usable but one or more categories failed.' : null);
-        if (!monitor.partialErrors.length)
-            recoverFailedDeliveriesAfterOutage(currentRegion());
+        db.exec('RELEASE monitor_observation');
+        observationOpen = false;
+        console.log(`[monitor] success: ${monitor.productCount} products, ${notifications.length} notification event(s)`);
+        if (!monitor.partialErrors.length) {
+            try {
+                recoverFailedDeliveriesAfterOutage(currentRegion());
+            }
+            catch (err) {
+                writeAppLog('error', 'notifications', 'Delivery recovery after Store check failed.', { error: String(err?.message || err) });
+            }
+        }
         return { ok: true, products: monitor.productCount, notifications: notifications.length, catalogHealth: monitor.catalogHealth, pendingChanges: monitor.pendingChanges };
     }
     catch (err) {
+        if (observationOpen) {
+            db.exec('ROLLBACK TO monitor_observation');
+            db.exec('RELEASE monitor_observation');
+            state.products = observationSnapshot.products;
+            state.events = observationSnapshot.events;
+            Object.assign(monitor, observationSnapshot.monitor);
+            recoveryWindows[currentRegion()] = observationSnapshot.recoveryWindow;
+        }
         coverageSessions.delete(currentRegion());
         preserveRecoveryWindow(currentRegion(), startedAt);
         monitor.consecutiveFailures += 1;

@@ -2036,6 +2036,10 @@ async function refreshOperations() {
   try {
     const ops = await api('/api/operations');
     if (requestVersion !== operationsRefreshVersion) return;
+    const focused = document.activeElement;
+    const focusContainer = focused?.closest('#operationsSummary, #securityWarnings, #operationsMonitoring, #operationsDelivery, #operationsBackups, #operationsGrid');
+    const focusIndex = focusContainer ? [...focusContainer.querySelectorAll('button')].indexOf(focused) : -1;
+    const focusData = focusIndex < 0 ? null : Object.fromEntries(Object.entries(focused.dataset).filter(([key]) => key !== ''));
     app.operations = ops;
     app.lastOperationsRefresh = Date.now();
     $('operationsError').classList.add('hidden');
@@ -2055,6 +2059,11 @@ async function refreshOperations() {
     const secondary = ops.backups.secondary || {};
     $('operationsMonitoring').insertAdjacentHTML('beforeend', `<article class="settings-card"><span class="settings-kicker">Monitoring confidence</span><h3>${confidence.count ? `${confidence.count} pending change${confidence.count === 1 ? '' : 's'}` : 'No pending changes'}</h3><p>${confidence.count ? 'GearBeacon is preserving last-known-good values until another complete observation confirms these changes.' : 'Every recorded transition is confirmed under the current monitoring policy.'}</p>${pendingRows ? `<div class="failure-list">${pendingRows}</div>` : ''}</article>`);
     $('operationsBackups').insertAdjacentHTML('beforeend', `<article class="settings-card"><span class="settings-kicker">Recovery copy</span><h3>${secondary.configured ? `${secondary.count} secondary cop${secondary.count === 1 ? 'y' : 'ies'}` : 'Not configured'}</h3><dl class="settings-details"><div><dt>Format</dt><dd>${secondary.configured ? secondary.encrypted ? 'Encrypted export' : 'Validated SQLite' : '—'}</dd></div><div><dt>Latest</dt><dd>${secondary.latest ? escapeHtml(relativeTime(secondary.latest.createdAt)) : 'None'}</dd></div><div><dt>Separate device</dt><dd>${secondary.sameFilesystem === null ? 'Unknown' : secondary.sameFilesystem ? 'No' : 'Yes'}</dd></div></dl><div class="settings-actions"><button data-settings-link="data" data-settings-target="schedule">Recovery settings</button></div></article>`);
+    if (focusIndex >= 0) {
+      const buttons = [...focusContainer.querySelectorAll('button')];
+      const sameAction = buttons.find((button) => Object.entries(focusData).every(([key, value]) => button.dataset[key] === value));
+      (sameAction || buttons[Math.min(focusIndex, buttons.length - 1)] || $('settingsTabOperations')).focus({ preventScroll:true });
+    }
     renderAttentionBanner();
     await refreshLogs();
   } catch (err) {
@@ -2406,7 +2415,7 @@ async function performRefresh(background) {
     renderAttentionBanner();
     if (wasDisconnected) toast('Connection restored', 'success');
     if (app.activeTab === 'activity') await refreshActivity(app.activity.page || 1, { background:true });
-    if (Date.now() - app.lastOperationsRefresh > 60000 && !(app.activeTab === 'settings' && app.activeSettingsTab === 'operations')) refreshOperations();
+    if (wasDisconnected || Date.now() - app.lastOperationsRefresh > 60000) refreshOperations();
   } catch (err) {
     if (region !== app.currentRegion || revision !== app.dataRevision || background && document.hidden) return;
     if (/Region must be one of/i.test(err.message) && app.currentRegion) {
