@@ -1496,22 +1496,7 @@ const autoBuy = createAutoBuy({
   },
   notify:(region,title,detail) => regionContext.run(region,()=>enqueueOperationalAlert('auto-buy',title,detail,region)),
 });
-const saveTimers = new Map();
-function saveStateSoon() {
-  const region = currentRegion();
-  if (saveTimers.has(region)) return;
-  const timer = setTimeout(() => {
-    saveTimers.delete(region);
-    persistState(states[region], region);
-  }, 100);
-  saveTimers.set(region, timer);
-}
-
 function flushState(region = currentRegion()) {
-  if (saveTimers.has(region)) {
-    clearTimeout(saveTimers.get(region));
-    saveTimers.delete(region);
-  }
   persistState(states[region], region);
 }
 
@@ -5733,7 +5718,6 @@ async function handleRegionApi(req, res, url) {
         throw err;
       }
       state.watchlist.push(...additions);
-      saveStateSoon();
       writeAppLog('info', 'watchlist', `Imported ${additions.length} product${additions.length === 1 ? '' : 's'} into the ${REGIONS[currentRegion()].label} watchlist.`, { slugs:additions });
     }
     return sendJson(res, 200, {
@@ -5783,7 +5767,6 @@ async function handleRegionApi(req, res, url) {
       db.exec('COMMIT');
     } catch (err) { db.exec('ROLLBACK'); throw err; }
     if (!alreadyWatched) state.watchlist.push(slug);
-    saveStateSoon();
     return sendJson(res,200,{ok:true,alreadyWatched,alreadyMember,collectionId:id || null,product:productForApi(state.products[slug]),...watchWorkspace()});
   }
 
@@ -5799,7 +5782,6 @@ async function handleRegionApi(req, res, url) {
       state.watchlist.push(slug);
     }
     if (rule) saveWatchRule(slug, rule);
-    saveStateSoon();
     return sendJson(res, 200, { ok: true, product: productForApi(state.products[slug]), watchlist: state.watchlist });
   }
 
@@ -5825,7 +5807,6 @@ async function handleRegionApi(req, res, url) {
       for (const slug of slugs) removeWatch.run(currentRegion(), slug);
       baselineCollections(currentRegion(), affected);
     }
-    saveStateSoon();
     return sendJson(res, 200, { ok:true, action, affected:slugs.length, pausedUntil, products:slugs.map((slug) => productForApi(state.products[slug])).filter(Boolean) });
   }
 
@@ -5858,7 +5839,6 @@ async function handleRegionApi(req, res, url) {
     state.watchlist = state.watchlist.filter((x) => x !== slug);
     db.prepare('DELETE FROM watchlist WHERE region=? AND slug=?').run(currentRegion(), slug);
     baselineCollections(currentRegion(), affected);
-    saveStateSoon();
     return sendJson(res, 200, { ok: true, watchlist: state.watchlist });
   }
 

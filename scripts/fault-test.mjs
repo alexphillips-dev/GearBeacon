@@ -159,6 +159,23 @@ try {
   let status = await fetchJson('/api/status');
   assert(status.version === '1.4.0' && status.productCount === 6, 'Fault suite did not start on the V1.4.0 six-product baseline.');
 
+  // Watch writes are already committed before the response. An unrelated SQLite
+  // writer must not trigger a delayed whole-state save that crashes the server.
+  await post('/api/watch', { slug:'uvc-ai-turret' });
+  const writer = new DatabaseSync(databaseFile);
+  writer.exec('PRAGMA busy_timeout=5000');
+  writer.exec('BEGIN IMMEDIATE');
+  try {
+    await delay(6000);
+    assert(child?.exitCode === null, `A deferred watch save crashed while SQLite was locked: ${output}`);
+  } finally { writer.exec('ROLLBACK'); writer.close(); }
+  const durableWatch = new DatabaseSync(databaseFile, { readOnly:true });
+  try {
+    assert(Boolean(durableWatch.prepare("SELECT 1 FROM watchlist WHERE region='us' AND slug='uvc-ai-turret'").get()), 'The watch was not committed before the API response.');
+  } finally { durableWatch.close(); }
+  assert((await fetchJson('/api/status')).version === '1.4.0', 'Server did not recover after an unrelated SQLite writer released its lock.');
+  await fetchJson('/api/watch/uvc-ai-turret', { method:'DELETE' });
+
   // 429 handling must preserve state and never schedule before Retry-After.
   await post('/api/mock/fault', { rateLimitOnceSeconds:120 });
   const limited = await post('/api/check', {}, 502);

@@ -6,6 +6,7 @@ The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. 
 
 Released September 21, 2026. Includes every change since v1.3.0. See the [complete release notes](RELEASE_NOTES.md).
 
+- Removed a redundant delayed whole-state save after watchlist changes. Watch and rule updates already commit before the API responds; the extra timer could crash the server if another SQLite writer held a lock.
 - Store checks now commit product state, activity, delivery jobs, and observation evidence together before reporting success, so an abrupt stop cannot leave a recorded restock with stale stock data.
 - Secondary recovery copies now carry an installation ID. Retention and abandoned-temp cleanup touch only copies made by that installation; older copies remain available when recorded in backup history, but must be removed manually when no longer needed.
 - Reinstalling the Windows service now replaces its web assets without nesting a second `web` directory. Operations refreshes visible counts and warnings during background polling and on reconnection while preserving keyboard focus.

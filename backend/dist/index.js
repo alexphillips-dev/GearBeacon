@@ -1648,22 +1648,7 @@ const autoBuy = createAutoBuy({
     },
     notify: (region, title, detail) => regionContext.run(region, () => enqueueOperationalAlert('auto-buy', title, detail, region)),
 });
-const saveTimers = new Map();
-function saveStateSoon() {
-    const region = currentRegion();
-    if (saveTimers.has(region))
-        return;
-    const timer = setTimeout(() => {
-        saveTimers.delete(region);
-        persistState(states[region], region);
-    }, 100);
-    saveTimers.set(region, timer);
-}
 function flushState(region = currentRegion()) {
-    if (saveTimers.has(region)) {
-        clearTimeout(saveTimers.get(region));
-        saveTimers.delete(region);
-    }
     persistState(states[region], region);
 }
 const buildIdCaches = Object.fromEntries(ACTIVE_REGIONS.map((region) => [region, { value: null, fetchedAt: 0 }]));
@@ -6457,7 +6442,6 @@ async function handleRegionApi(req, res, url) {
                 throw err;
             }
             state.watchlist.push(...additions);
-            saveStateSoon();
             writeAppLog('info', 'watchlist', `Imported ${additions.length} product${additions.length === 1 ? '' : 's'} into the ${REGIONS[currentRegion()].label} watchlist.`, { slugs: additions });
         }
         return sendJson(res, 200, {
@@ -6529,7 +6513,6 @@ async function handleRegionApi(req, res, url) {
         }
         if (!alreadyWatched)
             state.watchlist.push(slug);
-        saveStateSoon();
         return sendJson(res, 200, { ok: true, alreadyWatched, alreadyMember, collectionId: id || null, product: productForApi(state.products[slug]), ...watchWorkspace() });
     }
     if (req.method === 'POST' && url.pathname === '/api/watch') {
@@ -6552,7 +6535,6 @@ async function handleRegionApi(req, res, url) {
         }
         if (rule)
             saveWatchRule(slug, rule);
-        saveStateSoon();
         return sendJson(res, 200, { ok: true, product: productForApi(state.products[slug]), watchlist: state.watchlist });
     }
     if (req.method === 'POST' && url.pathname === '/api/watch/bulk') {
@@ -6586,7 +6568,6 @@ async function handleRegionApi(req, res, url) {
                 removeWatch.run(currentRegion(), slug);
             baselineCollections(currentRegion(), affected);
         }
-        saveStateSoon();
         return sendJson(res, 200, { ok: true, action, affected: slugs.length, pausedUntil, products: slugs.map((slug) => productForApi(state.products[slug])).filter(Boolean) });
     }
     if (req.method === 'GET' && url.pathname.startsWith('/api/watch/') && url.pathname.endsWith('/rules')) {
@@ -6626,7 +6607,6 @@ async function handleRegionApi(req, res, url) {
         state.watchlist = state.watchlist.filter((x) => x !== slug);
         db.prepare('DELETE FROM watchlist WHERE region=? AND slug=?').run(currentRegion(), slug);
         baselineCollections(currentRegion(), affected);
-        saveStateSoon();
         return sendJson(res, 200, { ok: true, watchlist: state.watchlist });
     }
     if (req.method === 'GET' && url.pathname === '/api/events') {
