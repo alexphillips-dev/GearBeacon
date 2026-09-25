@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
-import { mkdtemp, mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -280,7 +280,15 @@ try {
   const largeExport = await fetchJson('/api/activity/export?format=json');
   assert(largeExport.events.length === 10000 && largeExport.truncated === true && largeExport.count >= 10050, '10k activity export limit was not enforced or disclosed.');
 
-  console.log('FAULT TEST PASSED: Retry-After, partial catalogs, oscillation, restart persistence, backup/key failures, 500 products, and 10k activity rows are covered.');
+  // A copy that fails after VACUUM created its file must never appear as a backup.
+  const backupDirectory = join(dataDir, 'backups');
+  const backupsBefore = (await readdir(backupDirectory)).sort();
+  const brokenBackupDb = new DatabaseSync(databaseFile);
+  try { brokenBackupDb.exec('DROP TABLE auto_buy_connection'); } finally { brokenBackupDb.close(); }
+  await post('/api/data/backup', {}, 500);
+  assert(JSON.stringify((await readdir(backupDirectory)).sort()) === JSON.stringify(backupsBefore), 'Failed backup left a visible SQLite file or temporary copy.');
+
+  console.log('FAULT TEST PASSED: Retry-After, partial catalogs, oscillation, restart persistence, backup/key failures and cleanup, 500 products, and 10k activity rows are covered.');
 } finally {
   await stopServer();
   await rm(testRoot, { recursive:true, force:true });

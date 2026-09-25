@@ -17,7 +17,7 @@ const { renderEmail, buildMimeEmail, numericPrice } = require('./email');
 const { createAutoBuy, AUTO_BUY_SCHEMA, neutralizeAutoBuyBackup } = require('./autobuy');
 const { createOwnerSecurity } = require('./security');
 const { secureDataDirectory, loadProtectedKey } = require('./key-protection');
-const { notificationFetch, normalizePrivateHosts } = require('./outbound');
+const { notificationFetch, normalizePrivateHosts, fetchWithTimeout } = require('./outbound');
 
 const APP_VERSION = '1.4.0';
 const DATABASE_SCHEMA_VERSION = 15;
@@ -572,21 +572,25 @@ function databaseIntegrity(file = DB_FILE) {
 
 function createDatabaseBackup(reason = 'manual') {
   if (!fs.existsSync(DB_FILE)) return null;
+  let temporary = null;
   try {
     const sourceIntegrity = databaseIntegrity();
     if (!sourceIntegrity.ok) throw new Error(`Database integrity check failed: ${sourceIntegrity.messages.join('; ')}`);
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     const filename = `${safeFilePart(reason)}-${stamp}.sqlite3`;
     const destination = path.join(BACKUP_DIR, filename);
+    if (fs.existsSync(destination)) throw new Error('A backup with this timestamp already exists. Retry the backup.');
+    temporary = `${destination}.tmp-${process.pid}-${crypto.randomUUID()}`;
     db.exec('PRAGMA wal_checkpoint(FULL)');
-    db.exec(`VACUUM INTO '${sqliteQuote(destination)}'`);
-    const backupDb = new DatabaseSync(destination);
+    db.exec(`VACUUM INTO '${sqliteQuote(temporary)}'`);
+    const backupDb = new DatabaseSync(temporary);
     try { neutralizeAutoBuyBackup(backupDb); } finally { backupDb.close(); }
-    const backupIntegrity = databaseIntegrity(destination);
+    const backupIntegrity = databaseIntegrity(temporary);
     if (!backupIntegrity.ok) {
-      try { fs.unlinkSync(destination); } catch {}
       throw new Error(`Backup validation failed: ${backupIntegrity.messages.join('; ')}`);
     }
+    fs.renameSync(temporary, destination);
+    temporary = null;
     trimBackups();
     const size = fs.statSync(destination).size;
     const primary = { filename, path: destination, size, createdAt: isoNow(), reason, validated: true };
@@ -596,6 +600,8 @@ function createDatabaseBackup(reason = 'manual') {
   } catch (err) {
     if (tableExists('backup_log')) db.prepare('INSERT INTO backup_log(filename,reason,status,size,detail,created_at) VALUES(?,?,?,?,?,?)').run(null, reason, 'failed', null, String(err?.message || err).slice(0, 1000), isoNow());
     throw err;
+  } finally {
+    if (temporary && fs.existsSync(temporary)) { try { fs.unlinkSync(temporary); } catch {} }
   }
 }
 
@@ -1306,7 +1312,7 @@ function loadState(region = currentRegion()) {
 }
 
 function persistState(nextState, region = currentRegion(), { replaceEvents = false } = {}) {
-  db.exec('BEGIN IMMEDIATE');
+  db.exec('SAVEPOINT persist_state');
   try {
     const wanted = new Set(nextState.watchlist || []);
     for (const row of db.prepare('SELECT slug FROM watchlist WHERE region=?').all(region)) {
@@ -1326,9 +1332,9 @@ function persistState(nextState, region = currentRegion(), { replaceEvents = fal
         addEvent.run(event.id, region, event.detectedAt || isoNow(), JSON.stringify(event), event.type || null, event.slug || null, event.name || null, event.alertKind || event.type || null);
       }
     }
-    db.exec('COMMIT');
+    db.exec('RELEASE persist_state');
   } catch (err) {
-    try { db.exec('ROLLBACK'); } catch {}
+    try { db.exec('ROLLBACK TO persist_state'); db.exec('RELEASE persist_state'); } catch {}
     throw err;
   }
 }
@@ -1390,7 +1396,7 @@ const autoBuy = createAutoBuy({
     return product ? { ...product, autoBuyFresh:productFreshness(product,region).state === 'confirmed' } : null;
   },
   eligible:(region,slug,collectionId,quantity) => {
-    if (!states[region]?.watchlist.includes(slug) || watchRule(slug,region).purchasedAt) return false;
+    if (!db.prepare('SELECT 1 FROM watchlist WHERE region=? AND slug=?').get(region,slug) || watchRule(slug,region).purchasedAt) return false;
     if (!collectionId) return true;
     const member = db.prepare(`SELECT m.quantity,m.purchased_quantity,c.archived FROM watch_collection_members m
       JOIN watch_collections c ON c.region=m.region AND c.id=m.collection_id WHERE m.region=? AND m.slug=? AND m.collection_id=?`).get(region,slug,collectionId);
@@ -1513,16 +1519,6 @@ function mockCatalog() {
       lastSeenAt: isoNow(),
     }];
   });
-}
-
-async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...options, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 function storeHttpError(response, context) {
@@ -3346,13 +3342,13 @@ function setWatchCollections(slug, ids, region = currentRegion()) {
   const existingIds = affected.slice(unique.length);
   if (unique.length === existingIds.length && unique.every((id) => existingIds.includes(id))) return;
   if (unique.some((id) => !db.prepare('SELECT id FROM watch_collections WHERE region=? AND id=?').get(region, id))) throw new Error('Collection not found in this region.');
-  db.exec('BEGIN IMMEDIATE');
+  db.exec('SAVEPOINT set_watch_collections');
   try {
     for (const id of existingIds) if (!unique.includes(id)) db.prepare('DELETE FROM watch_collection_members WHERE region=? AND collection_id=? AND slug=?').run(region,id,slug);
     for (const id of unique) if (!existingIds.includes(id)) insertCollectionMember(region,id,slug);
     cancelSuppressedItemAlerts(region);
-    db.exec('COMMIT');
-  } catch (err) { db.exec('ROLLBACK'); throw err; }
+    db.exec('RELEASE set_watch_collections');
+  } catch (err) { db.exec('ROLLBACK TO set_watch_collections'); db.exec('RELEASE set_watch_collections'); throw err; }
   baselineCollections(region, affected);
 }
 
@@ -4212,12 +4208,18 @@ function validateSnapshotInsights(regions) {
 
 function importSnapshot(snapshot) {
   const normalized = normalizeImportedSnapshot(snapshot);
+  const importedRegions = Object.keys(normalized.regions).filter((region) => ACTIVE_REGIONS.includes(region));
+  if (!importedRegions.length) throw new Error(`This backup does not contain any configured region (${ACTIVE_REGIONS.join(', ')}).`);
   for (const region of ACTIVE_REGIONS) flushState(region);
   const safety = createDatabaseBackup('pre-import');
-  autoBuy.restore();
   let watchCount = 0;
   let eventCount = 0;
-  const importedRegions = [];
+  const previousStates = new Map(importedRegions.map((region) => [region, states[region]]));
+  const previousPairing = autoBuy.pairingForRollback();
+  let importedConfig = null;
+  let importedSecrets = null;
+  db.exec('BEGIN IMMEDIATE');
+  try {
   for (const [region, regionState] of Object.entries(normalized.regions)) {
     if (!ACTIVE_REGIONS.includes(region)) continue;
     persistState(regionState, region, { replaceEvents:true });
@@ -4246,9 +4248,6 @@ function importSnapshot(snapshot) {
       addHistory.run(region, String(item.slug), observed.toISOString(), String(item.changeType || 'imported').slice(0, 80), item.status ? String(item.status) : null, item.inStock ? 1 : 0, item.price ? String(item.price) : null, priceValue(item.priceValue ?? item.price));
     }
     states[region] = loadState(region);
-    coverageSessions.delete(region);
-    db.exec('BEGIN IMMEDIATE');
-    try {
       db.prepare('DELETE FROM monitor_coverage WHERE region=?').run(region);
       db.prepare('DELETE FROM inventory_history WHERE region=?').run(region);
       const addCoverage = db.prepare('INSERT INTO monitor_coverage(region,started_at,ended_at,checks) VALUES(?,?,?,?)');
@@ -4257,14 +4256,9 @@ function importSnapshot(snapshot) {
       for (const row of regionState.inventoryHistory) addInventory.run(region, row.slug, row.startedAt, row.endedAt, row.status, row.inStock ? 1 : 0, row.price, row.priceValue, row.currency);
       cancelSuppressedItemAlerts(region);
       db.prepare("UPDATE notification_queue SET status='cancelled',updated_at=? WHERE region=? AND status IN ('pending','failed') AND json_extract(payload_json,'$.type')='collection_ready'").run(isoNow(), region);
-      db.exec('COMMIT');
-    } catch (err) { db.exec('ROLLBACK'); throw err; }
-    monitors[region].productCount = Object.values(states[region].products).filter((product) => !product.variantId).length;
     watchCount += states[region].watchlist.length;
     eventCount += states[region].events.length;
-    importedRegions.push(region);
   }
-  if (!importedRegions.length) throw new Error(`This backup does not contain any configured region (${ACTIVE_REGIONS.join(', ')}).`);
   if (tableExists('settings')) {
     const importedKeys = new Set(Object.keys(normalized.settings));
     const remove = db.prepare('DELETE FROM settings WHERE key=?');
@@ -4276,11 +4270,23 @@ function importSnapshot(snapshot) {
     for (const [key, value] of Object.entries(normalized.settings)) {
       if (!/password|secret|token|credential|session|^owner_(?:security_policy|totp(?:_pending)?)$|^notification_private_hosts$/i.test(key)) put.run(String(key), String(value), isoNow());
     }
-    applyAppConfig(storedAppConfig(), storedSecrets());
-    scheduleBackups();
+    importedConfig = storedAppConfig();
+    importedSecrets = storedSecrets();
   }
   autoBuy.importData(snapshot.autoBuy);
   setMeta('last_import_at', isoNow());
+  db.exec('COMMIT');
+  } catch (err) {
+    try { db.exec('ROLLBACK'); } catch {}
+    for (const [region, previous] of previousStates) states[region] = previous;
+    autoBuy.restorePairingAfterRollback(previousPairing);
+    throw err;
+  }
+  for (const region of importedRegions) {
+    coverageSessions.delete(region);
+    monitors[region].productCount = Object.values(states[region].products).filter((product) => !product.variantId).length;
+  }
+  if (importedConfig) { applyAppConfig(importedConfig, importedSecrets); scheduleBackups(); }
   return { ok: true, watchCount, eventCount, importedRegions, safetyBackup: safety };
 }
 
@@ -5117,7 +5123,17 @@ async function handleApi(req, res, url) {
       if (req.method === 'PUT' && url.pathname === '/api/auto-buy/rules') {
         const region = String(url.searchParams.get('region') || DEFAULT_REGION).toLowerCase();
         if (!ACTIVE_REGIONS.includes(region)) return sendJson(res,400,{ error:'Choose an active Store region.' });
-        return sendJson(res,200,{ rule:autoBuy.save(region,String(body.slug || ''),body) });
+        const slug = String(body.slug || '');
+        const addWatch = body.watchIfNeeded === true && !states[region].watchlist.includes(slug);
+        db.exec('SAVEPOINT arm_auto_buy');
+        let rule;
+        try {
+          if (addWatch) db.prepare('INSERT INTO watchlist(region,slug,created_at) VALUES(?,?,?)').run(region,slug,isoNow());
+          rule = autoBuy.save(region,slug,body);
+          db.exec('RELEASE arm_auto_buy');
+        } catch (err) { db.exec('ROLLBACK TO arm_auto_buy'); db.exec('RELEASE arm_auto_buy'); throw err; }
+        if (addWatch) states[region].watchlist.push(slug);
+        return sendJson(res,200,{ rule });
       }
       const pause = url.pathname.match(/^\/api\/auto-buy\/rules\/([a-f0-9-]{36})\/pause$/);
       if (req.method === 'POST' && pause) return sendJson(res,200,{ rule:autoBuy.pause(pause[1]) });
@@ -5701,7 +5717,16 @@ async function handleRegionApi(req, res, url) {
     const slug = decodeURIComponent(url.pathname.slice('/api/watch/'.length, -'/rules'.length));
     if (!state.watchlist.includes(slug)) return sendJson(res, 404, { error:'Product is not on the watchlist.' });
     const body = await readJsonBody(req);
-    try { return sendJson(res, 200, { ok:true, slug, rule:saveWatchRule(slug, body?.rule || body || {}) }); }
+    try {
+      db.exec('SAVEPOINT save_watch_settings');
+      let rule;
+      try {
+        rule = saveWatchRule(slug, body?.rule || body || {});
+        if (body?.collections !== undefined) setWatchCollections(slug, body.collections);
+        db.exec('RELEASE save_watch_settings');
+      } catch (err) { db.exec('ROLLBACK TO save_watch_settings'); db.exec('RELEASE save_watch_settings'); throw err; }
+      return sendJson(res, 200, { ok:true, slug, rule, ...(body?.collections !== undefined ? { product:productForApi(state.products[slug]), ...watchWorkspace() } : {}) });
+    }
     catch (err) { return sendJson(res, 400, { error:err.message }); }
   }
 

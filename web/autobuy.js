@@ -114,10 +114,8 @@ async function saveAutoBuy(form) {
   const maxTotalMinor = Math.round(Number(total)*100);
   const expiresAt = new Date(String(values.get('expires'))).toISOString();
   const quantity = Number(values.get('quantity'));
-  // Arming an exact variant also watches that variant if the original card tracked any variant.
-  if (!variant.watched) await api('/api/watch',{ method:'POST',body:JSON.stringify({ slug:variant.slug }) });
   const result = await api('/api/auto-buy/rules',{ method:'PUT',body:JSON.stringify({ slug:variant.slug, revision:autoBuyDraft.rule?.revision || 0,
-    quantity,maxTotalMinor,expiresAt,collectionId:values.get('collection') || null,authorized:values.get('authorized') === 'on' }) });
+    quantity,maxTotalMinor,expiresAt,collectionId:values.get('collection') || null,authorized:values.get('authorized') === 'on',watchIfNeeded:!variant.watched }) });
   if (result.rule?.state !== 'armed') throw new Error('The server did not confirm this purchase instruction.');
   $('autoBuyDialog').close(); toast('Auto-buy armed for one order within your limits.'); await refresh(); await refreshAutoBuy();
 }

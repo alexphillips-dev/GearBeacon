@@ -9,7 +9,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import { totp, base32 } from '../backend/dist/security.js';
 import { loadProtectedKey, secureDataDirectory } from '../backend/dist/key-protection.js';
-import { notificationFetch, addressPolicy } from '../backend/dist/outbound.js';
+import { notificationFetch, addressPolicy, fetchWithTimeout } from '../backend/dist/outbound.js';
 
 const root = mkdtempSync(join(tmpdir(),'gearbeacon-security-'));
 const data = join(root,'data'); mkdirSync(data);
@@ -18,6 +18,7 @@ const password='security fixture owner password';
 const sink=createServer((req,res) => {
   if (req.url==='/redirect') { res.writeHead(307,{ Location:'/private-target' }); res.end(); }
   else if (req.url==='/oversize') res.end(Buffer.alloc(1024*1024+1));
+  else if (req.url==='/stall-body') { res.writeHead(200,{ 'Content-Type':'text/plain' }); res.write('partial'); }
   else { res.writeHead(200); res.end('ok'); }
 });
 await new Promise(resolve=>sink.listen(0,'127.0.0.1',resolve));
@@ -50,6 +51,9 @@ try {
   assert.equal(addressPolicy('::ffff:127.0.0.1'),'private');
   const options={ allowedUrls:[sinkUrl] };
   assert.equal(await (await notificationFetch(sinkUrl,{},1000,options)).text(),'ok');
+  assert.equal(await (await fetchWithTimeout(sinkUrl,{},1000)).text(),'ok');
+  const stalled = await fetchWithTimeout(`${sinkUrl}/stall-body`,{},100);
+  await assert.rejects(stalled.text(), 'The Store deadline ended before a stalled response body was aborted.');
   await assert.rejects(notificationFetch(`${sinkUrl}/redirect`,{},1000,options));
   await assert.rejects(notificationFetch(`${sinkUrl}/oversize`,{},1000,options));
   await assert.rejects(notificationFetch('http://169.254.169.254',{},1000,{allowedUrls:['http://169.254.169.254']}));

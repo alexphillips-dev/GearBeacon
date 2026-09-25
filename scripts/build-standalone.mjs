@@ -40,7 +40,7 @@ if (!indexSource.includes(autoBuyRequire)) throw new Error('Standalone bundling 
 const bundledAutoBuyModule = ['const { createAutoBuy, AUTO_BUY_SCHEMA, neutralizeAutoBuyBackup } = (() => {',
   'const module = { exports: {} };', 'const exports = module.exports;', autoBuySource, 'return module.exports;', '})();'].join('\n');
 let bundledSource = indexSource.replace(emailRequire, () => bundledEmailModule).replace(autoBuyRequire, () => bundledAutoBuyModule);
-for (const [name, names] of [['security','createOwnerSecurity'], ['key-protection','secureDataDirectory, loadProtectedKey'], ['outbound','notificationFetch, normalizePrivateHosts']]) {
+for (const [name, names] of [['security','createOwnerSecurity'], ['key-protection','secureDataDirectory, loadProtectedKey'], ['outbound','notificationFetch, normalizePrivateHosts, fetchWithTimeout']]) {
   const statement = `const { ${names} } = require('./${name}');`;
   if (!bundledSource.includes(statement)) throw new Error(`Missing ${name} module import.`);
   const source = readFileSync(join(root,'backend','dist',`${name}.js`),'utf8');
