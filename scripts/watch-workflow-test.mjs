@@ -209,7 +209,20 @@ try {
     await request(`/api/watch/${parent}`,undefined,'DELETE');
     assert.equal(await watched(parent),false);
     assert.equal(query('SELECT slug FROM watchlist WHERE region=? AND slug=?','us',parent).length,0);
-    await add({slug:parent});
+    const parentRuleBefore=query('SELECT rule_json FROM watch_rules WHERE region=? AND slug=?','us',parent);
+    assert.equal(parentRuleBefore.length,1);
+    removalDb.exec("CREATE TRIGGER workflow_add_rule_failure BEFORE UPDATE ON watch_rules WHEN OLD.slug='uvc-g5-ptz' BEGIN SELECT RAISE(ABORT,'mock rule failure'); END");
+    await request('/api/watch',{slug:parent,rule:{targetPrice:250}},'POST',500);
+    assert.equal(await watched(parent),false,'Failed rule save created a live watch.');
+    assert.equal(query('SELECT slug FROM watchlist WHERE region=? AND slug=?','us',parent).length,0);
+    assert.deepEqual(query('SELECT rule_json FROM watch_rules WHERE region=? AND slug=?','us',parent),parentRuleBefore);
+    removalDb.exec('DROP TRIGGER workflow_add_rule_failure');
+    await check();
+    assert.equal(await watched(parent),false,'A later check created a watch after its failed rule save.');
+    await request('/api/watch',{slug:parent,rule:{targetPrice:250}});
+    assert.equal(await watched(parent),true);
+    assert.equal((await details(parent)).product.watchRule.targetPrice,250);
+    await rules(parent,{targetPrice:300});
 
     const membersBefore=(await collection(id)).items;
     removalDb.exec("CREATE TRIGGER workflow_bulk_delete_failure BEFORE DELETE ON watchlist WHEN OLD.slug='uvc-g5-ptz::mock-white' BEGIN SELECT RAISE(ABORT,'mock delete failure'); END");
@@ -225,7 +238,32 @@ try {
       assert.equal(query('SELECT slug FROM watchlist WHERE region=? AND slug=?','us',slug).length,1);
     }
     assert.deepEqual((await collection(id)).items,membersBefore);
-  } finally { removalDb.exec('DROP TRIGGER IF EXISTS workflow_single_delete_failure'); removalDb.exec('DROP TRIGGER IF EXISTS workflow_bulk_delete_failure'); removalDb.close(); }
+    const ruleSlugs=['udm-se',white];
+    const savedRules=ruleSlugs.map(slug=>query('SELECT rule_json FROM watch_rules WHERE region=? AND slug=?','us',slug));
+    assert.equal(savedRules[1].length,1);
+    removalDb.exec("CREATE TRIGGER workflow_bulk_rule_failure BEFORE UPDATE ON watch_rules WHEN OLD.slug='uvc-g5-ptz::mock-white' BEGIN SELECT RAISE(ABORT,'mock rule failure'); END");
+    for (const action of ['pause','purchased']) {
+      await request('/api/watch/bulk',{action,slugs:ruleSlugs},'POST',500);
+      for (const [index,slug] of ruleSlugs.entries()) {
+        assert.deepEqual(query('SELECT rule_json FROM watch_rules WHERE region=? AND slug=?','us',slug),savedRules[index],`Failed bulk ${action} changed ${slug}'s rule.`);
+      }
+      assert.deepEqual((await collection(id)).items,membersBefore,`Failed bulk ${action} changed collection purchase state.`);
+    }
+    removalDb.exec('DROP TRIGGER workflow_bulk_rule_failure');
+    await request('/api/watch/bulk',{action:'pause',slugs:ruleSlugs});
+    for (const slug of ruleSlugs) assert.equal((await details(slug)).product.watchRule.pausedUntil,'indefinite');
+    await request('/api/watch/bulk',{action:'resume',slugs:ruleSlugs});
+    for (const slug of ruleSlugs) assert.equal((await details(slug)).product.watchRule.pausedUntil,null);
+    await request('/api/watch/bulk',{action:'purchased',slugs:ruleSlugs});
+    for (const slug of ruleSlugs) assert.ok((await details(slug)).product.watchRule.purchasedAt);
+    assert.equal((await collection(id)).items.find(item=>item.slug==='udm-se').purchasedQuantity,2);
+    await request('/api/watch/bulk',{action:'wanted',slugs:ruleSlugs});
+    for (const slug of ruleSlugs) assert.equal((await details(slug)).product.watchRule.purchasedAt,null);
+    assert.deepEqual((await collection(id)).items,membersBefore);
+  } finally {
+    for (const trigger of ['workflow_single_delete_failure','workflow_add_rule_failure','workflow_bulk_delete_failure','workflow_bulk_rule_failure']) removalDb.exec(`DROP TRIGGER IF EXISTS ${trigger}`);
+    removalDb.close();
+  }
   const regional=await request('/api/products?region=ca');
   assert.deepEqual(regional.overview.readyToBuy,[]); assert.deepEqual(regional.collections,[]);
   const invalid=structuredClone(plain); invalid.regions.us.collections[0].archived='yes';
@@ -249,6 +287,6 @@ try {
     assert.equal(await watched(slug),false,`Successful bulk removal retained ${slug} in memory.`);
     assert.equal(query('SELECT slug FROM watchlist WHERE region=? AND slug=?','us',slug).length,0);
   }
-  console.log('WATCH WORKFLOW TEST PASSED: confirmed overview/variants/targets/quantities, direct Add/deduplication/atomic rollback, removal failure recovery, archive/restore/overlap/queued alerts, undo conflicts, restart, regional isolation, and recovery.');
+  console.log('WATCH WORKFLOW TEST PASSED: confirmed overview/variants/targets/quantities, atomic watch/rule saves and bulk actions, removal failure recovery, archive/restore/overlap/queued alerts, undo conflicts, restart, regional isolation, and recovery.');
 } catch (err) { console.error(output.slice(-4000)); throw err; }
 finally { await stop(); await new Promise(done=>webhook.close(done)); await rm(dataDir,{recursive:true,force:true}); }

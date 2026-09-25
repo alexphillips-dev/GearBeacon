@@ -5788,16 +5788,25 @@ async function handleRegionApi(req, res, url) {
 
   if (req.method === 'POST' && url.pathname === '/api/watch') {
     const body = await readJsonBody(req);
+    const region = currentRegion();
     const slug = String(body?.slug || '').trim();
     if (!slug) return sendJson(res, 400, { error: 'slug is required' });
     if (!Object.hasOwn(state.products, slug)) return sendJson(res, 404, { error:'Product not found in this region.' });
     let rule;
     try { rule = body?.rule ? normalizeWatchRule(body.rule, watchRule(slug)) : null; } catch (err) { return sendJson(res, 400, { error:err.message }); }
-    if (!state.watchlist.includes(slug)) {
-      db.prepare('INSERT INTO watchlist(region,slug,created_at) VALUES(?,?,?) ON CONFLICT(region,slug) DO NOTHING').run(currentRegion(), slug, isoNow());
-      state.watchlist.push(slug);
+    const alreadyWatched = state.watchlist.includes(slug);
+    if (!alreadyWatched || rule) {
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        if (!alreadyWatched) db.prepare('INSERT INTO watchlist(region,slug,created_at) VALUES(?,?,?) ON CONFLICT(region,slug) DO NOTHING').run(region, slug, isoNow());
+        if (rule) saveWatchRule(slug, rule, region);
+        db.exec('COMMIT');
+      } catch (err) {
+        try { db.exec('ROLLBACK'); } catch {}
+        throw err;
+      }
     }
-    if (rule) saveWatchRule(slug, rule);
+    if (!alreadyWatched) state.watchlist.push(slug);
     return sendJson(res, 200, { ok: true, product: productForApi(state.products[slug]), watchlist: state.watchlist });
   }
 
@@ -5808,16 +5817,27 @@ async function handleRegionApi(req, res, url) {
     if (!slugs.length) return sendJson(res, 400, { error:'Select at least one watched product.' });
     if (!['pause', 'resume', 'remove', 'purchased', 'wanted'].includes(action)) return sendJson(res, 400, { error:'Choose pause, resume, remove, purchased, or wanted.' });
     let pausedUntil = null;
+    let ruleChange;
     if (action === 'pause') {
       const minutes = Number(body?.minutes || 0);
       pausedUntil = minutes > 0 ? new Date(Date.now() + Math.min(minutes, 525600) * 60000).toISOString() : 'indefinite';
-      for (const slug of slugs) saveWatchRule(slug, { pausedUntil });
+      ruleChange = { pausedUntil };
     } else if (action === 'resume') {
-      for (const slug of slugs) saveWatchRule(slug, { enabled:true, pausedUntil:null });
+      ruleChange = { enabled:true, pausedUntil:null };
     } else if (action === 'purchased' || action === 'wanted') {
-      for (const slug of slugs) saveWatchRule(slug, { purchasedAt:action === 'purchased' ? isoNow() : null });
-    } else {
+      ruleChange = { purchasedAt:action === 'purchased' ? isoNow() : null };
+    }
+    if (action === 'remove') {
       removeWatches(slugs);
+    } else {
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        for (const slug of slugs) saveWatchRule(slug, ruleChange);
+        db.exec('COMMIT');
+      } catch (err) {
+        try { db.exec('ROLLBACK'); } catch {}
+        throw err;
+      }
     }
     return sendJson(res, 200, { ok:true, action, affected:slugs.length, pausedUntil, products:slugs.map((slug) => productForApi(state.products[slug])).filter(Boolean) });
   }

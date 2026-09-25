@@ -6,6 +6,7 @@ The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. 
 
 Released September 21, 2026. Includes every change since v1.3.0. See the [complete release notes](RELEASE_NOTES.md).
 
+- Adding a watch with an alert rule now commits both together, and bulk pause, resume, purchased, and wanted actions commit all selected watches together. Failed writes roll back rules, collection purchase state, and delivery changes.
 - Watch removals now commit the database and collection baselines before updating the live watchlist. Failed single or bulk removals leave every selected watch in place, including after a later Store check.
 - Removed a redundant delayed whole-state save after watchlist changes. Watch and rule updates already commit before the API responds; the extra timer could crash the server if another SQLite writer held a lock.
 - Store checks now commit product state, activity, delivery jobs, and observation evidence together before reporting success, so an abrupt stop cannot leave a recorded restock with stale stock data.
