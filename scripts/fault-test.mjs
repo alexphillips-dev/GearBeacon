@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
-import { mkdtemp, mkdir, readFile, readdir, rm, unlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, unlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -214,7 +214,35 @@ try {
   const queuedBefore = (await fetchJson('/api/status')).notifications.queue;
   assert(queuedBefore.pending >= 1 && new Date(queuedBefore.nextDeliveryAt) > new Date(), 'Notification was not held for the future digest.');
   await stopServer();
+
+  // Startup removes only aged backup temp files from dead processes.
+  const backupDirectory = join(dataDir, 'backups');
+  await mkdir(secondaryDir, { recursive:true });
+  const stamp = '2020-01-01T00-00-00-000Z';
+  const uuid = '00000000-0000-4000-8000-000000000001';
+  const stalePrimary = `manual-${stamp}.sqlite3.tmp-999999999-${uuid}`;
+  const staleJournal = `${stalePrimary}-journal`;
+  const staleSecondary = `manual-${stamp}.sqlite3.tmp-999999999`;
+  const staleEncrypted = `manual-${stamp}.encrypted.gearbeacon.json.tmp-999999999`;
+  const recentPrimary = `scheduled-${stamp}.sqlite3.tmp-999999999-${uuid}`;
+  const activePrimary = `pre-import-${stamp}.sqlite3.tmp-${process.pid}-${uuid}`;
+  const unrelated = `notes-${stamp}.sqlite3.tmp-999999999-${uuid}`;
+  const matchingDirectory = `manual-${stamp}.sqlite3.tmp-999999999-00000000-0000-4000-8000-000000000002`;
+  const old = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+  for (const [directory, name] of [[backupDirectory,stalePrimary],[backupDirectory,staleJournal],[secondaryDir,staleSecondary],[secondaryDir,staleEncrypted],[backupDirectory,activePrimary],[backupDirectory,unrelated]]) {
+    const file = join(directory,name);
+    await writeFile(file,'temporary backup fixture');
+    await utimes(file,old,old);
+  }
+  await writeFile(join(backupDirectory,recentPrimary),'recent backup fixture');
+  await mkdir(join(backupDirectory,matchingDirectory));
+  const completedBefore = (await readdir(backupDirectory)).filter(name=>name.endsWith('.sqlite3'));
   await startServer({ GEARBEACON_MOCK_OVERRIDES_JSON:JSON.stringify(persistentOverrides) });
+  const primaryAfter = await readdir(backupDirectory);
+  const secondaryAfter = await readdir(secondaryDir);
+  assert(!primaryAfter.includes(stalePrimary) && !primaryAfter.includes(staleJournal) && !secondaryAfter.includes(staleSecondary) && !secondaryAfter.includes(staleEncrypted), 'Startup left abandoned backup temporary files or SQLite sidecars.');
+  assert(primaryAfter.includes(recentPrimary) && primaryAfter.includes(activePrimary) && primaryAfter.includes(unrelated) && primaryAfter.includes(matchingDirectory), 'Startup deleted a recent, active, unrelated, or non-file entry.');
+  assert(completedBefore.every(name=>primaryAfter.includes(name)), 'Startup deleted a completed backup.');
   const queuedAfter = (await fetchJson('/api/status')).notifications.queue;
   assert(queuedAfter.pending >= queuedBefore.pending && queuedAfter.nextDeliveryAt === queuedBefore.nextDeliveryAt, 'Queued notification did not survive process restart.');
 
@@ -281,7 +309,6 @@ try {
   assert(largeExport.events.length === 10000 && largeExport.truncated === true && largeExport.count >= 10050, '10k activity export limit was not enforced or disclosed.');
 
   // A copy that fails after VACUUM created its file must never appear as a backup.
-  const backupDirectory = join(dataDir, 'backups');
   const backupsBefore = (await readdir(backupDirectory)).sort();
   const brokenBackupDb = new DatabaseSync(databaseFile);
   try { brokenBackupDb.exec('DROP TABLE auto_buy_connection'); } finally { brokenBackupDb.close(); }

@@ -565,6 +565,59 @@ function trimSecondaryBackups() {
         catch { }
     }
 }
+const BACKUP_TEMP_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const BACKUP_TEMP_SWEEP_MS = 6 * 60 * 60 * 1000;
+const BACKUP_TEMP_BASE = String.raw `(?:manual|scheduled|pre-import|pre-update-[a-zA-Z0-9._-]+)-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z`;
+const PRIMARY_BACKUP_TEMP = new RegExp(`^${BACKUP_TEMP_BASE}\\.sqlite3\\.tmp-(\\d+)-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?:-(?:journal|wal|shm))?$`, 'i');
+const SECONDARY_BACKUP_TEMP = new RegExp(`^${BACKUP_TEMP_BASE}(?:\\.sqlite3|\\.encrypted\\.gearbeacon\\.json)\\.tmp-(\\d+)$`, 'i');
+function processMayBeRunning(pid) {
+    if (!Number.isSafeInteger(pid) || pid < 1)
+        return true;
+    try {
+        process.kill(pid, 0);
+        return true;
+    }
+    catch (err) {
+        return err?.code !== 'ESRCH';
+    }
+}
+function cleanupBackupTempDirectory(directory, pattern, now) {
+    if (!directory)
+        return 0;
+    let names;
+    try {
+        const root = fs.lstatSync(directory);
+        if (!root.isDirectory() || root.isSymbolicLink())
+            return 0;
+        names = fs.readdirSync(directory);
+    }
+    catch {
+        return 0;
+    }
+    let removed = 0;
+    for (const name of names) {
+        const match = pattern.exec(name);
+        if (!match || processMayBeRunning(Number(match[1])))
+            continue;
+        const file = path.join(directory, name);
+        try {
+            const stat = fs.lstatSync(file);
+            if (!stat.isFile() || stat.isSymbolicLink() || now - stat.mtimeMs < BACKUP_TEMP_MAX_AGE_MS)
+                continue;
+            fs.unlinkSync(file);
+            removed++;
+        }
+        catch { }
+    }
+    return removed;
+}
+function cleanupAbandonedBackupTemps() {
+    const now = Date.now();
+    const removed = cleanupBackupTempDirectory(BACKUP_DIR, PRIMARY_BACKUP_TEMP, now)
+        + cleanupBackupTempDirectory(SECONDARY_BACKUP_DIR, SECONDARY_BACKUP_TEMP, now);
+    if (removed)
+        writeAppLog('info', 'backups', `Removed ${removed} abandoned backup temporary file(s).`);
+}
 let runtimeReadyForRecoveryCopies = false;
 function createSecondaryRecoveryCopy(primaryBackup, reason) {
     if (!SECONDARY_BACKUP_DIR || !runtimeReadyForRecoveryCopies)
@@ -1513,6 +1566,9 @@ for (const region of ACTIVE_REGIONS) {
         recordProductObservation(product, 'migration-baseline', region);
 }
 runtimeReadyForRecoveryCopies = true;
+cleanupAbandonedBackupTemps();
+const backupTempCleanupTimer = setInterval(cleanupAbandonedBackupTemps, BACKUP_TEMP_SWEEP_MS);
+backupTempCleanupTimer.unref();
 function contextualProxy(values) {
     return new Proxy({}, {
         get(_target, property) { return values[currentRegion()][property]; },
