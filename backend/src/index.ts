@@ -1457,6 +1457,16 @@ const monitors = Object.fromEntries(ACTIVE_REGIONS.map((region) => [region, {
   lastAlertAt: null,
 }]));
 const monitor = contextualProxy(monitors);
+const recoveryWindowKey = (region) => `monitor_recovery_since_${region}`;
+const recoveryWindows = Object.fromEntries(ACTIVE_REGIONS.map((region) => [region, getMeta(recoveryWindowKey(region)) || null]));
+
+function preserveRecoveryWindow(region, startedAt) {
+  if (recoveryWindows[region]) return;
+  const lastComplete = db.prepare("SELECT checked_at FROM monitor_checks WHERE region=? AND outcome='success' AND detail IS NULL ORDER BY id DESC LIMIT 1").get(region)?.checked_at;
+  const since = lastComplete || new Date(startedAt).toISOString();
+  setMeta(recoveryWindowKey(region), since);
+  recoveryWindows[region] = since;
+}
 
 const mockOverrides = {};
 if (MOCK_MODE && process.env.GEARBEACON_MOCK_OVERRIDES_JSON) {
@@ -2606,13 +2616,26 @@ function transientDeliveryFailure(message) {
   return /\b(?:fetch failed|network (?:error|connection failed)|socket hang up|connection (?:closed|reset|refused|timed out)|timeout|timed out|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH|ENETUNREACH|HTTP (?:429|50[0234])|SMTP (?:4\d\d|connection closed))\b/i.test(String(message || ''));
 }
 
-function recoverFailedDeliveriesAfterOutage(region, previousSuccessAt) {
+function recoverFailedDeliveriesAfterOutage(region) {
+  const since = recoveryWindows[region];
+  if (!since) return 0;
   const now = isoNow();
-  const rows = db.prepare("SELECT id,last_error FROM notification_queue WHERE region=? AND status='failed' AND updated_at>?").all(region, previousSuccessAt || '');
-  const eligible = rows.filter((row) => transientDeliveryFailure(row.last_error));
-  const update = db.prepare("UPDATE notification_queue SET status='pending',attempts=0,next_attempt_at=?,last_error=NULL,updated_at=? WHERE id=? AND status='failed'");
   let queued = 0;
-  for (const row of eligible) queued += Number(update.run(now, now, row.id).changes || 0);
+  db.exec('SAVEPOINT monitor_recovery');
+  try {
+    const rows = db.prepare("SELECT id,last_error FROM notification_queue WHERE region=? AND status='failed' AND updated_at>?").all(region, since);
+    const update = db.prepare("UPDATE notification_queue SET status='pending',attempts=0,next_attempt_at=?,last_error=NULL,updated_at=? WHERE id=? AND status='failed'");
+    for (const row of rows) {
+      if (transientDeliveryFailure(row.last_error)) queued += Number(update.run(now, now, row.id).changes || 0);
+    }
+    setMeta(recoveryWindowKey(region), '');
+    db.exec('RELEASE monitor_recovery');
+  } catch (err) {
+    db.exec('ROLLBACK TO monitor_recovery');
+    db.exec('RELEASE monitor_recovery');
+    throw err;
+  }
+  recoveryWindows[region] = null;
   if (queued) {
     writeAppLog('info', 'notifications', `Requeued ${queued} failed delivery job(s) after Store connectivity recovered.`);
     processNotificationQueue().catch((err) => writeAppLog('error', 'notifications', 'Recovery queue worker failed.', { error:err?.message || String(err) }));
@@ -2995,8 +3018,6 @@ function applyCombinedWatchConditions(events, prefs) {
 async function checkStore(reason = 'timer') {
   if (monitor.checking) return { skipped: true, reason: 'already checking' };
   const startedAt = Date.now();
-  const recoveringFromFailure = monitor.consecutiveFailures > 0;
-  const previousSuccessAt = monitor.lastSuccessAt;
   monitor.checking = true;
   monitor.lastCheckAt = isoNow();
   monitor.lastError = null;
@@ -3165,11 +3186,13 @@ async function checkStore(reason = 'timer') {
     } catch {}
     console.log(`[monitor] success: ${monitor.productCount} products, ${notifications.length} notification event(s)`);
     writeAppLog('info', 'monitor', `Store check succeeded for ${currentRegion()}.`, { reason, products: monitor.productCount, notificationEvents: notifications.length, catalogHealth: monitor.catalogHealth, pendingChanges:monitor.pendingChanges });
+    if (monitor.partialErrors.length) preserveRecoveryWindow(currentRegion(), startedAt);
     recordMonitorCheck('success', startedAt, monitor.partialErrors.length ? 'Catalog was usable but one or more categories failed.' : null);
-    if (recoveringFromFailure && !monitor.partialErrors.length) recoverFailedDeliveriesAfterOutage(currentRegion(), previousSuccessAt);
+    if (!monitor.partialErrors.length) recoverFailedDeliveriesAfterOutage(currentRegion());
     return { ok: true, products: monitor.productCount, notifications: notifications.length, catalogHealth: monitor.catalogHealth, pendingChanges:monitor.pendingChanges };
   } catch (err) {
     coverageSessions.delete(currentRegion());
+    preserveRecoveryWindow(currentRegion(), startedAt);
     monitor.consecutiveFailures += 1;
     monitor.lastError = err?.message || String(err);
     monitor.retryAfterAt = err?.retryAfterAt || null;

@@ -195,6 +195,44 @@ try {
   assert.equal((await request('/api/operations')).notifications.queue.failed,0);
   assert.ok(query("SELECT status FROM notification_log WHERE event_id=? AND status='failed'",outageJob.event_id).length,'Recovery erased failed delivery history');
 
+  // A partial Store response must not close the recovery window.
+  await restock();
+  const partialRecoveryJob=pending()[0]; assert.ok(partialRecoveryJob);
+  edit('UPDATE notification_queue SET max_attempts=1,next_attempt_at=? WHERE id=?',new Date(Date.now()-1000).toISOString(),partialRecoveryJob.id);
+  dropWebhook=true;
+  await request('/api/notifications/retry-failed',{});
+  await waitFor(()=>queue().find(row=>row.id===partialRecoveryJob.id)?.status==='failed','Partial recovery fixture did not fail');
+  await request('/api/mock/fault',{rateLimitOnceSeconds:1}); await request('/api/check',{},'POST',502);
+  const recoveryWindow=()=>query("SELECT value FROM meta WHERE key='monitor_recovery_since_us'")[0]?.value || null;
+  const partialWindow=recoveryWindow(); assert.ok(partialWindow,'Store failure did not persist its recovery window');
+  await request('/api/mock/fault',{partialOmitSlugs:['unas-pro']}); await check();
+  assert.equal(recoveryWindow(),partialWindow,'Partial catalog cleared the recovery window');
+  assert.equal(queue().find(row=>row.id===partialRecoveryJob.id).status,'failed','Partial catalog retried a failed delivery');
+  dropWebhook=false;
+  await request('/api/mock/fault',{reset:true}); await check();
+  await waitFor(()=>queue().find(row=>row.id===partialRecoveryJob.id)?.status==='sent','Complete catalog did not recover the failed delivery after a partial check');
+  assert.equal(recoveryWindow(),null,'Complete catalog did not clear the recovery window');
+  const sentLogs=(job)=>query("SELECT COUNT(*) AS count FROM notification_log WHERE event_id=? AND channel='webhook' AND status='sent'",job.event_id)[0].count;
+  assert.equal(sentLogs(partialRecoveryJob),1);
+  await check();
+  assert.equal(sentLogs(partialRecoveryJob),1,'Later complete check retried an already recovered delivery');
+
+  // A restart during the outage must retain the window for the startup check.
+  await restock();
+  const restartRecoveryJob=pending()[0]; assert.ok(restartRecoveryJob);
+  edit('UPDATE notification_queue SET max_attempts=1,next_attempt_at=? WHERE id=?',new Date(Date.now()-1000).toISOString(),restartRecoveryJob.id);
+  dropWebhook=true;
+  await request('/api/notifications/retry-failed',{});
+  await waitFor(()=>queue().find(row=>row.id===restartRecoveryJob.id)?.status==='failed','Restart recovery fixture did not fail');
+  await request('/api/mock/fault',{rateLimitOnceSeconds:1}); await request('/api/check',{},'POST',502);
+  assert.ok(recoveryWindow(),'Store failure did not persist a window before restart');
+  await stop();
+  dropWebhook=false;
+  await start();
+  await waitFor(()=>queue().find(row=>row.id===restartRecoveryJob.id)?.status==='sent','Startup check did not recover the failed delivery');
+  assert.equal(recoveryWindow(),null,'Startup recovery did not clear the persisted window');
+  assert.equal(sentLogs(restartRecoveryJob),1);
+
   await restock();
   const dismissedJob=pending()[0]; assert.ok(dismissedJob);
   edit('UPDATE notification_queue SET max_attempts=1,next_attempt_at=? WHERE id=?',new Date(Date.now()-1000).toISOString(),dismissedJob.id);
