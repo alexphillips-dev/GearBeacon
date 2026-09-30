@@ -1,6 +1,12 @@
 # Delivery channels, delayed alerts, and product freshness
 
-These features are included in GearBeacon 1.3.0. Monitoring and external delivery continue on the GearBeacon server when the browser is closed.
+Monitoring and external delivery continue on the GearBeacon server when the browser is closed.
+
+## Restock-date alerts
+
+When a watched item has no restock date and the Store later publishes one, GearBeacon records a separate **Restock date** Activity event after two matching complete checks. A partial or failed check does not confirm a date. The event shows the announced date and can use your configured server channels even while the browser is closed. GearBeacon does not send a new restock-date alert for an initial catalog baseline, a revised date, or a removed date.
+
+Restock-date alerts are enabled by default under **Settings > Notifications > Alerts**. Turn the global choice off there, or open a watched product and set **Restock-date alerts** to Enabled, Disabled, or Use global setting. Purchased watches, pauses, collection-only suppression, and delivery schedules apply as they do to other item alerts.
 
 ## Choose channels for a watch
 
@@ -26,7 +32,7 @@ GearBeacon retries pending sends with bounded backoff. If those attempts are exh
 
 Set **Expire time-sensitive alerts after (minutes)** to a whole number from 1 to 10,080, or leave it blank for no expiry. The default is no expiry.
 
-Expiry applies to restocks, target-price and price-drop opportunities, and collection readiness. It is measured from the original detection time and includes time spent in quiet hours, digests, and retries. It does not expire ordinary sellout/status/new-product history or operational and test messages.
+Expiry applies to restocks, restock dates, target-price and price-drop opportunities, and collection readiness. It is measured from the original detection time and includes time spent in quiet hours, digests, and retries. It does not expire ordinary sellout/status/new-product history or operational and test messages.
 
 Before sending, GearBeacon applies the shorter of the queued alert's original expiry limit and its current limit. Increasing or clearing the limit does not extend a queued alert's existing deadline. A shorter limit also cancels already-expired pending or failed jobs when saved. Expired delivery is labeled **Expired** in Activity and retained as a cancelled job in Operations; **Retry failed** cannot revive it. The original stock event remains in Activity.
 

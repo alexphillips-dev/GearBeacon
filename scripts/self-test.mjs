@@ -459,6 +459,62 @@ try {
     if (!groupedEmail) await delay(200);
   }
   if (!groupedEmail || !/GearBeacon digest/i.test(groupedEmail.text) || (!/Content-ID: <product-/i.test(groupedEmail.raw) && !/IMAGE UNAVAILABLE/i.test(groupedEmail.html))) throw new Error('Grouped email digest, text alternative, or product-image fallback is incomplete.');
+  const dateSlug = 'u7-pro-xgs';
+  const dateOne = '2027-02-10T00:00:00.000Z';
+  const dateTwo = '2027-02-17T00:00:00.000Z';
+  const dateEvents = async () => (await request(`/api/activity?scope=us&type=restock_date&search=${dateSlug}&limit=100`)).events;
+  await request('/api/notifications/preferences?region=us', { method:'PUT', body:JSON.stringify({ preferences:{ allActivity:false, restockDate:true } }) });
+  await request(`/api/mock/product/${dateSlug}?region=us`, { method:'POST', body:JSON.stringify({ restockEtaAt:dateOne }) });
+  await request('/api/check?region=us', { method:'POST' });
+  const pendingDate = (await request(`/api/products/${dateSlug}?region=us`)).product;
+  if (pendingDate.restockEtaAt || (await dateEvents()).length || !(await request('/api/operations')).monitoringConfidence.pending.some((item) => item.slug === dateSlug && item.kind === 'restock_eta' && item.observations === 1)) throw new Error('A single restock-date observation did not preserve the last confirmed value.');
+  await request('/api/check?region=us', { method:'POST' });
+  const firstDateEvent = (await dateEvents())[0];
+  if (firstDateEvent?.restockEtaAt !== dateOne || firstDateEvent.previousRestockEtaAt !== null || firstDateEvent.confirmation?.observations !== 2 || !firstDateEvent.notificationDecision?.allowed || !/Restock expected/.test((await request(`/api/notifications/preview?region=us&slug=${dateSlug}&eventType=restock_date`)).copy.body)) throw new Error('Confirmed restock date did not create an enabled dated alert.');
+  await request('/api/check?region=us', { method:'POST' });
+  if ((await dateEvents()).length !== 1) throw new Error('The same restock date created a duplicate event.');
+  await request(`/api/mock/product/${dateSlug}?region=us`, { method:'POST', body:JSON.stringify({ restockEtaAt:dateTwo }) });
+  await request('/api/check?region=us', { method:'POST' });
+  if ((await request(`/api/products/${dateSlug}?region=us`)).product.restockEtaAt !== dateOne) throw new Error('A pending restock-date revision replaced the confirmed date.');
+  await request('/api/check?region=us', { method:'POST' });
+  if ((await request(`/api/products/${dateSlug}?region=us`)).product.restockEtaAt !== dateTwo || (await dateEvents()).length !== 1) throw new Error('A restock-date revision generated a new announcement or failed to update the confirmed date.');
+  await request(`/api/mock/product/${dateSlug}?region=us`, { method:'POST', body:JSON.stringify({ restockEtaAt:null }) });
+  await request('/api/check?region=us', { method:'POST' });
+  await request('/api/check?region=us', { method:'POST' });
+  if ((await request(`/api/products/${dateSlug}?region=us`)).product.restockEtaAt !== null || (await dateEvents()).length !== 1) throw new Error('Restock-date removal did not update confirmed state cleanly.');
+  await request('/api/notifications/preferences?region=us', { method:'PUT', body:JSON.stringify({ preferences:{ restockDate:false } }) });
+  await request(`/api/mock/product/${dateSlug}?region=us`, { method:'POST', body:JSON.stringify({ restockEtaAt:dateTwo }) });
+  await request('/api/check?region=us', { method:'POST' });
+  await request('/api/check?region=us', { method:'POST' });
+  const mutedDate = (await dateEvents())[0];
+  if ((await dateEvents()).length !== 2 || mutedDate.notificationDecision?.reason !== 'disabled') throw new Error('The global restock-date preference did not mute a confirmed date.');
+  await request(`/api/mock/product/${dateSlug}?region=us`, { method:'POST', body:JSON.stringify({ restockEtaAt:null }) });
+  await request('/api/check?region=us', { method:'POST' });
+  await request('/api/check?region=us', { method:'POST' });
+  const dateRule = await request(`/api/watch/${dateSlug}/rules?region=us`);
+  await request(`/api/watch/${dateSlug}/rules?region=us`, { method:'PUT', body:JSON.stringify({ rule:{ ...dateRule.rule, restockDate:true } }) });
+  await request(`/api/mock/product/${dateSlug}?region=us`, { method:'POST', body:JSON.stringify({ restockEtaAt:dateOne }) });
+  await request('/api/check?region=us', { method:'POST' });
+  await request('/api/check?region=us', { method:'POST' });
+  const overrideDate = (await dateEvents())[0];
+  if ((await dateEvents()).length !== 3 || !overrideDate.notificationDecision?.allowed) throw new Error('A per-watch restock-date override did not enable the alert.');
+  const dateActivity = await request(`/api/activity?scope=us&type=restock_date&search=${dateSlug}&limit=100`);
+  if (dateActivity.summary.restockDates !== 3 || dateActivity.summary.total !== 3) throw new Error('Restock-date Activity filtering or totals are wrong.');
+  const dateCsvResponse = await fetch(`${base}/api/activity/export?scope=us&type=restock_date&format=csv`);
+  const dateCsv = await dateCsvResponse.text();
+  if (!dateCsvResponse.ok || !dateCsv.includes('restockEtaAt') || !dateCsv.includes(dateOne)) throw new Error('Restock-date CSV export omitted the announced date.');
+  await request(`/api/mock/product/${dateSlug}?region=us`, { method:'POST', body:JSON.stringify({ status:'SoldOut', restockEtaAt:null }) });
+  await request('/api/check?region=us', { method:'POST' });
+  await request('/api/check?region=us', { method:'POST' });
+  await request(`/api/mock/product/${dateSlug}?region=us`, { method:'POST', body:JSON.stringify({ status:'Available', restockEtaAt:null }) });
+  await request('/api/check?region=us', { method:'POST' });
+  await request(`/api/mock/product/${dateSlug}?region=us`, { method:'POST', body:JSON.stringify({ status:'SoldOut', restockEtaAt:dateTwo }) });
+  await request('/api/check?region=us', { method:'POST' });
+  await request('/api/check?region=us', { method:'POST' });
+  if ((await dateEvents()).length !== 4 || (await dateEvents())[0].restockEtaAt !== dateTwo || (await dateEvents())[0].confirmation?.kind !== 'restock_eta') throw new Error('A restock date published with a sellout was missed.');
+  await request(`/api/mock/product/${dateSlug}?region=us`, { method:'POST', body:JSON.stringify({ status:'Available', restockEtaAt:null }) });
+  await request('/api/check?region=us', { method:'POST' });
+  await request('/api/notifications/preferences?region=us', { method:'PUT', body:JSON.stringify({ preferences:{ allActivity:true, restockDate:true } }) });
   const savedRules = await request('/api/watch/u7-pro-xgs/rules?region=us', {
     method:'PUT', body:JSON.stringify({ rule:{ restock:true, soldOut:false, priceChange:true, statusChange:false, priceDropOnly:true, targetPrice:250, immediateRestock:true } }),
   });
@@ -480,12 +536,13 @@ try {
   await fetchJson('/api/config/validate', { method:'POST', body:JSON.stringify({ ...schedulingSave.config, emailSubjectPrefix:'[GearBeacon]\r\nBcc: attacker@example.test' }) }, 400);
   const deliveryPreview = await request('/api/notifications/preview?region=us&slug=u7-pro-xgs&eventType=restock');
   if (deliveryPreview.decision?.allowed !== true || deliveryPreview.delivery?.mode !== 'immediate-restock' || deliveryPreview.delivery?.timeZone !== 'UTC' || !deliveryPreview.copy?.title || !/^\[GB Test\]/.test(deliveryPreview.email?.subject || '') || !/Why you received this/i.test(deliveryPreview.email?.text || '')) throw new Error('Notification delivery or email preview did not honor saved settings.');
-  for (const type of ['restock','target_price','price_drop','sold_out','status_change','new_product','operational','test','digest']) {
+  for (const type of ['restock','restock_date','target_price','price_drop','sold_out','status_change','new_product','operational','test','digest']) {
     const response = await fetch(`${base}/api/notifications/email-preview?region=us&slug=u7-pro-xgs&eventType=${type}&theme=light&detailLevel=detailed&digestMaxItems=3`);
     const html = await response.text();
     if (!response.ok || !/<!doctype html>/i.test(html) || !/GearBeacon/i.test(html) || /<script/i.test(html)) throw new Error(`Email preview failed for ${type}.`);
     if (response.headers.get('x-frame-options')) throw new Error('Email preview cannot be framed by its authenticated Settings page.');
     if (!/frame-ancestors 'self'/.test(response.headers.get('content-security-policy') || '')) throw new Error('Email preview CSP is not restricted to the GearBeacon origin.');
+    if (type === 'restock_date' && !/Restock expected/.test(html)) throw new Error('Restock-date email preview omitted the date.');
     if (type === 'digest' && (!/And 3 more updates not shown/i.test(html) || (html.match(/U7 Pro XGS/g) || []).length !== 2)) throw new Error('Digest preview did not enforce maximum items and product deduplication.');
   }
   if (!validInlineImageUrl('https://images.svc.ui.com/product.png') || validInlineImageUrl('https://images.svc.ui.com.attacker.test/product.png') || validInlineImageUrl('http://images.svc.ui.com/product.png')) throw new Error('Inline email image host/protocol allowlist is unsafe.');

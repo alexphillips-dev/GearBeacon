@@ -30,7 +30,7 @@ Save named views, use a compact Watchlist, receive budget-aware collection alert
 - **Useful evidence:** Observed stock timelines, 7/30/90-day price insights, and searchable, paginated Activity with delivery outcomes and exports.
 - **Recovery and oversight:** Validated SQLite backups, encrypted exports, secondary recovery copies, restore tests, diagnostics, and owner-controlled updates. Includes [automatic update notices for the installed branch](docs/UPDATES.md).
 
-Complete valid restocks are recorded immediately; sellouts, ordinary price/status changes, and catalog disappearance require two matching complete observations. Failed or partial checks preserve the last-known-good state. GearBeacon observes catalog data; it does not predict stock, reserve items, or automate checkout.
+Complete valid restocks are recorded immediately; sellouts, restock-date announcements, ordinary price/status changes, and catalog disappearance require two matching complete observations. Watched items alert when a Store restock date first appears, with global and per-item controls. Failed or partial checks preserve the last-known-good state. GearBeacon observes catalog data; it does not predict stock, reserve items, or automate checkout.
 
 ## Choose an installation
 

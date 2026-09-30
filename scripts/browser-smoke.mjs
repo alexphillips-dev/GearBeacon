@@ -392,6 +392,7 @@ try {
 
   await evaluate("openProductDialog('u7-pro-xgs')");
   await waitForBrowser("!document.getElementById('productDialog').classList.contains('hidden') && document.getElementById('productRuleForm')", 'Product details or rule editor did not open');
+  assert(await evaluate("Boolean(document.getElementById('productRuleForm').elements.restockDate) && document.getElementById('productRuleForm').elements.restockDate.value === 'inherit'"), 'Restock-date watch override is missing or does not inherit the global setting');
   const copiedProductDetails = await evaluate(`(async () => {
     window.__gearbeaconCopies=[];
     Object.defineProperty(navigator, 'clipboard', { configurable:true, value:{ writeText:async (value) => window.__gearbeaconCopies.push(value) } });
@@ -411,8 +412,8 @@ try {
     assert(await evaluate("document.getElementById('productDialogBackdrop').matches(':hover')"), `Pointer did not reach the product dialog backdrop in ${theme} mode.`);
     assert(hoveredBackdrop === normalBackdrop && hoveredBackdrop === 'rgba(0, 0, 0, 0.58)', `Product dialog backdrop changed on hover in ${theme} mode: ${normalBackdrop} -> ${hoveredBackdrop}`);
   }
-  await evaluate(`(() => { const form=document.getElementById('productRuleForm'); form.elements.targetPrice.value='250'; form.elements.immediateRestock.checked=true; form.requestSubmit(); })()`);
-  await waitForBrowser("app.products.find((product) => product.slug === 'u7-pro-xgs')?.watchRule?.targetPrice === 250", 'Product-specific alert rule did not save');
+  await evaluate(`(() => { const form=document.getElementById('productRuleForm'); form.elements.targetPrice.value='250'; form.elements.immediateRestock.checked=true; form.elements.restockDate.value='false'; form.requestSubmit(); })()`);
+  await waitForBrowser("app.products.find((product) => product.slug === 'u7-pro-xgs')?.watchRule?.targetPrice === 250 && app.products.find((product) => product.slug === 'u7-pro-xgs')?.watchRule?.restockDate === false", 'Product-specific alert rule or restock-date override did not save');
   await evaluate("document.getElementById('closeProductDialog').click(); toggleWatch('uvc-ai-turret')");
   await waitForBrowser("app.products.find((product) => product.slug === 'uvc-ai-turret')?.watched === true", 'Second product watch action failed');
 
@@ -634,6 +635,7 @@ try {
   await evaluate("document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabNotifications').click()");
   await waitForBrowser("!document.getElementById('settingsPanelNotifications').hidden && document.getElementById('settingsPanelData').hidden", 'Notification settings tab failed');
   await assertAccessible('Notification settings');
+  assert(await evaluate("document.getElementById('notifyRestockDate').checked && Boolean(document.querySelector('#activityType option[value=restock_date]')) && Boolean(document.querySelector('#emailPreviewType option[value=restock_date]'))"), 'Restock-date alert controls are missing or off by default');
   assert(await evaluate("Boolean(document.getElementById('notifyAllActivity')) && !document.getElementById('notifyAllActivity').checked"), 'All-activity notification setting is missing or not safely disabled by default');
   await evaluate("document.getElementById('notifyAllActivity').click(); document.getElementById('saveNotificationPrefs').click()");
   await waitForBrowser("app.notificationPreferences?.allActivity === true && document.getElementById('notifyAllActivity').checked", 'All-activity notification setting did not save');

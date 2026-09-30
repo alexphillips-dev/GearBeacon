@@ -58,7 +58,7 @@ const app = {
   config: null,
   operations: null,
   wizardStep: 1,
-  notificationPreferences: { restock:true, soldOut:false, priceChange:false, statusChange:false, newProduct:false, allActivity:false },
+  notificationPreferences: { restock:true, restockDate:true, soldOut:false, priceChange:false, statusChange:false, newProduct:false, allActivity:false },
   activeTab: savedUiState.activeTab === 'operations' ? 'settings' : APP_TABS.includes(savedUiState.activeTab) ? savedUiState.activeTab : 'watchlist',
   activeSettingsTab: savedUiState.activeTab === 'operations' ? 'operations' : SETTINGS_TABS.includes(localStorage.getItem(SETTINGS_TAB_KEY)) ? localStorage.getItem(SETTINGS_TAB_KEY) : 'general',
   settingsSections: Object.fromEntries(SETTINGS_TABS.map((tab) => [tab, SETTINGS_SECTIONS[tab].includes(savedUiState.settingsSections?.[tab]) ? savedUiState.settingsSections[tab] : SETTINGS_SECTIONS[tab][0]])),
@@ -236,6 +236,11 @@ function humanStatus(value) {
   const text = String(value || 'Unknown').replace(/([a-z])([A-Z])/g, '$1 $2').replaceAll('_', ' ').replaceAll('-', ' ').trim();
   return text ? `${text[0].toUpperCase()}${text.slice(1).toLowerCase()}` : 'Unknown';
 }
+
+function restockDateText(value) {
+  const date = new Date(value || '');
+  return Number.isNaN(date.valueOf()) ? 'date unavailable' : new Intl.DateTimeFormat(undefined, { timeZone:'UTC', year:'numeric', month:'short', day:'numeric' }).format(date);
+}
 function exactEventTime(event) {
   const date = new Date(event.detectedAt);
   if (Number.isNaN(date.valueOf())) return String(event.detectedAt || 'Unknown time');
@@ -276,6 +281,7 @@ function activityMeta(event) {
   const currentStatus = humanStatus(event.status);
   if (event.type === 'collection_ready') parts.push({ text:`${event.readiness?.remaining || 0} remaining items qualify`, className:'event-meta-transition' });
   else if (event.type === 'restock') parts.push({ text:`${event.previousStatus ? previousStatus : 'Sold out'} → In stock`, className:'event-meta-transition' });
+  else if (event.type === 'restock_date') parts.push({ text:`Restock expected ${restockDateText(event.restockEtaAt)}`, className:'event-meta-transition' });
   else if (event.type === 'sold_out') parts.push({ text:`${event.previousStatus ? previousStatus : 'In stock'} → Sold out`, className:'event-meta-transition' });
   else if (event.type === 'status_change') parts.push({ text:`${previousStatus} → ${currentStatus}`, className:'event-meta-transition' });
   else if (event.type === 'price_change') parts.push({ text:`${event.previousPrice || 'Previous price'} → ${event.price || 'New price'}`, className:'event-meta-transition' });
@@ -296,7 +302,7 @@ function activityMeta(event) {
     }
     if (event.alertKind === 'target_price') parts.push({ text:'Target reached', className:'event-meta-target' });
   }
-  if (event.previousStateDurationSeconds !== null && event.previousStateDurationSeconds !== undefined) {
+  if (event.type !== 'restock_date' && event.previousStateDurationSeconds !== null && event.previousStateDurationSeconds !== undefined) {
     const duration = activityDuration(event.previousStateDurationSeconds);
     const text = event.type === 'restock' ? `${previousStatus === 'Coming soon' ? 'Coming soon for' : 'Back after'} ${duration}` : event.type === 'sold_out' ? `Available for ${duration}` : event.type === 'price_change' ? `Price held for ${duration}` : `Previous state for ${duration}`;
     parts.push({ text, className:'event-meta-duration' });
@@ -388,7 +394,7 @@ function renderActivitySummary() {
   const container = $('activitySummary');
   container.classList.toggle('hidden', !summary);
   if (!summary) return;
-  const counts = [[summary.restocks,'restock','restocks'],[summary.soldOut,'sellout','sellouts'],[summary.priceDrops,'price drop','price drops'],[summary.priceIncreases,'price increase','price increases'],[summary.priceChanges-summary.priceDrops-summary.priceIncreases,'other price change','other price changes'],[summary.statusChanges,'status change','status changes'],[summary.newProducts,'new product','new products'],[summary.collectionReady,'collection ready','collections ready']];
+  const counts = [[summary.restocks,'restock','restocks'],[summary.restockDates,'restock date','restock dates'],[summary.soldOut,'sellout','sellouts'],[summary.priceDrops,'price drop','price drops'],[summary.priceIncreases,'price increase','price increases'],[summary.priceChanges-summary.priceDrops-summary.priceIncreases,'other price change','other price changes'],[summary.statusChanges,'status change','status changes'],[summary.newProducts,'new product','new products'],[summary.collectionReady,'collection ready','collections ready']];
   const markup = `<span class="activity-summary-label">All matching activity <small>Dates: ${escapeHtml(summary.timeZone)}</small></span><span class="activity-summary-counts">${counts.filter(([count]) => count > 0).map(([count,singular,plural]) => `<span><b>${count}</b> ${count === 1 ? singular : plural}</span>`).join('') || '<span>No matching events</span>'}</span>`;
   if (container.innerHTML !== markup) container.innerHTML = markup;
 }
@@ -715,7 +721,7 @@ async function showAlertExplanation(scope, id) {
     if (app.alertExplanationRequest !== request || !$('ownerDialog').open) return;
     const configuration = result.configuration;
     const modes = {'immediate-restock':'Immediately, bypassing grouping, digest and quiet hours',immediate:'Immediately',grouped:'After the grouping window',digest:'In the next digest','after-quiet-hours':'After quiet hours'};
-    const types = {restock:'Restock',sold_out:'Sellout',price_change:'Price change',status_change:'Status change',collection_ready:'Collection readiness'};
+    const types = {restock:'Restock',restock_date:'Restock date',sold_out:'Sellout',price_change:'Price change',status_change:'Status change',collection_ready:'Collection readiness'};
     $('ownerDialogTitle').textContent = `Alerts · ${result.name}`;
     $('ownerDialogBody').innerHTML = `<div class="alert-explanation"><section><h3>${escapeHtml(configuration.label)}</h3><ul>${configuration.reasons.map(reason=>`<li>${escapeHtml(reason)}</li>`).join('')}</ul><p>Server channels: ${escapeHtml(configuration.channels.map(channelLabel).join(', ') || 'None enabled')}.</p></section>
       <section><h3>Delivery timing</h3><p>For a new matching event, using the current schedule (${escapeHtml(configuration.timeZone)}):</p>${result.plans.length ? `<ul>${result.plans.map(plan=>`<li>${escapeHtml(types[plan.type] || plan.type)}: ${escapeHtml(modes[plan.mode] || plan.mode)} · ${escapeHtml(alertDate(plan.deliverAt))}</li>`).join('')}</ul>` : '<p>No new server deliveries under the current rules.</p>'}${result.cooldowns.length ? `<p>Repeated events are held by cooldown: ${result.cooldowns.map(row=>`${escapeHtml(types[row.type] || row.type)} until ${escapeHtml(alertDate(row.until))}`).join('; ')}.</p>` : ''}</section>
@@ -1233,7 +1239,7 @@ function renderProductDialog(details) {
   const currentPause = rule.pausedUntil && rule.pausedUntil !== 'indefinite' ? `<option value="existing:${escapeHtml(rule.pausedUntil)}" selected>Paused until ${escapeHtml(new Date(rule.pausedUntil).toLocaleString())}</option>` : '';
   const ruleForm = p.watched ? `<form id="productRuleForm" class="product-rule-form" data-rule-slug="${escapeHtml(p.slug)}">
     <h3>Product-specific alert rules</h3><p>Use global settings unless this product needs different behavior.</p>${alertSummaryMarkup(p)}
-    <div class="form-row">${ruleSelect('restock','Restock alerts',rule.restock)}${ruleSelect('soldOut','Sold-out alerts',rule.soldOut)}${ruleSelect('priceChange','Price-change alerts',rule.priceChange)}${ruleSelect('statusChange','Other status alerts',rule.statusChange)}</div>
+    <div class="form-row">${ruleSelect('restock','Restock alerts',rule.restock)}${ruleSelect('restockDate','Restock-date alerts',rule.restockDate)}${ruleSelect('soldOut','Sold-out alerts',rule.soldOut)}${ruleSelect('priceChange','Price-change alerts',rule.priceChange)}${ruleSelect('statusChange','Other status alerts',rule.statusChange)}</div>
     <div class="form-row"><label class="field"><span>Target price</span><input name="targetPrice" type="number" min="0" step="0.01" value="${rule.targetPrice ?? ''}" placeholder="No target" /></label><label class="field"><span>Pause alerts</span><select name="pause"><option value="active" ${!rule.pausedUntil ? 'selected' : ''}>Active</option>${currentPause}<option value="60">For 1 hour</option><option value="1440">For 1 day</option><option value="10080">For 1 week</option><option value="indefinite" ${rule.pausedUntil === 'indefinite' ? 'selected' : ''}>Until resumed</option></select></label></div>
     <div class="inline-checks"><label><input name="priceDropOnly" type="checkbox" ${rule.priceDropOnly ? 'checked' : ''}/> Only alert when price drops</label><label><input name="immediateRestock" type="checkbox" ${rule.immediateRestock ? 'checked' : ''}/> Deliver restocks immediately</label></div>
     <div class="inline-checks"><label><input name="availableUnderTarget" type="checkbox" ${rule.availableUnderTarget ? 'checked' : ''} /> Alert when available at or below the target price</label></div>
@@ -1278,7 +1284,7 @@ function readProductRule(form) {
   const readOverride = (name) => { const value = form.elements[name].value; return value === 'inherit' ? null : value === 'true'; };
   const pause = form.elements.pause.value;
   const pausedUntil = pause === 'active' ? null : pause === 'indefinite' ? 'indefinite' : pause.startsWith('existing:') ? pause.slice(9) : new Date(Date.now() + Number(pause) * 60000).toISOString();
-  return { ...readAlertDelivery(form), restock:readOverride('restock'), soldOut:readOverride('soldOut'), priceChange:readOverride('priceChange'), statusChange:readOverride('statusChange'), targetPrice:form.elements.targetPrice.value || null, priceDropOnly:form.elements.priceDropOnly.checked, immediateRestock:form.elements.immediateRestock.checked, availableUnderTarget:form.elements.availableUnderTarget.checked, pausedUntil };
+  return { ...readAlertDelivery(form), restock:readOverride('restock'), restockDate:readOverride('restockDate'), soldOut:readOverride('soldOut'), priceChange:readOverride('priceChange'), statusChange:readOverride('statusChange'), targetPrice:form.elements.targetPrice.value || null, priceDropOnly:form.elements.priceDropOnly.checked, immediateRestock:form.elements.immediateRestock.checked, availableUnderTarget:form.elements.availableUnderTarget.checked, pausedUntil };
 }
 
 async function previewProductRule(form) {
@@ -1342,7 +1348,7 @@ function updateActivityRow(row, replacement) {
 
 function renderEvents() {
   const position = activityReadingPosition();
-  const icon = { restock:'↑', sold_out:'↓', price_change:'$', status_change:'↔', new_product:'+' };
+  const icon = { restock:'↑', restock_date:'▦', sold_out:'↓', price_change:'$', status_change:'↔', new_product:'+' };
   const events = app.activity.events || [];
   const arrivals = app.activity.arrivals || [];
   const renderEvent = (e) => {
@@ -1623,6 +1629,7 @@ function renderSettings(updatePreferences = true) {
 function renderNotificationSettings() {
   const prefs = app.notificationPreferences || {};
   if ($('notifyRestock')) $('notifyRestock').checked = prefs.restock !== false;
+  if ($('notifyRestockDate')) $('notifyRestockDate').checked = prefs.restockDate !== false;
   if ($('notifySoldOut')) $('notifySoldOut').checked = Boolean(prefs.soldOut);
   if ($('notifyPriceChange')) $('notifyPriceChange').checked = Boolean(prefs.priceChange);
   if ($('notifyStatusChange')) $('notifyStatusChange').checked = Boolean(prefs.statusChange);
@@ -1694,6 +1701,7 @@ async function saveNotificationPreferences() {
   try {
     const preferences = {
       restock: $('notifyRestock').checked,
+      restockDate: $('notifyRestockDate').checked,
       soldOut: $('notifySoldOut').checked,
       priceChange: $('notifyPriceChange').checked,
       statusChange: $('notifyStatusChange').checked,
@@ -2355,8 +2363,8 @@ function maybeBrowserNotify(events) {
   localStorage.setItem(eventStorageKey, newest);
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
   fresh.filter((e) => e.notificationDecision?.allowed).reverse().forEach((e) => {
-    const titles = { restock:`${e.name} is back in stock`, sold_out:`${e.name} sold out`, price_change:`${e.name} price changed`, status_change:`${e.name} status changed`, new_product:`New UniFi product: ${e.name}`, collection_ready:`${e.name} is ready` };
-    const n = new Notification(`GearBeacon: ${titles[e.type] || e.name}`, { body: `${e.price ? `${e.price} · ` : ''}Detected ${relativeTime(e.detectedAt)}` });
+    const titles = { restock:`${e.name} is back in stock`, restock_date:`${e.name} has a restock date`, sold_out:`${e.name} sold out`, price_change:`${e.name} price changed`, status_change:`${e.name} status changed`, new_product:`New UniFi product: ${e.name}`, collection_ready:`${e.name} is ready` };
+    const n = new Notification(`GearBeacon: ${titles[e.type] || e.name}`, { body: e.type === 'restock_date' ? `Restock expected ${restockDateText(e.restockEtaAt)} · Detected ${relativeTime(e.detectedAt)}` : `${e.price ? `${e.price} · ` : ''}Detected ${relativeTime(e.detectedAt)}` });
     if (e.collectionId) n.onclick = () => { window.focus(); openCollection(e.collectionId, e.region); };
     else if (e.url) n.onclick = () => window.open(e.url, '_blank');
   });

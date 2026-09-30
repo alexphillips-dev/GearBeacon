@@ -134,7 +134,7 @@ try {
   for (const [index,label] of Object.values(mutedLabels).entries()) assert.equal((await detail(events[index].id)).serverAlert.label,label,'A recorded suppression reason was replaced by current rules');
   const first = await activity('&limit=10');
   assert.equal(first.events.length,10); assert.equal(first.count,32);
-  assert.deepEqual(Object.fromEntries(Object.entries(first.summary).filter(([key]) => !['timeZone','asOf'].includes(key))),{total:32,restocks:14,soldOut:9,priceChanges:5,priceDrops:2,priceIncreases:1,statusChanges:2,newProducts:2,collectionReady:0});
+  assert.deepEqual(Object.fromEntries(Object.entries(first.summary).filter(([key]) => !['timeZone','asOf'].includes(key))),{total:32,restocks:14,soldOut:9,priceChanges:5,priceDrops:2,priceIncreases:1,statusChanges:2,restockDates:0,newProducts:2,collectionReady:0});
   const secondPage = await activity('&limit=10&page=2');
   assert.equal(secondPage.summary.total,32,'Summary counted only the visible page');
   const drops = await activity('&type=price_change&search=context%20fixture');

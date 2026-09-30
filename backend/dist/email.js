@@ -85,6 +85,7 @@ function emailKind(event) {
 const KIND_DETAILS = {
     collection_ready: { label: 'Collection ready', eyebrow: 'COLLECTION READY', color: '#36d17c', subject: (event) => `${event.name || 'Your collection'} is ready` },
     restock: { label: 'Back in stock', eyebrow: 'RESTOCK ALERT', color: '#36d17c', subject: (event) => `${event.name || 'A watched product'} is back in stock` },
+    restock_date: { label: 'Restock date announced', eyebrow: 'RESTOCK DATE', color: '#4d9fff', subject: (event) => `${event.name || 'A watched product'} has a restock date` },
     target_price: { label: 'Target price reached', eyebrow: 'PRICE TARGET', color: '#4d9fff', subject: (event) => `${event.name || 'A watched product'} reached your target price` },
     price_drop: { label: 'Price dropped', eyebrow: 'PRICE DROP', color: '#f2b84b', subject: (event) => `${event.name || 'A watched product'} dropped in price` },
     price_change: { label: 'Price changed', eyebrow: 'PRICE CHANGE', color: '#f2b84b', subject: (event) => `${event.name || 'A watched product'} changed price` },
@@ -108,6 +109,10 @@ function formatDetectedAt(event, configuredTimeZone) {
         return parsed.toISOString();
     }
 }
+function formatRestockDate(value) {
+    const date = new Date(value || '');
+    return Number.isNaN(date.valueOf()) ? 'Date unavailable' : new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', year: 'numeric', month: 'short', day: 'numeric' }).format(date);
+}
 function regionLabel(event, regions) {
     const key = event.region || 'us';
     return regions?.[key]?.label || String(key).toUpperCase();
@@ -122,6 +127,8 @@ function reasonText(event) {
         return 'The price decreased on a product you monitor.';
     if (kind === 'restock')
         return event.watchedAtDetection ? 'A product you monitor became available.' : 'GearBeacon detected that this product became available.';
+    if (kind === 'restock_date')
+        return 'The Store published a restock date for a product you monitor.';
     if (kind === 'sold_out')
         return 'A product you monitor became unavailable.';
     if (kind === 'new_product')
@@ -183,6 +190,8 @@ function detailRows(event, options) {
     ];
     if (event.targetPrice !== null && event.targetPrice !== undefined)
         rows.push(['Target price', String(event.targetPrice)]);
+    if (event.type === 'restock_date')
+        rows.push(['Restock expected', formatRestockDate(event.restockEtaAt)]);
     if (event.previousStatus)
         rows.push(['Previous status', event.previousStatus]);
     if (options.detailLevel === 'detailed') {
@@ -206,10 +215,11 @@ function singleEmail(event, options) {
     const details = kindDetails(event);
     const kind = emailKind(event);
     const statusLine = kind === 'status_change' ? `${event.previousStatus || 'Unknown'} → ${event.status || 'Unknown'}`
-        : kind === 'collection_ready' ? `${event.name}: ${event.detail || 'All remaining items meet your conditions.'}`
-            : kind === 'test' ? 'Your SMTP settings are ready.'
-                : kind === 'operational' ? (event.detail || 'Open GearBeacon Operations for more information.')
-                    : details.label;
+        : kind === 'restock_date' ? `Restock expected ${formatRestockDate(event.restockEtaAt)}`
+            : kind === 'collection_ready' ? `${event.name}: ${event.detail || 'All remaining items meet your conditions.'}`
+                : kind === 'test' ? 'Your SMTP settings are ready.'
+                    : kind === 'operational' ? (event.detail || 'Open GearBeacon Operations for more information.')
+                        : details.label;
     const isProduct = !['test', 'operational', 'collection_ready'].includes(kind);
     const actions = `${button(event.url, 'Open UniFi Store', details.color)}${button(event.dashboardUrl, 'Open in GearBeacon', details.color, true)}`;
     const explanation = options.explainReason ? `<div style="margin-top:20px;padding:13px 14px;border:1px solid #30363c;border-radius:10px;background:#111416"><div style="margin-bottom:4px;color:#8e98a4;font:700 9px Arial,sans-serif;letter-spacing:.1em;text-transform:uppercase">Why you received this</div><div class="email-copy" style="color:#c7cfd7;font:400 12px/1.55 Arial,sans-serif">${htmlEscape(reasonText(event))}</div></div>` : '';
@@ -221,14 +231,14 @@ function digestEmail(event, options) {
     const seen = new Set();
     const unique = [];
     for (const item of original) {
-        const key = item.slug || `${item.name}:${emailKind(item)}`;
+        const key = `${item.slug || item.name}:${emailKind(item)}`;
         if (seen.has(key))
             continue;
         seen.add(key);
         unique.push(item);
     }
     const shown = unique.slice(0, options.digestMaxItems);
-    const order = ['restock', 'target_price', 'price_drop', 'price_change', 'new_product', 'sold_out', 'status_change'];
+    const order = ['restock', 'restock_date', 'target_price', 'price_drop', 'price_change', 'new_product', 'sold_out', 'status_change'];
     const groups = new Map();
     for (const item of shown) {
         const kind = emailKind(item);
@@ -244,7 +254,8 @@ function digestEmail(event, options) {
             const destination = store || dashboard;
             const image = item.type === 'collection_ready' ? '<span style="color:#36d17c;font:700 12px Arial,sans-serif">READY</span>' : productImage(item, options, 82);
             const price = item.price ? `<div style="margin-top:6px;color:#fff;font:700 13px Arial,sans-serif">${htmlEscape(item.price)}${options.priceCalculations && moneyDelta(item) ? ` <span style="color:${details.color};font-size:10px">${htmlEscape(moneyDelta(item))}</span>` : ''}</div>` : '';
-            return `<tr><td style="padding:12px 0;border-top:1px solid #30363c"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td width="96" valign="middle" style="width:96px">${image}</td><td valign="middle"><div class="email-title" style="color:#f5f7fa;font:700 14px Arial,sans-serif">${htmlEscape(item.name || 'Product update')}</div><div class="email-copy" style="margin-top:4px;color:#8e98a4;font:400 10px Arial,sans-serif">${htmlEscape(item.category || item.slug || regionLabel(item, options.regions))}</div>${price}${deliveryContextMarkup(item)}</td>${destination ? `<td width="82" align="right" valign="middle"><a href="${htmlEscape(destination)}" style="color:${details.color};font:700 11px Arial,sans-serif;text-decoration:none">View →</a></td>` : ''}</tr></table></td></tr>`;
+            const restockDate = item.type === 'restock_date' ? `<div class="email-copy" style="margin-top:6px;color:#c7cfd7;font:600 11px Arial,sans-serif">Restock expected ${htmlEscape(formatRestockDate(item.restockEtaAt))}</div>` : '';
+            return `<tr><td style="padding:12px 0;border-top:1px solid #30363c"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td width="96" valign="middle" style="width:96px">${image}</td><td valign="middle"><div class="email-title" style="color:#f5f7fa;font:700 14px Arial,sans-serif">${htmlEscape(item.name || 'Product update')}</div><div class="email-copy" style="margin-top:4px;color:#8e98a4;font:400 10px Arial,sans-serif">${htmlEscape(item.category || item.slug || regionLabel(item, options.regions))}</div>${restockDate}${price}${deliveryContextMarkup(item)}</td>${destination ? `<td width="82" align="right" valign="middle"><a href="${htmlEscape(destination)}" style="color:${details.color};font:700 11px Arial,sans-serif;text-decoration:none">View →</a></td>` : ''}</tr></table></td></tr>`;
         }).join('');
         return `<div style="margin-top:24px"><div style="padding-bottom:8px;color:${details.color};font:700 10px Arial,sans-serif;letter-spacing:.11em">${htmlEscape(details.eyebrow)} · ${items.length}</div><table role="presentation" width="100%" cellspacing="0" cellpadding="0">${cards}</table></div>`;
     }).join('');
@@ -257,13 +268,13 @@ function textForEvent(event, options) {
         const seen = new Set();
         const lines = [];
         for (const item of event.events || []) {
-            const key = item.slug || `${item.name}:${emailKind(item)}`;
+            const key = `${item.slug || item.name}:${emailKind(item)}`;
             if (seen.has(key))
                 continue;
             seen.add(key);
             if (lines.length >= options.digestMaxItems)
                 continue;
-            lines.push(`- ${kindDetails(item).label}: ${item.name || 'Product'}${item.price ? ` — ${item.price}` : ''}${item.previousPrice ? ` (was ${item.previousPrice})` : ''}${item.deliveryContext ? `\n  Delayed alert: ${item.deliveryContext.message}` : ''}${item.url ? `\n  ${item.url}` : ''}`);
+            lines.push(`- ${kindDetails(item).label}: ${item.name || 'Product'}${item.type === 'restock_date' ? ` — restock expected ${formatRestockDate(item.restockEtaAt)}` : item.price ? ` — ${item.price}` : ''}${item.previousPrice ? ` (was ${item.previousPrice})` : ''}${item.deliveryContext ? `\n  Delayed alert: ${item.deliveryContext.message}` : ''}${item.url ? `\n  ${item.url}` : ''}`);
         }
         const remaining = Math.max(0, seen.size - lines.length);
         return [`GearBeacon digest`, `${seen.size} product update${seen.size === 1 ? '' : 's'} in ${regionLabel(event, options.regions)}`, '', ...lines, remaining ? `\nAnd ${remaining} more update${remaining === 1 ? '' : 's'} not shown.` : '', event.dashboardUrl || event.url ? `\nOpen GearBeacon: ${event.dashboardUrl || event.url}` : '', '', 'Sent by your private GearBeacon installation.'].filter(Boolean).join('\n');
@@ -272,6 +283,8 @@ function textForEvent(event, options) {
     const lines = ['GearBeacon', details.label, '', event.name || details.label];
     if (event.previousStatus || event.status)
         lines.push(`${event.previousStatus || 'Status'} → ${event.status || 'Updated'}`);
+    if (event.type === 'restock_date')
+        lines.push(`Restock expected: ${formatRestockDate(event.restockEtaAt)}`);
     if (event.price)
         lines.push(`Price: ${event.price}${event.previousPrice ? ` (was ${event.previousPrice})` : ''}`);
     if (options.priceCalculations && moneyDelta(event))

@@ -2,6 +2,10 @@
 
 The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. The first release promoted to `main` is V1.0.0.
 
+## Unreleased
+
+- Watched items now create a distinct restock-date Activity event when the Store changes from no date to a date on two complete checks, including a date published with a sellout. New restock-date alerts are enabled by default, with global and per-watch controls; server channels, browser notifications, grouped messages, and email include the announced date. Date changes and removals update the confirmed product after two checks without announcing another newly published date.
+
 ## V1.4.1 — Delivery recovery and safer state changes
 
 Prepared September 25, 2026. Includes every change since v1.4.0. See the [complete release notes](RELEASE_NOTES.md).

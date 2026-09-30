@@ -517,6 +517,7 @@ html.activity-active { overflow-anchor:none; }
 .event-button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 .event-icon { width:36px; height:36px; border-radius:10px; display:grid; place-items:center; background:var(--panel3); color:var(--text); font-weight:700; }
 .event.restock .event-icon { color:var(--restock); background:color-mix(in srgb, var(--restock) 9%, var(--panel)); }
+.event.restock_date .event-icon { color:var(--price-drop); background:color-mix(in srgb, var(--price-drop) 9%, var(--panel)); }
 .event.sold_out .event-icon { color:var(--bad); background:color-mix(in srgb, var(--bad) 9%, var(--panel)); }
 .event.price_change .event-icon { color:var(--warn); background:color-mix(in srgb, var(--warn) 9%, var(--panel)); }
 .event.price_change.price-decrease .event-icon { color:var(--price-drop); background:color-mix(in srgb, var(--price-drop) 9%, var(--panel)); }
