@@ -114,7 +114,7 @@ jobs:
           Get-ChildItem dist/packages -File | Where-Object { $_.Name -match '\.(zip|tar\.gz)$' } | ForEach-Object {
             Copy-Item -LiteralPath $env:BUNDLE_PATH -Destination ($_.FullName + '.attestation.jsonl')
           }
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: standalone-${{ matrix.name }}
           path: dist/packages/*
@@ -168,7 +168,7 @@ jobs:
           Get-ChildItem dist/packages -File | Where-Object { $_.Name -match '\.(zip|tar\.gz)$' } | ForEach-Object {
             Copy-Item -LiteralPath $env:BUNDLE_PATH -Destination ($_.FullName + '.attestation.jsonl')
           }
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: source
           path: dist/packages/*
