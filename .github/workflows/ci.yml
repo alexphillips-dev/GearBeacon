@@ -207,4 +207,4 @@ jobs:
         shell: bash
         env:
           EXPECTED_BUILD_COMMIT: ${{ github.sha }}
-        run: node scripts/standalone-smoke.mjs dist/standalone/GearBeacon-v1.4.1-*/
+        run: node scripts/standalone-smoke.mjs dist/standalone/GearBeacon-v1.4.2-*/

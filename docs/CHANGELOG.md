@@ -2,8 +2,11 @@
 
 The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. The first release promoted to `main` is V1.0.0.
 
-## Unreleased
+## V1.4.2 — Reliable actions, monitoring, delivery, and deployment
 
+Development changes prepared November 3, 2026. Includes all changes since v1.4.1; this version has not been promoted to main.
+
+- Keep Set up auto-buy directly above the other Watchlist card actions in a shared bottom action area, including compact and mobile layouts.
 - Fixed Linux/macOS service installation and updates under restrictive umasks so nested web assets remain readable by the service account while application data stays private. Native installers now preserve package build identity, and the Windows service launcher reports the application's exit code.
 - Validate imported product records before creating a safety backup or changing state. Support bundles now redact IPv6 addresses and address fields as well as IPv4 addresses.
 - Bound SMTP connection and TLS negotiation time so a stalled server cannot block delivery processing. A message accepted by the SMTP server remains successful if the subsequent QUIT exchange fails.
@@ -13,7 +16,7 @@ The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. 
 
 ## V1.4.1 — Delivery recovery and safer state changes
 
-Prepared September 25, 2026. Includes every change since v1.4.0. See the [complete release notes](RELEASE_NOTES.md).
+Prepared September 25, 2026. Includes every change since v1.4.0. See the [complete release notes](https://github.com/alexphillips-dev/GearBeacon/blob/v1.4.1/docs/RELEASE_NOTES.md).
 
 - Adding a watch with an alert rule now commits both together, and bulk pause, resume, purchased, and wanted actions commit all selected watches together. Failed writes roll back rules, collection purchase state, and delivery changes.
 - Watch removals now commit the database and collection baselines before updating the live watchlist. Failed single or bulk removals leave every selected watch in place, including after a later Store check.

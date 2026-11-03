@@ -86,7 +86,7 @@ try {
     Assert ($null -ne $definition) "Missing service installer function: $functionName"
     . ([scriptblock]::Create($definition.Extent.Text))
   }
-  $identity = '{"packageVersion":"1.4.1-rc.1","branch":"dev","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
+  $identity = '{"packageVersion":"1.4.2-rc.1","branch":"dev","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
   Set-Content -LiteralPath "$fixture/$name/build-info.json" -Value $identity
   Install-GearBeaconMetadata -SourceDir "$fixture/$name" -DestinationDir $install
   Assert ((Get-Content -LiteralPath "$install/build-info.json" -Raw).Trim() -eq $identity) 'Fresh service installation discarded prerelease identity.'

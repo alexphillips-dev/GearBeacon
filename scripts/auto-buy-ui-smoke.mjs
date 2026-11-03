@@ -2,6 +2,47 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
+async function testWatchCardFooter({ evaluate,assert,cdp }) {
+  await evaluate(`(() => {
+    const fixture=document.createElement('div');fixture.id='autoBuyFooterFixture';fixture.className='grid watch-grid';
+    const product=app.products.find(item=>item.watched);
+    fixture.innerHTML=watchCard({...product,autoBuy:null})+watchCard({...product,autoBuy:null});
+    const [short,long]=fixture.children;
+    short.querySelector('.rule-chips').textContent='';
+    long.querySelector('.detail').textContent='Additional confirmed product details '.repeat(8);
+    long.querySelector('.rule-chips').innerHTML='<span class="rule-chip">Collection with a longer name</span>'.repeat(4);
+    document.getElementById('watchlistCards').after(fixture);
+  })()`);
+  try {
+    for(const theme of ['dark','light'])for(const layout of ['grid','compact'])for(const width of [1280,390,640]) {
+      await evaluate(`applyTheme('${theme}');document.getElementById('autoBuyFooterFixture').classList.toggle('compact-list',${layout==='compact'})`);
+      await cdp.send('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:width===640?2:1,mobile:false});
+      const result=await evaluate(`(() => {
+        const fixture=document.getElementById('autoBuyFooterFixture');
+        const cards=[...fixture.children].map(card=>{
+          const button=card.querySelector('[data-auto-buy]'),actions=card.querySelector('.card-actions'),footer=card.querySelector('.watch-card-footer');
+          const b=button.getBoundingClientRect(),a=actions.getBoundingClientRect(),f=footer?.getBoundingClientRect(),c=card.getBoundingClientRect();
+          return {gap:a.top-b.bottom,bottom:c.bottom-a.bottom,buttonTop:b.top,actionsTop:a.top,grouped:button.parentElement.parentElement===footer && actions.parentElement===footer,
+            contained:b.left>=c.left && b.right<=c.right && a.left>=c.left && a.right<=c.right && (!f || f.bottom<=c.bottom)};
+        });
+        return {cards,overflow:document.documentElement.scrollWidth>innerWidth+1};
+      })()`);
+      assert(!result.overflow && result.cards.every(card=>card.grouped && card.contained && card.gap>=5 && card.gap<=11),`Auto-buy footer moved away from its actions in ${theme}/${layout}/${width}: ${JSON.stringify(result)}`);
+      if(layout==='grid') {
+        assert(result.cards.every(card=>Math.abs(card.bottom-17)<1),'Watchlist actions did not stay at the card bottom');
+        if(width===1280)assert(Math.abs(result.cards[0].buttonTop-result.cards[1].buttonTop)<1,'Different module contents moved the setup buttons out of alignment');
+      }
+    }
+    await evaluate("document.querySelector('#autoBuyFooterFixture [data-auto-buy]').focus()");
+    await cdp.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
+    await cdp.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
+    assert(await evaluate("document.activeElement===document.querySelector('#autoBuyFooterFixture .card-actions button')"),'Auto-buy footer did not retain keyboard action order');
+  } finally {
+    await evaluate("document.getElementById('autoBuyFooterFixture').remove();applyTheme('dark')");
+    await cdp.send('Emulation.clearDeviceMetricsOverride');
+  }
+}
+
 export async function testAutoBuyUi({ evaluate,waitForBrowser,assertAccessible,assert,cdp,screenshotRoot }) {
   await evaluate("autoBuyNavigate('settings');refreshAutoBuy()");
   await waitForBrowser("autoBuyState && !autoBuyState.connection && document.getElementById('autoBuyGuide').open",'Unpaired checkout setup did not expand automatically');
@@ -63,6 +104,7 @@ export async function testAutoBuyUi({ evaluate,waitForBrowser,assertAccessible,a
   assert(await evaluate("document.getElementById('autoBuyConnection').textContent.includes('Saved profile · US · Home <test>') && !document.querySelector('#autoBuyConnection test')"),'The saved address profile was not reported safely');
   try {
     await waitForBrowser("document.querySelector('[data-auto-buy=\"uvc-g5-ptz::autobuy-ui\"]')",'Auto-buy setup button is missing');
+    await testWatchCardFooter({ evaluate,assert,cdp });
     await evaluate("document.querySelector('[data-auto-buy=\"uvc-g5-ptz::autobuy-ui\"]').focus(); document.querySelector('[data-auto-buy=\"uvc-g5-ptz::autobuy-ui\"]').click()");
     await waitForBrowser("document.getElementById('autoBuyDialog').open && document.querySelector('[data-auto-form]')",'Auto-buy dialog did not open');
     await evaluate("document.querySelector('[data-auto-form] [name=total]').value='700.00';document.querySelector('[data-auto-form] [name=quantity]').value='2';refreshAutoBuy()");

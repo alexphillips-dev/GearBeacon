@@ -10,13 +10,13 @@ const shell = process.platform === 'win32' ? join(process.env.ProgramFiles || 'C
 const unix = value => value.replaceAll('\\', '/');
 const sourceDir = join(root, 'package'), installDir = join(root, 'gearbeacon'), dataDir = join(root, 'data');
 const runner = join(root, 'install-files.sh');
-const metadata = { packageVersion:'1.4.1-rc.1', branch:'dev', commit:'a'.repeat(40) };
+const metadata = { packageVersion:'1.4.2-rc.1', branch:'dev', commit:'a'.repeat(40) };
 try {
   mkdirSync(join(sourceDir, 'web', 'assets'), { recursive:true });
   writeFileSync(join(sourceDir, 'web', 'index.html'), '<html>service fixture</html>');
   writeFileSync(join(sourceDir, 'web', 'assets', 'fixture.txt'), 'public asset');
   writeFileSync(join(sourceDir, 'gearbeacon'), 'executable fixture');
-  writeFileSync(join(sourceDir, 'release-manifest.json'), '{"latestVersion":"1.4.1"}');
+  writeFileSync(join(sourceDir, 'release-manifest.json'), '{"latestVersion":"1.4.2"}');
   for (const platform of ['linux', 'macos']) {
     const source = readFileSync(join(project, 'deploy', 'install-' + platform + '-service.sh'), 'utf8').replaceAll('\r\n', '\n');
     const start = source.indexOf('install -d -o root');

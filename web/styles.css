@@ -217,6 +217,8 @@ button.ghost { background: transparent; }
 }
 .card-actions .watching { background:var(--accent-soft); border-color:var(--accent); color:var(--text); }
 .watch-card { position:relative; }
+.watch-card-footer { display:flex; flex-direction:column; gap:10px; margin-top:auto; padding-top:14px; min-width:0; }
+.watch-card-footer > .card-actions { margin-top:0; padding-top:0; }
 .watch-card.paused { border-style:dashed; }
 .watch-select { position:absolute; z-index:3; top:10px; left:10px; width:30px; height:30px; display:grid; place-items:center; border:1px solid var(--border); border-radius:8px; background:color-mix(in srgb,var(--panel) 88%,transparent); backdrop-filter:blur(8px); }
 .watch-select span { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0); }
@@ -882,7 +884,8 @@ button.watch-import-backdrop:hover { border:0; background:rgba(0,0,0,.64); trans
 .compact-list .watch-card,.compact-list .collection-card { display:grid; grid-template-columns:100px minmax(0,1fr) auto; gap:5px 16px; padding:14px; }
 .compact-list .watch-card > :not(.watch-select),.compact-list .collection-card > * { grid-column:2; margin:0; padding:0; min-width:0; }
 .compact-list .watch-card > .watch-image,.compact-list .collection-card > .collection-preview { grid-column:1; grid-row:1 / span 8; width:100%; height:100px; border-radius:10px; align-self:center; overflow:hidden; }
-.compact-list .watch-card > .card-actions,.compact-list .collection-card > .card-actions { grid-column:3; grid-row:1 / span 9; align-self:center; display:flex; flex-direction:column; gap:6px; }
+.compact-list .watch-card > .watch-card-footer,.compact-list .collection-card > .card-actions { grid-column:3; grid-row:1 / span 9; align-self:center; display:flex; flex-direction:column; gap:6px; }
+.compact-list .watch-card-footer > .card-actions { flex-direction:column; gap:6px; }
 .compact-list .card-actions button { min-height:34px; padding:7px 12px; }
 .compact-list .price { font-size:18px; }
 .compact-list .card h3 { margin:0; }
@@ -894,7 +897,8 @@ button.watch-import-backdrop:hover { border:0; background:rgba(0,0,0,.64); trans
   .saved-view-row { flex-wrap:wrap; }.saved-view-row strong { flex-basis:100%; }
   .compact-list .watch-card,.compact-list .collection-card { grid-template-columns:68px minmax(0,1fr); gap:5px 10px; padding:12px; }
   .compact-list .watch-card > .watch-image,.compact-list .collection-card > .collection-preview { height:68px; align-self:start; }
-  .compact-list .watch-card > .card-actions,.compact-list .collection-card > .card-actions { grid-column:1 / -1; grid-row:auto; flex-direction:row; flex-wrap:wrap; margin-top:8px; }
+  .compact-list .watch-card > .watch-card-footer,.compact-list .collection-card > .card-actions { grid-column:1 / -1; grid-row:auto; margin-top:8px; }
+  .compact-list .watch-card-footer > .card-actions,.compact-list .collection-card > .card-actions { flex-direction:row; flex-wrap:wrap; }
   .compact-list .card-actions button { flex:1; }
   .compact-list .watch-select { top:15px; left:15px; }
 }
@@ -937,7 +941,7 @@ button.watch-import-backdrop:hover { border:0; background:rgba(0,0,0,.64); trans
 .delivery-channel-choices label { display:flex; align-items:center; gap:6px; font-size:12px; overflow-wrap:anywhere; }
 
 /* Auto-buy keeps checkout controls separate from notification rules. */
-.auto-buy-card { display:flex; flex-direction:column; gap:6px; margin-top:14px; min-width:0; }
+.auto-buy-card { display:flex; flex-direction:column; gap:6px; min-width:0; }
 .auto-buy-action { width:100%; color:var(--price-drop); border-color:var(--price-drop); background:color-mix(in srgb,var(--price-drop) 7%,var(--panel)); }
 .auto-buy-armed,.auto-buy-preparing,.auto-buy-queued { color:var(--price-drop); }
 .auto-buy-purchased { color:var(--good); }
@@ -963,11 +967,9 @@ button.watch-import-backdrop:hover { border:0; background:rgba(0,0,0,.64); trans
 .auto-buy-pairing-row[hidden] { display:none; }
 .auto-buy-pairing-row label { color:var(--muted); font-size:12px; }
 #autoBuyPairing { width:calc(32ch + 28px); max-width:100%; min-width:0; margin:0; color:var(--text); font-family:ui-monospace,SFMono-Regular,Consolas,monospace; }
-.compact-list .watch-card>.auto-buy-card { grid-column:2; grid-row:auto; margin-top:6px; }
 @media(max-width:640px) {
   .auto-buy-dialog .form-row { grid-template-columns:minmax(0,1fr); gap:0; }
   .auto-buy-attempt { align-items:flex-start; }
-  .compact-list .watch-card>.auto-buy-card { grid-column:1 / -1; }
 }
 /* Native modal containment keeps verification usable at mobile widths and zoom. */
 .security-verify-dialog { box-sizing:border-box; width:min(440px, calc(100% - 32px)); max-height:calc(100dvh - 32px); overflow:auto; padding:24px; border:1px solid var(--border); border-radius:14px; background:var(--bg); color:var(--text); }

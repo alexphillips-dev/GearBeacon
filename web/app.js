@@ -783,12 +783,14 @@ function watchCard(p) {
     <div class="detail">${escapeHtml(productDetail(p))}${changedRecently ? ' · changed recently' : ''}</div>
     ${freshnessMarkup(p)}
     ${alertSummaryMarkup(p)}
-    ${autoBuyCard(p)}
     <div class="rule-chips">${(p.collections || []).map((id) => app.collections.find((collection) => collection.id === id)).filter(Boolean).map((collection) => `<span class="rule-chip">Collection: ${escapeHtml(collection.name)}</span>`).join('')}</div>
+    <div class="watch-card-footer">
+    ${autoBuyCard(p)}
     <div class="card-actions">
       <button data-product-detail="${escapeHtml(p.slug)}">Alert rules</button>
       <button data-purchased="${escapeHtml(p.slug)}">${p.watchRule?.purchasedAt ? 'Still wanted' : 'Purchased'}</button>
       <button class="watching" data-watch="${escapeHtml(p.slug)}">Remove</button>
+    </div>
     </div>
   </article>`;
 }
