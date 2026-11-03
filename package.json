@@ -15,7 +15,7 @@
     "test:checkout": "node --no-warnings scripts/auto-buy-browser-test.mjs"
   },
   "devDependencies": {
-    "axe-core": "4.13.0",
+    "axe-core": "4.14.0",
     "postject": "1.0.0-alpha.6",
     "typescript": "5.8.3"
   }

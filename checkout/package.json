@@ -12,5 +12,5 @@
     "verify": "node companion.mjs verify",
     "test": "node ../scripts/auto-buy-browser-test.mjs"
   },
-  "dependencies": { "playwright": "1.63.0" }
+  "dependencies": { "playwright": "1.64.1" }
 }
