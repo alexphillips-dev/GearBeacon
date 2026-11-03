@@ -532,7 +532,7 @@ try {
     emailDetailLevel:'detailed', emailTheme:'dark', emailSubjectPrefix:'[GB Test]', emailDigestMaxItems:3,
     emailEmbedImages:true, emailExplainReason:true, emailPriceCalculations:true,
   }, secrets:{ secondaryBackupPassphrase:'v19 secondary recovery passphrase' } }) });
-  if (schedulingSave.config.notificationTimeZone !== 'UTC' || schedulingSave.config.notificationCooldownMinutes !== 7 || schedulingSave.config.historyRetentionDays !== 400 || schedulingSave.config.eventRetentionDays !== 730 || schedulingSave.config.secondaryBackupDir !== secondaryData || !schedulingSave.config.secondaryEncryptedExports || !schedulingSave.secretsConfigured.secondaryBackupPassphrase || !schedulingSave.config.operationalAlerts.lowDiskSpace || schedulingSave.config.emailDetailLevel !== 'detailed' || schedulingSave.config.emailDigestMaxItems !== 3 || schedulingSave.config.emailSubjectPrefix !== '[GB Test]') throw new Error('V1.4.2 delivery, email, recovery, or retention settings did not save.');
+  if (schedulingSave.config.notificationTimeZone !== 'UTC' || schedulingSave.config.notificationCooldownMinutes !== 7 || schedulingSave.config.historyRetentionDays !== 400 || schedulingSave.config.eventRetentionDays !== 730 || schedulingSave.config.secondaryBackupDir !== secondaryData || !schedulingSave.config.secondaryEncryptedExports || !schedulingSave.secretsConfigured.secondaryBackupPassphrase || !schedulingSave.config.operationalAlerts.lowDiskSpace || schedulingSave.config.emailDetailLevel !== 'detailed' || schedulingSave.config.emailDigestMaxItems !== 3 || schedulingSave.config.emailSubjectPrefix !== '[GB Test]') throw new Error('v1.4.2 delivery, email, recovery, or retention settings did not save.');
   await fetchJson('/api/config/validate', { method:'POST', body:JSON.stringify({ ...schedulingSave.config, emailSubjectPrefix:'[GearBeacon]\r\nBcc: attacker@example.test' }) }, 400);
   const deliveryPreview = await request('/api/notifications/preview?region=us&slug=u7-pro-xgs&eventType=restock');
   if (deliveryPreview.decision?.allowed !== true || deliveryPreview.delivery?.mode !== 'immediate-restock' || deliveryPreview.delivery?.timeZone !== 'UTC' || !deliveryPreview.copy?.title || !/^\[GB Test\]/.test(deliveryPreview.email?.subject || '') || !/Why you received this/i.test(deliveryPreview.email?.text || '')) throw new Error('Notification delivery or email preview did not honor saved settings.');
@@ -615,11 +615,11 @@ try {
   startServer(8899, localData);
   await waitFor('/api/status?region=us');
   const afterUpgrade = await request('/api/data/info?region=us');
-  if (afterUpgrade.backup.count <= beforeUpgrade || afterUpgrade.schemaVersion !== 15) throw new Error('Automatic V0.1.5 pre-update backup or schema migration failed.');
+  if (afterUpgrade.backup.count <= beforeUpgrade || afterUpgrade.schemaVersion !== 15) throw new Error('Automatic v0.1.5 pre-update backup or schema migration failed.');
   const migratedDb = new DatabaseSync(join(localData, 'gearbeacon.mock.sqlite3'));
   const migratedPushTable = migratedDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='push_tokens'").get();
   migratedDb.close();
-  if (migratedPushTable) throw new Error('Obsolete push storage returned during the V0.1.5 to V1.4.2 migration.');
+  if (migratedPushTable) throw new Error('Obsolete push storage returned during the v0.1.5 to v1.4.2 migration.');
   const updates = await request('/api/update/check?region=us');
   const installedVersion = (await request('/healthz')).packageVersion;
   if (updates.currentVersion !== installedVersion || updates.latestVersion !== installedVersion || updates.updateAvailable || updates.verified) throw new Error('Disabled update checks did not preserve the installed package version and unverified state.');
@@ -635,15 +635,15 @@ try {
     startServer(8899, localData);
     await waitFor('/api/status?region=us');
     const migrated = await request('/api/data/info?region=us');
-    if (migrated.schemaVersion !== 15 || migrated.backup.count < 1) throw new Error(`Automatic V${historical.version} to V1.4.2 migration failed.`);
+    if (migrated.schemaVersion !== 15 || migrated.backup.count < 1) throw new Error(`Automatic v${historical.version} to v1.4.2 migration failed.`);
     const migratedCheck = await request('/api/check?region=us', { method:'POST', body:'{}' });
-    if (!migratedCheck.ok) throw new Error(`V${historical.version} monitoring did not work after migration.`);
+    if (!migratedCheck.ok) throw new Error(`v${historical.version} monitoring did not work after migration.`);
     const migratedWatch = await request('/api/watchlist?region=us');
-    if (!migratedWatch.products.some((product) => product.slug === 'u7-pro-xgs' && !product.variantId)) throw new Error(`V${historical.version} did not preserve the existing Any variant watch.`);
+    if (!migratedWatch.products.some((product) => product.slug === 'u7-pro-xgs' && !product.variantId)) throw new Error(`v${historical.version} did not preserve the existing Any variant watch.`);
     const migratedLog = new DatabaseSync(join(localData, 'gearbeacon.mock.sqlite3'), { readOnly:true });
     const loggedBackups = Number(migratedLog.prepare('SELECT COUNT(*) AS count FROM backup_log').get()?.count || 0);
     migratedLog.close();
-    if (loggedBackups <= backupCount) throw new Error(`V${historical.version} migration did not record its pre-update safety backup.`);
+    if (loggedBackups <= backupCount) throw new Error(`v${historical.version} migration did not record its pre-update safety backup.`);
     await stopServer();
   }
 
@@ -728,7 +728,7 @@ try {
   await fetchJson('/api/status', { headers:{ Cookie:proxyCookie, 'X-Forwarded-Host':'attacker.invalid' } }, 421);
   await fetchJson('/api/status', { headers:{ Cookie:proxyCookie, 'X-Forwarded-Host':'gearbeacon.test, attacker.invalid' } }, 421);
 
-  console.log('\nSELF-TEST PASSED: V1.4.2 confirmed transitions + searchable/exportable activity + secondary recovery/restore tests + diagnostics/support bundle + watch intelligence + notifications + private self-hosting security all work.');
+  console.log('\nSELF-TEST PASSED: v1.4.2 confirmed transitions + searchable/exportable activity + secondary recovery/restore tests + diagnostics/support bundle + watch intelligence + notifications + private self-hosting security all work.');
 } finally {
   await stopServer();
   await new Promise((resolve) => smtpServer.close(resolve));

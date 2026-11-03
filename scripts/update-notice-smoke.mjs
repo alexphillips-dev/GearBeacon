@@ -14,6 +14,8 @@ export async function testUpdateNotice({evaluate,waitForBrowser,assertAccessible
     activateTab('activity'); resetActivityFilters();
   })()`);
   try {
+    await evaluate('renderSettings()');
+    assert(await evaluate("document.getElementById('settingsVersion').textContent==='v'+app.status.version && document.querySelector('main > footer').textContent.includes('GearBeacon v'+app.status.version)"),'Settings or footer used an uppercase version prefix');
     await waitForBrowser("!app.activityController && document.querySelectorAll('#activityList .event').length>=5",'Activity did not load for update-notice anchoring');
     await evaluate('refresh()');
     assert(await evaluate("document.getElementById('appUpdateNotice').classList.contains('hidden')"),'A current build showed an update notice');
@@ -56,6 +58,7 @@ export async function testUpdateNotice({evaluate,waitForBrowser,assertAccessible
     await evaluate("window.noticeFixture.releaseNotesUrl='javascript:alert(1)'; refresh()");
     await waitForBrowser("document.getElementById('appUpdateButton').getAttribute('href')==='#settings'",'Unsafe or unavailable notes did not use the local fallback');
     await evaluate("document.getElementById('appUpdateButton').click()");
+    assert(await evaluate("document.getElementById('updateResult').textContent.includes('GearBeacon v1.5.0-rc.1+build.2 is available')"),'Update details did not use the lowercase version prefix');
     assert(await evaluate("app.activeTab==='settings' && app.activeSettingsTab==='general' && !document.getElementById('settingsGeneralApplicationPanel').hidden && document.getElementById('updateResult').textContent.includes('Example update <notes>') && !document.querySelector('#updateResult notes')"),'Missing notes did not open safe update details');
     await evaluate("window.noticeFixture={...window.noticeFixture,verified:false,updateAvailable:false,warning:'Mock update source unavailable'}; checkUpdates()");
     await waitForBrowser("!document.getElementById('updateBtn').disabled && document.getElementById('appUpdateNotice').classList.contains('hidden')",'Unknown update status showed a notice');

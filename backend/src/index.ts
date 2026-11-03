@@ -1,4 +1,4 @@
-// GearBeacon V1.4.2 backend
+// GearBeacon v1.4.2 backend
 // Private, owner-operated stock monitoring for local and self-hosted installs.
 // @ts-nocheck
 
@@ -6106,7 +6106,7 @@ async function start() {
   }
   initializeOwnerAuthentication();
   console.log('');
-  console.log(`  GearBeacon V${APP_VERSION}`);
+  console.log(`  GearBeacon v${APP_VERSION}`);
   console.log('  Know the second it\'s back.');
   console.log('');
   console.log(`  Regions:     ${ACTIVE_REGIONS.map((region) => REGIONS[region].label).join(', ')}`);
@@ -6144,7 +6144,7 @@ async function start() {
   scheduleBackups();
   scheduleNotificationWorker();
   scheduleUpdateCheck();
-  writeAppLog('info', 'app', `GearBeacon V${APP_VERSION} started.`, { regions: ACTIVE_REGIONS, accessMode: ACCESS_MODE, platform: `${process.platform}/${process.arch}` });
+  writeAppLog('info', 'app', `GearBeacon v${APP_VERSION} started.`, { regions: ACTIVE_REGIONS, accessMode: ACCESS_MODE, platform: `${process.platform}/${process.arch}` });
 }
 
 function shutdown(signal) {

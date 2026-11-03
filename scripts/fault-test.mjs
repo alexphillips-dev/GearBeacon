@@ -157,7 +157,7 @@ await Promise.all([mkdir(dataDir), mkdir(secondaryDir)]);
 try {
   await startServer();
   let status = await fetchJson('/api/status');
-  assert(status.version === '1.4.2' && status.productCount === 6, 'Fault suite did not start on the V1.4.2 six-product baseline.');
+  assert(status.version === '1.4.2' && status.productCount === 6, 'Fault suite did not start on the v1.4.2 six-product baseline.');
 
   // Watch writes are already committed before the response. An unrelated SQLite
   // writer must not trigger a delayed whole-state save that crashes the server.

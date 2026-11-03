@@ -31,10 +31,10 @@ jobs:
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           BASE_VERSION="${TAG_VERSION%%[-+]*}"
           APP_VERSION=$(node -p "require('./backend/package.json').version")
-          test "$BASE_VERSION" = "$APP_VERSION" || { echo "Tag $GITHUB_REF_NAME does not match application V$APP_VERSION." >&2; exit 1; }
+          test "$BASE_VERSION" = "$APP_VERSION" || { echo "Tag $GITHUB_REF_NAME does not match application v$APP_VERSION." >&2; exit 1; }
           npm run build
           npm run check
-          grep -Fq "## V${APP_VERSION} " docs/CHANGELOG.md || { echo "docs/CHANGELOG.md has no V${APP_VERSION} entry." >&2; exit 1; }
+          grep -Fq "## v${APP_VERSION} " docs/CHANGELOG.md || { echo "docs/CHANGELOG.md has no v${APP_VERSION} entry." >&2; exit 1; }
           node -e "const m=require('./release-manifest.json'); if (!m.releaseNotes?.trim()) throw new Error('Release notes are empty')"
           if [[ "$GITHUB_REF_NAME" == *-* ]]; then TARGET=dev; else TARGET=main; fi
           git fetch --no-tags origin "$TARGET"
@@ -88,9 +88,9 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft >/tmp/gearbeacon-release-state 2>/dev/null; then
             test "$(cat /tmp/gearbeacon-release-state)" = true || { echo 'A published release already exists for this tag.' >&2; exit 1; }
             gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
-            gh release edit "$GITHUB_REF_NAME" --notes-file docs/RELEASE_NOTES.md
+            gh release edit "$GITHUB_REF_NAME" --title "GearBeacon v${GITHUB_REF_NAME#v}" --notes-file docs/RELEASE_NOTES.md
           else
-            gh release create "$GITHUB_REF_NAME" release-assets/* --draft --title "GearBeacon V${GITHUB_REF_NAME#v}" --notes-file docs/RELEASE_NOTES.md "${PRERELEASE[@]}"
+            gh release create "$GITHUB_REF_NAME" release-assets/* --draft --title "GearBeacon v${GITHUB_REF_NAME#v}" --notes-file docs/RELEASE_NOTES.md "${PRERELEASE[@]}"
           fi
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1

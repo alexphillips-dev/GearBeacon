@@ -65,7 +65,7 @@ test "$(docker inspect --format '{{.Image}}' "$CONTAINER")" = "$EXPECTED_ID" || 
 deadline=$(($(date +%s) + TIMEOUT))
 while test "$(date +%s)" -lt "$deadline"; do
   if docker compose exec -T gearbeacon node -e 'fetch("http://127.0.0.1:"+(process.env.PORT||8787)+"/healthz",{signal:AbortSignal.timeout(1500)}).then(async r=>{const h=await r.json(),v=process.argv[1],base=v.split(/[-+]/)[0];process.exit(r.ok&&h.ok===true&&h.name==="GearBeacon"&&h.version===base&&(!h.packageVersion||h.packageVersion===base||h.packageVersion===v)?0:1)}).catch(()=>process.exit(1))' "$VERSION" 2>/dev/null; then
-    echo "GearBeacon V$VERSION verified: requested image and local startup health. Version pinned in .env; data volume preserved."
+    echo "GearBeacon v$VERSION verified: requested image and local startup health. Version pinned in .env; data volume preserved."
     exit 0
   fi
   sleep 2

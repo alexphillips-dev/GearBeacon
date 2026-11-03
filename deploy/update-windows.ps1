@@ -48,7 +48,7 @@ try {
       $health = Invoke-RestMethod "http://127.0.0.1:$Port/healthz" -TimeoutSec 2
       $observed = if ($health.packageVersion) { $health.packageVersion } else { $health.version }
       if ($health.ok -is [bool] -and $health.ok -eq $true -and $health.name -ceq 'GearBeacon' -and $health.version -ceq ($Version -split '[-+]')[0] -and $observed -ceq $Version) {
-        Write-Host "GearBeacon V$Version verified: local startup health and expected version. Data was preserved."
+        Write-Host "GearBeacon v$Version verified: local startup health and expected version. Data was preserved."
         return
       }
     } catch { Write-Verbose 'Waiting for GearBeacon startup.' }

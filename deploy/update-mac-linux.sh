@@ -75,7 +75,7 @@ while test "$(date +%s)" -lt "$deadline"; do
   app_version=$(printf '%s' "$health" | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
   if test -z "$observed"; then observed=$app_version; fi
   if test "$observed" = "$VERSION" && test "$app_version" = "$BASE_VERSION" && printf '%s' "$health" | grep -Eq '"name"[[:space:]]*:[[:space:]]*"GearBeacon"' && printf '%s' "$health" | grep -Eq '"ok"[[:space:]]*:[[:space:]]*true'; then
-    echo "GearBeacon V$VERSION verified: local startup health and expected version. Data was preserved."
+    echo "GearBeacon v$VERSION verified: local startup health and expected version. Data was preserved."
     exit 0
   fi
   sleep 1

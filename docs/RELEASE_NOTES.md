@@ -1,4 +1,4 @@
-# GearBeacon 1.4.2 — Reliable actions, monitoring, delivery, and deployment
+# GearBeacon v1.4.2 — Reliable actions, monitoring, delivery, and deployment
 
 Development changes since v1.4.1. This version is prepared on dev for testing and has not been promoted to main or published as a stable release. GearBeacon remains a private, single-owner, self-hosted UniFi Store monitor.
 

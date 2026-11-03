@@ -1611,7 +1611,7 @@ function renderAttentionBanner() {
 function renderSettings(updatePreferences = true) {
   const status = app.status;
   const info = app.dataInfo;
-  if (status && $('settingsVersion')) $('settingsVersion').textContent = `V${status.version}`;
+  if (status && $('settingsVersion')) $('settingsVersion').textContent = `v${status.version}`;
   if (!info) return;
   $('storageEngine').textContent = info.engine || 'SQLite';
   $('schemaVersion').textContent = `v${info.schemaVersion} of v${info.expectedSchemaVersion}`;
@@ -2063,7 +2063,7 @@ async function refreshOperations() {
     $('operationsMonitoring').innerHTML = `<article class="settings-card"><span class="settings-kicker">Regions</span><h3>Store health</h3>${ops.regions.map((r) => `<div class="ops-row"><span class="connection-dot ${r.lastSuccessAt && !r.lastError ? 'enabled' : ''}"></span><div><strong>${escapeHtml(r.label)}</strong><small>${r.lastError ? escapeHtml(r.lastError) : `Last check ${escapeHtml(relativeTime(r.lastSuccessAt))} · next ${escapeHtml(relativeTime(r.nextCheckAt))}`}</small></div><b>${r.productCount || 0} products</b></div>`).join('')}</article>`;
     $('operationsDelivery').innerHTML = `<article class="settings-card"><span class="settings-kicker">Delivery</span><h3>Notification queue</h3><dl class="settings-details"><div><dt>Pending</dt><dd>${queue.pending}</dd></div><div><dt>Delivered</dt><dd>${queue.sent}</dd></div><div><dt>Failed</dt><dd>${queue.failed}</dd></div><div><dt>Next scheduled</dt><dd>${queue.nextDeliveryAt ? escapeHtml(relativeTime(queue.nextDeliveryAt)) : 'None'}</dd></div></dl>${failures ? `<div class="failure-list">${failures}</div>` : ''}${queue.failed ? '<p>Retry sends these alerts again. Dismiss clears the warning without sending; delivery history remains in Activity.</p>' : ''}<div class="settings-actions wrap">${queue.failed ? '<button data-retry-failed>Retry failed</button><button data-dismiss-all-failed>Dismiss all failed</button>' : ''}<button data-settings-link="notifications" data-settings-target="delivery">Delivery settings</button></div></article>`;
     $('operationsBackups').innerHTML = `<article class="settings-card"><span class="settings-kicker">Data safety</span><h3>Backups</h3><dl class="settings-details"><div><dt>Validated</dt><dd>${ops.backups.count}</dd></div><div><dt>Integrity</dt><dd>${ops.backups.integrity.ok ? 'OK' : 'Failed'}</dd></div><div><dt>Latest</dt><dd>${ops.backups.latest ? escapeHtml(relativeTime(ops.backups.latest.createdAt)) : 'None'}</dd></div></dl>${backupHistory ? `<div class="failure-list">${backupHistory}</div>` : ''}<div class="settings-actions"><button data-settings-link="data" data-settings-target="backups">Data settings</button></div></article>`;
-    $('operationsGrid').innerHTML = `<article class="settings-card"><span class="settings-kicker">Storage & build</span><h3>Installation</h3><dl class="settings-details"><div><dt>Database</dt><dd>${bytes(ops.storage.databaseSize)}</dd></div><div><dt>Free space</dt><dd>${bytes(ops.storage.freeSpace)}</dd></div><div><dt>Version</dt><dd>V${escapeHtml(ops.runtime.version)}</dd></div><div><dt>Commit / image</dt><dd>${escapeHtml(ops.runtime.commit || ops.runtime.image || 'Source checkout')}</dd></div></dl></article>`;
+    $('operationsGrid').innerHTML = `<article class="settings-card"><span class="settings-kicker">Storage & build</span><h3>Installation</h3><dl class="settings-details"><div><dt>Database</dt><dd>${bytes(ops.storage.databaseSize)}</dd></div><div><dt>Free space</dt><dd>${bytes(ops.storage.freeSpace)}</dd></div><div><dt>Version</dt><dd>v${escapeHtml(ops.runtime.version)}</dd></div><div><dt>Commit / image</dt><dd>${escapeHtml(ops.runtime.commit || ops.runtime.image || 'Source checkout')}</dd></div></dl></article>`;
     const confidence = ops.monitoringConfidence || { pending:[], count:0, recentChecks:[] };
     const pendingRows = confidence.pending.slice(0, 6).map((item) => `<div class="failure-row"><strong>${escapeHtml(item.slug)} · ${escapeHtml(humanStatus(item.kind))}</strong><small>${item.observations} of 2 valid observations · ${escapeHtml(String(item.region).toUpperCase())}</small></div>`).join('');
     const secondary = ops.backups.secondary || {};
@@ -2278,10 +2278,10 @@ function renderUpdateResult(result) {
   const warnings=[...(result.compatibilityWarnings || []),result.warning].filter(Boolean).map(item=>`<br><span class="warning-text">${escapeHtml(item)}</span>`).join('');
   const channel=escapeHtml(result.channel || 'configured');
   if (result.updateAvailable) {
-    resultEl.innerHTML=`<strong>GearBeacon V${escapeHtml(result.latestVersion)} is available (${channel}).</strong>${link}${download ? ` <a href="${escapeHtml(download)}" target="_blank" rel="noopener noreferrer">Downloads ↗</a>` : ''}${result.releaseNotes ? `<br>${escapeHtml(result.releaseNotes)}` : ''}${warnings}`;
+    resultEl.innerHTML=`<strong>GearBeacon v${escapeHtml(result.latestVersion)} is available (${channel}).</strong>${link}${download ? ` <a href="${escapeHtml(download)}" target="_blank" rel="noopener noreferrer">Downloads ↗</a>` : ''}${result.releaseNotes ? `<br>${escapeHtml(result.releaseNotes)}` : ''}${warnings}`;
   } else {
     const title=!result.verified || result.stale ? 'Update status unavailable.' : result.warning ? 'No newer version confirmed.' : 'No update available.';
-    resultEl.innerHTML=`<strong>${title}</strong> Running GearBeacon V${escapeHtml(result.currentVersion)} on ${channel}.${warnings}`;
+    resultEl.innerHTML=`<strong>${title}</strong> Running GearBeacon v${escapeHtml(result.currentVersion)} on ${channel}.${warnings}`;
   }
 }
 
