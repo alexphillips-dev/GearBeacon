@@ -10,7 +10,10 @@ install -o root -g root -m 0755 "$SOURCE_DIR/gearbeacon" /opt/gearbeacon/gearbea
 rm -rf /opt/gearbeacon/web
 cp -R "$SOURCE_DIR/web" /opt/gearbeacon/web
 install -o root -g root -m 0644 "$SOURCE_DIR/release-manifest.json" /opt/gearbeacon/release-manifest.json
+if test -f "$SOURCE_DIR/build-info.json"; then install -o root -g root -m 0644 "$SOURCE_DIR/build-info.json" /opt/gearbeacon/build-info.json; else rm -f /opt/gearbeacon/build-info.json; fi
 chown -R root:root /opt/gearbeacon
+find /opt/gearbeacon/web -type d -exec chmod 0755 {} +
+find /opt/gearbeacon/web -type f -exec chmod 0644 {} +
 chmod -R go-w /opt/gearbeacon
 chown -R gearbeacon:gearbeacon /var/lib/gearbeacon
 chmod 0700 /var/lib/gearbeacon

@@ -41,7 +41,10 @@ install -o root -g wheel -m 0755 "$SOURCE_DIR/gearbeacon" "$INSTALL_DIR/gearbeac
 rm -rf "$INSTALL_DIR/web"
 cp -R "$SOURCE_DIR/web" "$INSTALL_DIR/web"
 install -o root -g wheel -m 0644 "$SOURCE_DIR/release-manifest.json" "$INSTALL_DIR/release-manifest.json"
+if test -f "$SOURCE_DIR/build-info.json"; then install -o root -g wheel -m 0644 "$SOURCE_DIR/build-info.json" "$INSTALL_DIR/build-info.json"; else rm -f "$INSTALL_DIR/build-info.json"; fi
 chown -R root:wheel "$INSTALL_DIR"
+find "$INSTALL_DIR/web" -type d -exec chmod 0755 {} +
+find "$INSTALL_DIR/web" -type f -exec chmod 0644 {} +
 chmod -R go-w "$INSTALL_DIR"
 touch "$DATA_DIR/gearbeacon.log"
 chown "$SERVICE_USER:$SERVICE_GROUP" "$DATA_DIR/gearbeacon.log"

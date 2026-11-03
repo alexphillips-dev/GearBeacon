@@ -4,6 +4,10 @@ The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. 
 
 ## Unreleased
 
+- Fixed Linux/macOS service installation and updates under restrictive umasks so nested web assets remain readable by the service account while application data stays private. Native installers now preserve package build identity, and the Windows service launcher reports the application's exit code.
+- Validate imported product records before creating a safety backup or changing state. Support bundles now redact IPv6 addresses and address fields as well as IPv4 addresses.
+- Bound SMTP connection and TLS negotiation time so a stalled server cannot block delivery processing. A message accepted by the SMTP server remains successful if the subsequent QUIT exchange fails.
+- Confirm restock dates independently when a date first appears or changes during sellout confirmation. Stock insights count actual restock events without counting restock-date events, and health freshness follows the saved or updated polling interval.
 - Updated Playwright to 1.64.1, axe-core to 4.14.0, and pinned CI, packaging, and security actions. Container builds now also install Alpine security updates for musl, musl-utils, and zlib alongside OpenSSL.
 - Watched items now create a distinct restock-date Activity event when the Store changes from no date to a date on two complete checks, including a date published with a sellout. New restock-date alerts are enabled by default, with global and per-watch controls; server channels, browser notifications, grouped messages, and email include the announced date. Date changes and removals update the confirmed product after two checks without announcing another newly published date.
 

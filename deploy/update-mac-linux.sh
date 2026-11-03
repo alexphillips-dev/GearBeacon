@@ -62,6 +62,8 @@ else sudo systemctl stop "$SERVICE"; fi
 sudo install -m 0755 "$TMP_DIR/$NAME/gearbeacon" "$INSTALL/gearbeacon"
 sudo rm -rf "$INSTALL/web"
 sudo cp -R "$TMP_DIR/$NAME/web" "$INSTALL/web"
+sudo find "$INSTALL/web" -type d -exec chmod 0755 {} +
+sudo find "$INSTALL/web" -type f -exec chmod 0644 {} +
 sudo install -m 0644 "$TMP_DIR/$NAME/release-manifest.json" "$INSTALL/release-manifest.json"
 if test -f "$TMP_DIR/$NAME/build-info.json"; then sudo install -m 0644 "$TMP_DIR/$NAME/build-info.json" "$INSTALL/build-info.json"; else sudo rm -f "$INSTALL/build-info.json"; fi
 if [ "$PLATFORM" = macos ]; then sudo launchctl bootstrap system /Library/LaunchDaemons/com.gearbeacon.server.plist; else sudo systemctl start "$SERVICE"; fi

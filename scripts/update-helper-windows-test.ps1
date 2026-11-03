@@ -81,6 +81,31 @@ try {
   Assert (-not (Test-Path -LiteralPath "$install/web/obsolete.html")) 'Windows reinstall kept an obsolete web file.'
   Assert (-not (Test-Path -LiteralPath "$install/web/web")) 'Windows reinstall nested the new web directory.'
   Assert ((Get-Content -LiteralPath "$install/web/index.html" -Raw).Contains('new UI fixture')) 'Windows reinstall did not serve the new web files.'
+  foreach ($functionName in @('Install-GearBeaconMetadata', 'New-GearBeaconServiceLauncher')) {
+    $definition = $installerAst.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $functionName }, $true)
+    Assert ($null -ne $definition) "Missing service installer function: $functionName"
+    . ([scriptblock]::Create($definition.Extent.Text))
+  }
+  $identity = '{"packageVersion":"1.4.1-rc.1","branch":"dev","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
+  Set-Content -LiteralPath "$fixture/$name/build-info.json" -Value $identity
+  Install-GearBeaconMetadata -SourceDir "$fixture/$name" -DestinationDir $install
+  Assert ((Get-Content -LiteralPath "$install/build-info.json" -Raw).Trim() -eq $identity) 'Fresh service installation discarded prerelease identity.'
+  Remove-Item -LiteralPath "$fixture/$name/build-info.json"
+  Install-GearBeaconMetadata -SourceDir "$fixture/$name" -DestinationDir $install
+  Assert (-not (Test-Path -LiteralPath "$install/build-info.json")) 'Reinstallation retained stale build metadata.'
+  $launcherFile = Join-Path $fixture 'service-launch.ps1'
+  Set-Content -LiteralPath $launcherFile -Value (New-GearBeaconServiceLauncher -InstallDir $install -DataDir $fixture) -Encoding UTF8
+  Copy-Item -LiteralPath (Get-Command node).Source -Destination "$install/GearBeacon.exe" -Force
+  $previousNodeOptions = $env:NODE_OPTIONS
+  try {
+    $childSource = Join-Path $fixture 'child-exit.cjs'
+    $env:NODE_OPTIONS = "--require=`"$($childSource.Replace('\', '/'))`""
+    foreach ($childCode in @(7, 0)) {
+      Set-Content -LiteralPath $childSource -Value "process.exit($childCode)"
+      & "$env:SystemRoot/System32/WindowsPowerShell/v1.0/powershell.exe" -NoLogo -NoProfile -ExecutionPolicy Bypass -File $launcherFile
+      Assert ($LASTEXITCODE -eq $childCode) "Scheduled-task launcher returned $LASTEXITCODE instead of $childCode. $((Get-Content -LiteralPath (Join-Path $fixture 'gearbeacon.log') -Raw -ErrorAction SilentlyContinue))"
+    }
+  } finally { $env:NODE_OPTIONS = $previousNodeOptions }
   Write-Host 'Windows updater tests passed: checksum, stop/restart failures, wrong app/version, unreachable health, metadata and successful startup.'
 } finally {
   $resolved = [IO.Path]::GetFullPath($fixture)

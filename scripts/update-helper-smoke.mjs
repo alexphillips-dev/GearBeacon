@@ -25,4 +25,8 @@ const fixtures=spawnSync(process.execPath,['scripts/update-helper-unix-test.mjs'
 if (fixtures.status!==0) throw new Error(`${fixtures.stdout || ''}\n${fixtures.stderr || ''}`);
 console.log(fixtures.stdout.trim());
 
+const installers=spawnSync(process.execPath,['scripts/service-install-test.mjs'],{cwd:root,encoding:'utf8',windowsHide:true});
+if (installers.status!==0) throw new Error(installers.stdout + '\n' + installers.stderr);
+console.log(installers.stdout.trim());
+
 console.log('Update helper safety checks passed.');

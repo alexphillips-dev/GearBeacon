@@ -14,6 +14,22 @@ function Install-GearBeaconWeb {
   if (Test-Path -LiteralPath $webDir) { Remove-Item -LiteralPath $webDir -Recurse -Force }
   Copy-Item -LiteralPath $sourceWeb -Destination $webDir -Recurse -Force
 }
+function Install-GearBeaconMetadata {
+  param([string]$SourceDir, [string]$DestinationDir)
+  Copy-Item -LiteralPath "$SourceDir\release-manifest.json" -Destination "$DestinationDir\release-manifest.json" -Force
+  if (Test-Path -LiteralPath "$SourceDir\build-info.json") { Copy-Item -LiteralPath "$SourceDir\build-info.json" -Destination "$DestinationDir\build-info.json" -Force }
+  elseif (Test-Path -LiteralPath "$DestinationDir\build-info.json") { Remove-Item -LiteralPath "$DestinationDir\build-info.json" -Force }
+}
+function New-GearBeaconServiceLauncher {
+  param([string]$InstallDir, [string]$DataDir)
+  return @"
+`$env:GEARBEACON_DATA_DIR = '$($DataDir.Replace("'", "''"))'
+`$env:GEARBEACON_ACCESS_MODE = 'private'
+`$env:GEARBEACON_BIND_HOST = '0.0.0.0'
+& '$($InstallDir.Replace("'", "''"))\GearBeacon.exe' *>> '$($DataDir.Replace("'", "''"))\gearbeacon.log'
+exit `$LASTEXITCODE
+"@
+}
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Run this installer from an elevated PowerShell window.' }
 $source = Split-Path -Parent $MyInvocation.MyCommand.Path
 New-Item -ItemType Directory -Force -Path $InstallDir, $DataDir | Out-Null
@@ -23,13 +39,8 @@ $existingTask = Get-ScheduledTask -TaskName 'GearBeacon' -ErrorAction SilentlyCo
 if ($existingTask -and $existingTask.State -eq 'Running') { Stop-ScheduledTask -TaskName 'GearBeacon' -ErrorAction Stop }
 Copy-Item -LiteralPath "$source\GearBeacon.exe" -Destination "$InstallDir\GearBeacon.exe" -Force
 Install-GearBeaconWeb -SourceDir $source -DestinationDir $InstallDir
-Copy-Item -LiteralPath "$source\release-manifest.json" -Destination "$InstallDir\release-manifest.json" -Force
-$launcher = @"
-`$env:GEARBEACON_DATA_DIR = '$($DataDir.Replace("'", "''"))'
-`$env:GEARBEACON_ACCESS_MODE = 'private'
-`$env:GEARBEACON_BIND_HOST = '0.0.0.0'
-& '$($InstallDir.Replace("'", "''"))\GearBeacon.exe' *>> '$($DataDir.Replace("'", "''"))\gearbeacon.log'
-"@
+Install-GearBeaconMetadata -SourceDir $source -DestinationDir $InstallDir
+$launcher = New-GearBeaconServiceLauncher -InstallDir $InstallDir -DataDir $DataDir
 Set-Content -LiteralPath "$InstallDir\service-launch.ps1" -Value $launcher -Encoding UTF8
 & icacls.exe $InstallDir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-19:(OI)(CI)RX' '*S-1-5-32-544:(OI)(CI)F' /T /C | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Could not protect the GearBeacon installation-directory ACL.' }

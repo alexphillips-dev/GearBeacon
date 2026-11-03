@@ -28,6 +28,8 @@ Open **Settings > Operations > Delivery** from the attention banner to review fa
 
 GearBeacon retries pending sends with bounded backoff. If those attempts are exhausted during a connection outage, a later successful, complete Store check requeues network-related failures from that outage for one more bounded retry cycle. Permanent errors such as rejected credentials require correcting the channel and using **Retry failed**. If Store checks remain unavailable, use manual retry after connectivity returns. Expiry and current channel settings are checked again before any retry is sent.
 
+SMTP connection setup and TLS negotiation each have a 12-second deadline. After the server accepts the completed message with a successful DATA response, a failed QUIT exchange does not retry that accepted message. Failures before acceptance still follow the bounded delivery retry policy.
+
 ## Optional alert expiry
 
 Set **Expire time-sensitive alerts after (minutes)** to a whole number from 1 to 10,080, or leave it blank for no expiry. The default is no expiry.

@@ -87,7 +87,8 @@ const GITHUB_RELEASE_API = String(process.env.GEARBEACON_GITHUB_RELEASE_API !== 
 const AUTO_UPDATE_CHECKS = !['0', 'false', 'no'].includes(String(process.env.GEARBEACON_AUTO_UPDATE_CHECKS ?? '1').toLowerCase());
 let PUBLIC_BASE_URL = String(process.env.GEARBEACON_PUBLIC_BASE_URL || '').trim().replace(/\/$/, '');
 const MIN_CATALOG_RATIO = Math.min(0.95, Math.max(0.1, Number(process.env.GEARBEACON_MIN_CATALOG_RATIO || 0.55)));
-const STALE_AFTER_SECONDS = Math.max(POLL_SECONDS * 3, Number(process.env.GEARBEACON_STALE_AFTER_SECONDS || 180));
+const MIN_STALE_AFTER_SECONDS = Number(process.env.GEARBEACON_STALE_AFTER_SECONDS || 180);
+function staleAfterSeconds() { return Math.max(POLL_SECONDS * 3, MIN_STALE_AFTER_SECONDS); }
 let BACKUP_RETENTION = Math.max(1, Math.min(100, Number(process.env.GEARBEACON_BACKUP_RETENTION || 10)));
 let BACKUP_INTERVAL_HOURS = Math.max(0, Number(process.env.GEARBEACON_BACKUP_INTERVAL_HOURS || 24));
 let EVENT_RETENTION_DAYS = Math.max(0, Math.min(3650, Number(process.env.GEARBEACON_EVENT_RETENTION_DAYS || 365)));
@@ -2345,14 +2346,23 @@ async function smtpResponse(reader, expectedCodes) {
 
 async function connectSmtp() {
   const options = { host: SMTP_HOST, port: SMTP_PORT, servername: SMTP_HOST, rejectUnauthorized: SMTP_REJECT_UNAUTHORIZED };
+  // An inactivity timeout installed after connect cannot bound DNS/TCP/TLS setup.
+  const establish = (candidate, event) => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => candidate.destroy(new Error('SMTP connection timed out.')), 12000);
+    const cleanup = () => { clearTimeout(timer); candidate.off(event, ready); candidate.off('error', failed); candidate.off('close', closed); };
+    const ready = () => { cleanup(); resolve(); };
+    const failed = (err) => { cleanup(); reject(err); };
+    const closed = () => failed(new Error('SMTP connection closed unexpectedly.'));
+    candidate.once(event, ready); candidate.once('error', failed); candidate.once('close', closed);
+  });
   let socket;
   try {
   if (SMTP_SECURE) {
     socket = tls.connect(options);
-    await new Promise((resolve, reject) => { socket.once('secureConnect', resolve); socket.once('error', reject); });
+    await establish(socket, 'secureConnect');
   } else {
     socket = net.connect(options);
-    await new Promise((resolve, reject) => { socket.once('connect', resolve); socket.once('error', reject); });
+    await establish(socket, 'connect');
   }
   socket.setTimeout(12000, () => socket.destroy(new Error('SMTP connection timed out.')));
   let reader = smtpReader(socket);
@@ -2369,7 +2379,7 @@ async function connectSmtp() {
     await command('STARTTLS', [220]);
     reader.detach();
     socket = tls.connect({ socket, servername: SMTP_HOST, rejectUnauthorized: SMTP_REJECT_UNAUTHORIZED });
-    await new Promise((resolve, reject) => { socket.once('secureConnect', resolve); socket.once('error', reject); });
+    await establish(socket, 'secureConnect');
     socket.setTimeout(12000, () => socket.destroy(new Error('SMTP connection timed out.')));
     reader = smtpReader(socket);
     ehlo = await command(`EHLO ${os.hostname().replace(/[^a-zA-Z0-9.-]/g, '-') || 'gearbeacon'}`, [250]);
@@ -2403,7 +2413,8 @@ async function sendSmtp(event) {
     const message = rendered.message.replace(/\r?\n/g, '\r\n').replace(/^\./gm, '..');
     socket.write(`${message}\r\n.\r\n`);
     await smtpResponse(reader, [250]);
-    await command('QUIT', [221]);
+    // DATA's final 250 accepted the message. Cleanup failure must not resend it.
+    try { await command('QUIT', [221]); } catch {}
   } finally {
     socket.end();
   }
@@ -2946,7 +2957,7 @@ function productInsights(slug, days = 30, now = Date.now()) {
     return { days:period, ...values, fullWindow:Boolean(historySince && historySince <= start && HISTORY_RETENTION_DAYS >= period) };
   });
   const restockSince = historySince && historySince > since ? historySince : since;
-  const restocks = historySince ? db.prepare("SELECT observed_at AS detectedAt FROM product_observations WHERE region=? AND slug=? AND observed_at>=? AND observed_at<=? AND change_type LIKE '%restock%' ORDER BY observed_at").all(region, slug, restockSince, until) : [];
+  const restocks = historySince ? db.prepare("SELECT observed_at AS detectedAt FROM product_observations WHERE region=? AND slug=? AND observed_at>=? AND observed_at<=? AND instr('+' || change_type || '+', '+restock+')>0 ORDER BY observed_at").all(region, slug, restockSince, until) : [];
   const target = watchRule(slug).targetPrice;
   const current = priceValue(product.price);
   return { days, since, until, historySince, currency:REGIONS[region].currency, exactPriceScope, prices, timeline:timeline.slice(-600), timelineTruncated:timeline.length > 600,
@@ -3193,7 +3204,7 @@ async function checkStore(reason = 'timer') {
         } else if (availabilityChanged) {
           const pending = observePendingTransition(product.slug, 'availability', { inStock:false, status:product.status, comingSoon:product.comingSoon });
           if (pending.confirmed) {
-            effective = { ...effective, inStock:false, status:product.status, comingSoon:product.comingSoon, restockEtaAt:product.restockEtaAt, soldOutAt:product.soldOutAt || product.lastSeenAt, unlisted:false };
+            effective = { ...effective, inStock:false, status:product.status, comingSoon:product.comingSoon, soldOutAt:product.soldOutAt || product.lastSeenAt, unlisted:false };
             changeTypes.push('sold-out');
             queueEvent(createEvent('sold_out', previous, effective, watchedAtDetection, pending.evidence));
           }
@@ -3316,7 +3327,7 @@ async function checkStore(reason = 'timer') {
     monitor.lastError = err?.message || String(err);
     monitor.retryAfterAt = err?.retryAfterAt || null;
     const lastSuccessAge = monitor.lastSuccessAt ? (Date.now() - new Date(monitor.lastSuccessAt).getTime()) / 1000 : Infinity;
-    monitor.catalogHealth = lastSuccessAge > STALE_AFTER_SECONDS ? 'stale' : 'error';
+    monitor.catalogHealth = lastSuccessAge > staleAfterSeconds() ? 'stale' : 'error';
     console.error('[monitor] failed:', monitor.lastError);
     writeAppLog('error', 'monitor', `Store check failed for ${currentRegion()}.`, { reason, error: monitor.lastError, consecutiveFailures: monitor.consecutiveFailures });
     recordMonitorCheck('failed', startedAt, monitor.lastError);
@@ -4118,6 +4129,7 @@ async function runDiagnostics({ network = true } = {}) {
 
 function scrubSupportValue(value, key = '') {
   if (/password|secret|token|credential|session|cookie|authorization|path$|directory$|dir$/i.test(key)) return '[redacted]';
+  if (/^(?:remoteAddress|address|ip|host|hostname|forwardedFor)$/i.test(key)) return '[redacted]';
   if (/^(?:name|slug|slugs|sku|variantId|variantSlug|variantTitle|variantKeys|parentSlug|sourceSlug|watchlist|watchRules|collections|collectionName|collectionId|readiness|inventoryHistory|candidate|product|products|productHistory)$/i.test(key)) return '[redacted]';
   if (Array.isArray(value)) return value.map((item) => scrubSupportValue(item));
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, scrubSupportValue(item, name)]));
@@ -4128,6 +4140,7 @@ function scrubSupportValue(value, key = '') {
     .replace(/\b(?:https?|wss?):\/\/[^\s"'<>]+/ig, '[url redacted]')
     .replace(/\b[A-Z]:\\(?:[^\\\r\n]+\\)*[^\\\r\n]*/ig, '[local path redacted]')
     .replace(/(^|[\s("'=])\/(?:Users|home|var|data|mnt|srv|opt|tmp|private|Library)(?:\/[^\s"',;)}]+)*/g, '$1[local path redacted]')
+    .replace(/(?<![\w:])\[?(?:[a-f\d]{0,4}:){2,}[a-f\d:.]*(?:%[\w.-]+)?\]?/ig, (candidate) => net.isIP(candidate.replace(/^\[|\]$/g, '').replace(/\.+$/, '').split('%')[0]) ? '[address redacted]' : candidate)
     .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[address redacted]')
     .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/ig, '[address redacted]');
   return value;
@@ -4288,12 +4301,41 @@ function normalizeImportedSnapshot(snapshot) {
     const region = REGIONS[snapshot.region] ? snapshot.region : currentRegion();
     regions[region] = normalizeRegion(snapshot);
   }
+  validateSnapshotProducts(regions);
   validateSnapshotCollections(regions);
   validateSnapshotInsights(regions);
   return {
     regions,
     settings: snapshot.settings && typeof snapshot.settings === 'object' && !Array.isArray(snapshot.settings) ? snapshot.settings : {},
   };
+}
+
+function validateSnapshotProducts(regions) {
+  const text = (value, limit = 1000) => typeof value === 'string' && value.length > 0 && value.length <= limit && !/[\x00-\x1f\x7f]/.test(value);
+  for (const [region, value] of Object.entries(regions)) {
+    for (const [slug, product] of Object.entries(value.products)) {
+      if (!product || typeof product !== 'object' || Array.isArray(product) || !text(slug, 500) || product.slug !== slug
+        || !text(product.name) || !text(product.category) || !text(product.status, 100) || typeof product.inStock !== 'boolean'
+        || (product.region !== undefined && product.region !== region)) throw new Error('Backup contains an invalid product identity or availability.');
+      for (const key of ['comingSoon', 'unlisted']) if (product[key] !== undefined && typeof product[key] !== 'boolean') throw new Error('Backup contains invalid product flags.');
+      for (const key of ['price', 'variantId', 'variantSlug', 'variantTitle', 'sku', 'parentSlug']) {
+        if (product[key] != null && typeof product[key] !== 'string') throw new Error('Backup contains invalid product details.');
+      }
+      for (const key of ['lastSeenAt', 'lastChangedAt', 'firstDiscoveredAt', 'restockEtaAt', 'soldOutAt']) {
+        if (product[key] != null && (typeof product[key] !== 'string' || !Number.isFinite(Date.parse(product[key])))) throw new Error('Backup contains invalid product timestamps.');
+      }
+      for (const key of ['url', 'imageUrl']) {
+        if (product[key] == null) continue;
+        try {
+          if (typeof product[key] !== 'string') throw new Error();
+          const url = new URL(product[key]);
+          if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) throw new Error();
+        } catch { throw new Error('Backup contains an invalid product URL.'); }
+      }
+      if (product.parentSlug != null && (!text(product.parentSlug, 500) || !Object.hasOwn(value.products, product.parentSlug))) throw new Error('Backup contains an unknown product parent.');
+      if (product.variantKeys !== undefined && (!Array.isArray(product.variantKeys) || product.variantKeys.some(key => typeof key !== 'string' || !Object.hasOwn(value.products, key)))) throw new Error('Backup contains invalid product variants.');
+    }
+  }
 }
 
 function validateSnapshotCollections(regions) {
@@ -4902,7 +4944,7 @@ function outboundConnections() {
 }
 
 function apiStatus() {
-  const stale = !monitor.lastSuccessAt || (Date.now() - new Date(monitor.lastSuccessAt).getTime()) / 1000 > STALE_AFTER_SECONDS;
+  const stale = !monitor.lastSuccessAt || (Date.now() - new Date(monitor.lastSuccessAt).getTime()) / 1000 > staleAfterSeconds();
   return {
     name: 'GearBeacon',
     version: APP_VERSION,
@@ -4928,7 +4970,7 @@ function apiStatus() {
     health: {
       ok: Boolean(monitor.lastSuccessAt) && !stale && !monitor.lastError,
       stale,
-      staleAfterSeconds: STALE_AFTER_SECONDS,
+      staleAfterSeconds: staleAfterSeconds(),
       minCatalogRatio: MIN_CATALOG_RATIO,
     },
     ...monitor,
@@ -6020,7 +6062,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/readyz') {
       const ready = MOCK_MODE || ACTIVE_REGIONS.every((region) => {
         const item = monitors[region];
-        return item.lastSuccessAt && !item.lastError && (Date.now() - new Date(item.lastSuccessAt).getTime()) / 1000 <= STALE_AFTER_SECONDS;
+        return item.lastSuccessAt && !item.lastError && (Date.now() - new Date(item.lastSuccessAt).getTime()) / 1000 <= staleAfterSeconds();
       });
       return sendJson(res, ready ? 200 : 503, { ok: ready, version: APP_VERSION });
     }
