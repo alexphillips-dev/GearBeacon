@@ -4,7 +4,7 @@ The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. 
 
 ## v1.4.2 — Reliable actions, monitoring, delivery, and deployment
 
-Development changes prepared November 3, 2026. Includes all changes since v1.4.1; this version has not been promoted to main.
+Prepared November 3, 2026. Includes every change since v1.4.1. See the [complete release notes](RELEASE_NOTES.md).
 
 - Standardized displayed versions, changelog headings, update messages, and GitHub release titles on the lowercase `v` prefix.
 - Keep Set up auto-buy directly above the other Watchlist card actions in a shared bottom action area, including compact and mobile layouts.

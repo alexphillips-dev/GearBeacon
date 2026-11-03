@@ -1,6 +1,6 @@
 # GearBeacon v1.4.2 — Reliable actions, monitoring, delivery, and deployment
 
-Development changes since v1.4.1. This version is prepared on dev for testing and has not been promoted to main or published as a stable release. GearBeacon remains a private, single-owner, self-hosted UniFi Store monitor.
+This patch includes every change since the last main release, v1.4.1. GearBeacon remains a private, single-owner, self-hosted UniFi Store monitor. Monitoring and notification delivery continue on the server while the browser is closed.
 
 ## Watchlist and restock dates
 
@@ -21,16 +21,19 @@ Development changes since v1.4.1. This version is prepared on dev for testing an
 - Native installers preserve build-info.json so prerelease versions, update channels, and source commits remain identifiable. Reinstallation removes stale metadata when the package does not include it.
 - Windows Scheduled Task launchers forward the application exit code. Existing task installations need the updated installer rerun; replacing application files alone does not update the launcher.
 - Updated pinned CI/security actions, Playwright, axe-core, and container security packages. Added deterministic regression coverage for these monitoring, delivery, restore, privacy, and deployment fixes.
+- Displayed versions, changelog headings, update messages, and GitHub release titles consistently use a lowercase `v` prefix. Container builds install the fixed Alpine musl, musl-utils, and zlib packages alongside OpenSSL updates.
 
-## Updating for development testing
+## Upgrading from v1.4.1
 
 1. Prepare and verify a backup before replacing application files. Retain the compatible database and matching installation key for rollback.
-2. Use the same dev revision for the server, dashboard, and optional checkout companion. No stable 1.4.2 download is claimed by this development commit.
+2. Install the matching v1.4.2 server files or image. If you use the optional checkout companion, update it from the matching Source archive and keep its private vault with the original account.
 3. Restart GearBeacon and hard-refresh the dashboard. Rerun the matching Windows installer if the Scheduled Task launcher needs updating.
 4. SQLite schema v15 and portable export format v10 remain unchanged. Existing watches, rules, collections, history, settings, encrypted integrations, and owner access are retained.
 
 Source installations require Node.js 22.13 or newer. The optional auto-buy feature remains experimental and requires explicit owner authorization, a reusable saved payment method, and a separately running companion. Automated checkout validation uses isolated fixtures; real-account compatibility remains dependent on owner setup. This change does not initiate an update or purchase.
 
 See [the changelog](CHANGELOG.md) for earlier versions and [.github/RELEASE_CHECKLIST.md](../.github/RELEASE_CHECKLIST.md) for candidate and stable publication requirements.
+
+[Full comparison: v1.4.1…v1.4.2](https://github.com/alexphillips-dev/GearBeacon/compare/v1.4.1...v1.4.2)
 
 GearBeacon remains independent from Ubiquiti. UniFi and Ubiquiti are trademarks of Ubiquiti Inc.
