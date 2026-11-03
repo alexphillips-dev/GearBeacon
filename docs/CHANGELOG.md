@@ -1,10 +1,23 @@
 # GearBeacon changelog
 
-The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. The first release promoted to `main` is V1.0.0.
+The `0.1.x` series records GearBeacon's private pre-1.0 development milestones. The first release promoted to `main` is v1.0.0.
 
-## V1.4.1 — Delivery recovery and safer state changes
+## v1.4.2 — Reliable actions, monitoring, delivery, and deployment
 
-Prepared September 25, 2026. Includes every change since v1.4.0. See the [complete release notes](RELEASE_NOTES.md).
+Prepared November 3, 2026. Includes every change since v1.4.1. See the [complete release notes](RELEASE_NOTES.md).
+
+- Standardized displayed versions, changelog headings, update messages, and GitHub release titles on the lowercase `v` prefix.
+- Keep Set up auto-buy directly above the other Watchlist card actions in a shared bottom action area, including compact and mobile layouts.
+- Fixed Linux/macOS service installation and updates under restrictive umasks so nested web assets remain readable by the service account while application data stays private. Native installers now preserve package build identity, and the Windows service launcher reports the application's exit code.
+- Validate imported product records before creating a safety backup or changing state. Support bundles now redact IPv6 addresses and address fields as well as IPv4 addresses.
+- Bound SMTP connection and TLS negotiation time so a stalled server cannot block delivery processing. A message accepted by the SMTP server remains successful if the subsequent QUIT exchange fails.
+- Confirm restock dates independently when a date first appears or changes during sellout confirmation. Stock insights count actual restock events without counting restock-date events, and health freshness follows the saved or updated polling interval.
+- Updated Playwright to 1.64.1, axe-core to 4.14.0, and pinned CI, packaging, and security actions. Container builds now also install Alpine security updates for musl, musl-utils, and zlib alongside OpenSSL.
+- Watched items now create a distinct restock-date Activity event when the Store changes from no date to a date on two complete checks, including a date published with a sellout. New restock-date alerts are enabled by default, with global and per-watch controls; server channels, browser notifications, grouped messages, and email include the announced date. Date changes and removals update the confirmed product after two checks without announcing another newly published date.
+
+## v1.4.1 — Delivery recovery and safer state changes
+
+Prepared September 25, 2026. Includes every change since v1.4.0. See the [complete release notes](https://github.com/alexphillips-dev/GearBeacon/blob/v1.4.1/docs/RELEASE_NOTES.md).
 
 - Adding a watch with an alert rule now commits both together, and bulk pause, resume, purchased, and wanted actions commit all selected watches together. Failed writes roll back rules, collection purchase state, and delivery changes.
 - Watch removals now commit the database and collection baselines before updating the live watchlist. Failed single or bulk removals leave every selected watch in place, including after a later Store check.
@@ -19,7 +32,7 @@ Prepared September 25, 2026. Includes every change since v1.4.0. See the [comple
 - Removed abandoned primary and secondary backup temporary files after a crash once they are at least a day old and their creating process has exited. Startup and periodic cleanup leave completed backups, recent files, and unrelated files untouched.
 - Store the secondary backup owner ID before the first primary snapshot so its recovery copy remains discoverable after a restore. An interrupted notification response now qualifies for the bounded outage recovery retry.
 
-## V1.4.0 — Optional purchasing, stronger security, and clearer Activity
+## v1.4.0 — Optional purchasing, stronger security, and clearer Activity
 
 Released September 21, 2026. Includes every change since v1.3.0. See the [1.4.0 release notes](https://github.com/alexphillips-dev/GearBeacon/releases/tag/v1.4.0).
 
@@ -43,7 +56,7 @@ Released September 21, 2026. Includes every change since v1.3.0. See the [1.4.0 
 - Added Watchlist setup/status UI, General > Auto-buy, Operations > Purchases, and scoped purchase accounting. Added schema-v14 migration and format-v10 exports; SQLite backups and JSON restores cannot reactivate old purchase instructions or companion tokens. Monitoring remains credential-free.
 - Added backend and real-browser mock checkout tests, including authorization, duplicate claims, paused/stale rules, restart uncertainty, recovery, privacy, and responsive accessible setup. Real Ubiquiti authenticated checkout and unattended saved-payment compatibility still require owner setup and verification; no real order was placed during development.
 
-## V1.3.0 — Live Activity, flexible alerts, and easier settings
+## v1.3.0 — Live Activity, flexible alerts, and easier settings
 
 Released September 14, 2026. Includes every development change since v1.2.0. See the [1.3.0 release notes](https://github.com/alexphillips-dev/GearBeacon/releases/tag/v1.3.0).
 
@@ -94,7 +107,7 @@ Released September 14, 2026. Includes every development change since v1.2.0. See
 - Removed local agent instructions from Git tracking and expanded ignore rules for editor files, local environment/Compose overrides, credentials, SQLite state, backups, exports, logs, and generated release artifacts.
 - Made real-host installation, upgrade, rollback, manual accessibility, and soak testing optional release recommendations. Automated CI, security, packaging, checksum, SBOM, attestation, and protected-branch requirements remain mandatory.
 
-## V1.2.0 — Stock insights and collection readiness
+## v1.2.0 — Stock insights and collection readiness
 
 See the [published 1.2.0 release notes](https://github.com/alexphillips-dev/GearBeacon/releases/tag/v1.2.0) for changes since 1.0.0.
 
@@ -129,7 +142,7 @@ See the [published 1.2.0 release notes](https://github.com/alexphillips-dev/Gear
 - Added transactional schema-v9 migration with a validated safety backup and format-v5 recovery exports containing compact inventory intervals, monitoring coverage, collection settings, and readiness state. Older exports remain supported. Insight retention follows product-history settings with a 100,000-interval limit per region for each new history table.
 - Added deterministic coverage, price-window, collection-transition, restart, privacy, recovery, and migration tests plus browser workflow and accessibility checks. Support diagnostics continue to redact product and collection data.
 
-## V1.1.0 — Precision monitoring and smart watchlists
+## v1.1.0 — Precision monitoring and smart watchlists
 
 - Added exact variant watches with stable regional identities, actual SKUs, variant images and Store links, independent stock/price history, and separate persisted confirmation evidence. Existing product watches retain their Any variant scope.
 - Preserved explicit variant selections when importing Store URLs and matched exact variant SKUs. Unknown explicit variants are rejected without silently selecting the parent product.
@@ -142,7 +155,7 @@ See the [published 1.2.0 release notes](https://github.com/alexphillips-dev/Gear
 - Redacted product identities, variant metadata, collection data, and pending product observations from support bundles while retaining operational counts and health evidence.
 - Added deterministic variant, rule, collection, restart, and recovery regression coverage, browser coverage for the complete owner flow, and exact-variant validation in the four-region live catalog canary.
 
-## V1.0.1 — Security hardening
+## v1.0.1 — Security hardening
 
 - Added strict Host and forwarded-host validation before routing, including loopback-only local-mode enforcement and exact reverse-proxy authority checks to resist DNS rebinding.
 - Added regression coverage for hostile Host and forwarded-host values, Origin reflection, API cache control, and automatic legacy password-hash migration.
@@ -153,7 +166,7 @@ See the [published 1.2.0 release notes](https://github.com/alexphillips-dev/Gear
 - Added an executable security contract for service identities, container isolation, HTTP/KDF settings, Dependabot targeting, and full-SHA GitHub Action pinning.
 - Targeted automated dependency updates at `dev` and expanded repository-level secret-scanning and Actions restrictions.
 
-## V1.0.0 — First stable self-hosted release
+## v1.0.0 — First stable self-hosted release
 
 - Promoted GearBeacon's complete pre-1.0 development line into its first stable release for Windows, macOS, Linux, servers, NAS hosts, and Docker.
 - Ships a private, single-owner web dashboard with responsive mobile-browser support and no required GearBeacon cloud account, subscription, analytics, or telemetry.
@@ -163,7 +176,7 @@ See the [published 1.2.0 release notes](https://github.com/alexphillips-dev/Gear
 - Includes upgrade-safe SQLite migrations, validated primary and secondary backups, encrypted exports, non-destructive restore tests, diagnostics, exact-tip release enforcement, checksums, SBOMs, and build provenance.
 - Meets the project's tested keyboard, focus, reduced-motion, dark/light theme, 200% zoom, compact activity, image-loading, and 390-pixel responsive-layout contracts.
 
-## V0.1.10 — Release readiness, accessibility, and trust
+## v0.1.10 — Release readiness, accessibility, and trust
 
 - Moved Operations from the primary navigation into the final Settings subtab while preserving saved navigation and legacy `#operations` links.
 - Added a responsive, keyboard-accessible To top arrow that fades in after scrolling, restores focus to the page start, and respects reduced-motion preferences.
@@ -181,7 +194,7 @@ See the [published 1.2.0 release notes](https://github.com/alexphillips-dev/Gear
 - Added deterministic checks for reduced motion, keyboard focus, dialog behavior, responsive reflow, product images, and both color themes to the real Chrome suite.
 - Added Dependabot coverage for npm tooling, GitHub Actions, and Docker plus security reporting, contribution, issue, pull-request, and real-install release-checklist guidance.
 
-## V0.1.9 — Daily-use polish and fault testing
+## v0.1.9 — Daily-use polish and fault testing
 
 - Preserved the selected main tab, Settings subsection, Browse filters, Watchlist filters, and Activity filters across browser refreshes using local browser storage only.
 - Added clear reset actions to every filtered view and specific no-match explanations for Browse, Watchlist, and retained Activity results.
@@ -191,7 +204,7 @@ See the [published 1.2.0 release notes](https://github.com/alexphillips-dev/Gear
 - Added automated recovery failure coverage for unavailable secondary storage, corrupt primary and encrypted backups, and missing or incorrect local encryption keys.
 - Added scale coverage for 500-product catalogs and more than 10,000 retained Activity rows, including pagination and the disclosed 10,000-row export cap.
 
-## V0.1.8 — Reliability, history, and recovery
+## v0.1.8 — Reliability, history, and recovery
 
 - Added persisted two-observation confirmation for sellouts, price changes, status changes, and delistings while preserving a one-observation fast path for restocks from complete, valid catalogs.
 - Preserved last-known-good product values while a change is pending, exposed pending evidence in Operations, and made unlisted products explicit after two complete catalogs omit them.
@@ -202,10 +215,10 @@ See the [published 1.2.0 release notes](https://github.com/alexphillips-dev/Gear
 - Added non-destructive restore tests for primary and secondary backups and kept primary backups successful when an unavailable secondary destination fails.
 - Added one-click installation diagnostics for database integrity, directory access, encryption-key readability, restore readiness, free space, delivery health, store connectivity, and access security.
 - Added a privacy-redacted support bundle, a persistent owner-attention banner for operational issues and reconnects, and richer recovery status throughout Operations and Data settings.
-- Added schema-v7 migration and verified fresh installs plus automatic, backup-protected upgrades from V0.1.5, V0.1.6, and V0.1.7.
+- Added schema-v7 migration and verified fresh installs plus automatic, backup-protected upgrades from v0.1.5, v0.1.6, and v0.1.7.
 - Added release-candidate publication support so prerelease tags create GitHub prereleases without replacing the stable `latest` container tag.
 
-## V0.1.7 — Watch intelligence and alert control
+## v0.1.7 — Watch intelligence and alert control
 
 - Added a Watchlist-page importer for pasted UniFi Store links, product SKUs/slugs, and TXT, CSV, or JSON files, with regional catalog matching, duplicate and already-watched detection, review-before-add selection, and non-destructive bulk import.
 - Enriched the Stock activity feed with exact before/after transitions, price movement, prior-state duration, region context, exact detection times, and server-alert outcomes while preserving the compact 64-pixel row height across desktop and mobile.
@@ -226,7 +239,7 @@ See the [published 1.2.0 release notes](https://github.com/alexphillips-dev/Gear
 - Added real headless-browser coverage for private setup/login/logout, dark/light themes, product images, Browse filters and loading, watch/rule/bulk flows, settings tabs, backup preview/import, Operations, sessions, and responsive layout.
 - Added a schema-v6 migration with automatic pre-update backup, exact-host image scoring, generic public 500 errors, a smaller Node 24 Alpine runtime image without package-manager tooling, and improved native standalone startup diagnostics.
 
-## V0.1.6 — Easier setup and self-hosting
+## v0.1.6 — Easier setup and self-hosting
 
 - Added a five-step browser first-run wizard for owner security, regions, access mode, notifications, backups, live tests, and a final security summary.
 - Added validated browser configuration for monitoring, access, backup retention, and every supported server notification channel.
@@ -240,7 +253,7 @@ See the [published 1.2.0 release notes](https://github.com/alexphillips-dev/Gear
 - Added prebuilt amd64/arm64 Compose images while retaining source builds and loopback-only host publication.
 - Expanded CI across Windows, macOS, Linux, Compose, amd64/arm64 containers, standalone binaries, database upgrades, reverse-proxy security behavior, all notification mocks, STARTTLS, CodeQL, and Trivy.
 
-## V0.1.5 — Private self-hosting and web-only operation
+## v0.1.5 — Private self-hosting and web-only operation
 
 - Made GearBeacon an explicitly private, single-owner, self-hosted web application for Windows, macOS, Linux, servers, NAS systems, and Docker.
 - Removed the separate client application, its dependencies, push registration API, push-token persistence, and related CI/release paths.
@@ -256,7 +269,7 @@ See the [published 1.2.0 release notes](https://github.com/alexphillips-dev/Gear
 - Changed Docker Compose to loopback-only host publishing, hardened the image to run as an unprivileged user, and added multi-platform GHCR release publication.
 - Added private-server launchers and expanded Windows, macOS, Linux, Docker, VPN, and reverse-proxy deployment guidance.
 
-## V0.1.4 — Production alerts & release infrastructure
+## v0.1.4 — Production alerts & release infrastructure
 
 - Connected **Check for updates** to `alexphillips-dev/GearBeacon` GitHub Releases with bundled-manifest fallback.
 - Added GitHub Actions CI for `dev`, `main`, and pull requests.
@@ -268,20 +281,20 @@ See the [published 1.2.0 release notes](https://github.com/alexphillips-dev/Gear
 - Added catalog-size health guard, partial-response degraded health, stale-monitor detection, and exponential retry/backoff.
 - Added `/healthz`, `/readyz`, and `/api/health` health endpoints.
 - Added Dockerfile, Docker Compose, persistent cloud volume, and deployment guidance for a centralized always-on monitor.
-- Preserved V0.1.3 external SQLite data, automatic pre-update backups, migrations, import/export, and watchlist safety.
+- Preserved v0.1.3 external SQLite data, automatic pre-update backups, migrations, import/export, and watchlist safety.
 
-## V0.1.3 — Upgrade-safe persistence
+## v0.1.3 — Upgrade-safe persistence
 
 - Replaced application-folder JSON persistence with SQLite.
 - Moved runtime user data to the operating system's per-user application-data folder.
 - Added transactional database migrations and automatic pre-update safety backups.
 - Added Export / Import, version information, and the original update-check foundation.
 
-## V0.1.2
+## v0.1.2
 
 - Unified neutral dark/light theme across GearBeacon.
 - Added theme switching on the web dashboard.
 
-## V0.1.1
+## v0.1.1
 
 - Added category tabs, image-first UniFi Store-style Browse cards, and Ubiquiti-hosted product preview image extraction.

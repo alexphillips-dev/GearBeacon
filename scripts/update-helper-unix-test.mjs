@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -22,7 +22,7 @@ const check=(result,success)=>assert.equal(result.status===0,success,output(resu
 try {
   for (const dir of [bin,project,install]) mkdirSync(dir);
   // Keep shell source literal and pass every filesystem path as a separate argument.
-  writeFileSync(runner,'#!/usr/bin/env sh\nset -eu\nexport PATH="$(cd "$1" && pwd -P):$PATH"\nshift\nexec sh "$@"\n');
+  writeFileSync(runner,`#!/usr/bin/env sh\nset -eu\numask ${process.platform==='win32'?'022':'077'}\nexport PATH="$(cd "$1" && pwd -P):$PATH"\nshift\nexec sh "$@"\n`);
   writeFileSync(join(project,'compose.yaml'),'services:\n  gearbeacon:\n    image: mock\n');
   // Advance deadline time only when the updater sleeps. Real one-second budgets
   // can expire before the first health probe on a busy Windows/Git Bash runner.
@@ -92,7 +92,8 @@ esac
   // The shell updater never calls real service commands or downloads in these fixtures.
   for (const platform of ['Linux','Darwin']) {
     const name=`GearBeacon-v1.2.1-${platform==='Linux'?'linux':'macos'}-x64`;
-    const packageDir=join(fixture,name); mkdirSync(join(packageDir,'web'),{recursive:true});
+    const packageDir=join(fixture,name); mkdirSync(join(packageDir,'web/nested'),{recursive:true});
+    writeFileSync(join(packageDir,'web/nested/asset.css'),'fixture style');
     writeFileSync(join(packageDir,'gearbeacon'),'new executable fixture'); writeFileSync(join(packageDir,'web/index.html'),'new UI');
     writeFileSync(join(packageDir,'release-manifest.json'),'{"version":"1.2.1"}'); writeFileSync(join(packageDir,'build-info.json'),'{"packageVersion":"1.2.1"}');
     const packed=spawnSync(bash,['-c','tar -czf package.tar.gz "$1"','fixture',name],{cwd:fixture,encoding:'utf8',windowsHide:true}); check(packed,true);
@@ -106,7 +107,14 @@ esac
       check(result,success);
       if (scenario==='delayed-start') assert.equal(readFileSync(join(fixture,'clock'),'utf8').trim(),'2',`${platform} startup should retry until health is ready`);
       if (['checksum','provenance','missing-bundle','stop'].includes(scenario)) assert.equal(readFileSync(join(install,'gearbeacon'),'utf8'),'old executable fixture');
-      if (success) { assert.ok(!existsSync(join(install,'web/obsolete.html'))); assert.ok(readFileSync(join(install,'build-info.json'),'utf8').includes('1.2.1')); }
+      if (success) {
+        assert.ok(!existsSync(join(install,'web/obsolete.html'))); assert.ok(readFileSync(join(install,'build-info.json'),'utf8').includes('1.2.1'));
+        assert.equal(readFileSync(join(install,'web/nested/asset.css'),'utf8'),'fixture style');
+        if (process.platform!=='win32') {
+          for (const path of ['web','web/nested']) assert.equal(statSync(join(install,path)).mode & 0o777,0o755);
+          for (const path of ['web/index.html','web/nested/asset.css']) assert.equal(statSync(join(install,path)).mode & 0o777,0o644);
+        }
+      }
       else if (!['checksum','provenance','missing-bundle'].includes(scenario)) assert.ok(output(result).includes('matching secrets.key'),output(result));
     }
   }

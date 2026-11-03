@@ -303,6 +303,14 @@ try {
   await rules(black,{targetPrice:null,availableUnderTarget:false,priceChange:false,priceDropOnly:false,restock:true,soldOut:true});
   await restock(); agePending(2); received.length=0; await deliver();
   assert.ok(received.length===1 && received[0].body.event.type==='sold_out','Expiry discarded ordinary sellout history or retained the expired restock');
+  await rules(black,{channels:['webhook'],restockDate:true,maxAlertAgeMinutes:1});
+  await observe({restockEtaAt:'2027-02-10T00:00:00.000Z'},2);
+  assert.ok(pending().some(row=>JSON.parse(row.payload_json).type==='restock_date'));
+  const dateEvent=(await request('/api/activity?type=restock_date')).events.find(event=>event.slug===black);
+  assert.match(renderEmail(dateEvent).html,/Restock expected Feb 10, 2027/);
+  agePending(2); received.length=0; await deliver();
+  assert.equal(received.length,0,'An expired restock-date alert was delivered');
+  await observe({restockEtaAt:null},2);
   await rules(black,{maxAlertAgeMinutes:null,soldOut:false});
   await restock(); agePending(2); const beforeRestart=pending()[0];
   await stop(); received.length=0;

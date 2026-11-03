@@ -268,7 +268,7 @@ try {
     GEARBEACON_WEBHOOK_HMAC_SECRET: webhookHmacSecret,
   });
   const status = await waitFor('/api/status?region=us');
-  if (status.version !== '1.4.1') throw new Error(`Unexpected app version: ${status.version}`);
+  if (status.version !== '1.4.2') throw new Error(`Unexpected app version: ${status.version}`);
   if (status.storage?.engine !== 'SQLite' || status.storage?.schemaVersion !== 15) throw new Error('SQLite schema v15 was not initialized.');
   if (status.deployment?.mode !== 'local' || status.deployment?.bindHost !== '127.0.0.1' || status.deployment?.authenticationRequired) throw new Error('Safe local access defaults are wrong.');
   if (status.privacy?.telemetry !== false || status.privacy?.publicCloudRequired !== false) throw new Error('Privacy status is wrong.');
@@ -459,6 +459,62 @@ try {
     if (!groupedEmail) await delay(200);
   }
   if (!groupedEmail || !/GearBeacon digest/i.test(groupedEmail.text) || (!/Content-ID: <product-/i.test(groupedEmail.raw) && !/IMAGE UNAVAILABLE/i.test(groupedEmail.html))) throw new Error('Grouped email digest, text alternative, or product-image fallback is incomplete.');
+  const dateSlug = 'u7-pro-xgs';
+  const dateOne = '2027-02-10T00:00:00.000Z';
+  const dateTwo = '2027-02-17T00:00:00.000Z';
+  const dateEvents = async () => (await request(`/api/activity?scope=us&type=restock_date&search=${dateSlug}&limit=100`)).events;
+  await request('/api/notifications/preferences?region=us', { method:'PUT', body:JSON.stringify({ preferences:{ allActivity:false, restockDate:true } }) });
+  await request(`/api/mock/product/${dateSlug}?region=us`, { method:'POST', body:JSON.stringify({ restockEtaAt:dateOne }) });
+  await request('/api/check?region=us', { method:'POST' });
+  const pendingDate = (await request(`/api/products/${dateSlug}?region=us`)).product;
+  if (pendingDate.restockEtaAt || (await dateEvents()).length || !(await request('/api/operations')).monitoringConfidence.pending.some((item) => item.slug === dateSlug && item.kind === 'restock_eta' && item.observations === 1)) throw new Error('A single restock-date observation did not preserve the last confirmed value.');
+  await request('/api/check?region=us', { method:'POST' });
+  const firstDateEvent = (await dateEvents())[0];
+  if (firstDateEvent?.restockEtaAt !== dateOne || firstDateEvent.previousRestockEtaAt !== null || firstDateEvent.confirmation?.observations !== 2 || !firstDateEvent.notificationDecision?.allowed || !/Restock expected/.test((await request(`/api/notifications/preview?region=us&slug=${dateSlug}&eventType=restock_date`)).copy.body)) throw new Error('Confirmed restock date did not create an enabled dated alert.');
+  await request('/api/check?region=us', { method:'POST' });
+  if ((await dateEvents()).length !== 1) throw new Error('The same restock date created a duplicate event.');
+  await request(`/api/mock/product/${dateSlug}?region=us`, { method:'POST', body:JSON.stringify({ restockEtaAt:dateTwo }) });
+  await request('/api/check?region=us', { method:'POST' });
+  if ((await request(`/api/products/${dateSlug}?region=us`)).product.restockEtaAt !== dateOne) throw new Error('A pending restock-date revision replaced the confirmed date.');
+  await request('/api/check?region=us', { method:'POST' });
+  if ((await request(`/api/products/${dateSlug}?region=us`)).product.restockEtaAt !== dateTwo || (await dateEvents()).length !== 1) throw new Error('A restock-date revision generated a new announcement or failed to update the confirmed date.');
+  await request(`/api/mock/product/${dateSlug}?region=us`, { method:'POST', body:JSON.stringify({ restockEtaAt:null }) });
+  await request('/api/check?region=us', { method:'POST' });
+  await request('/api/check?region=us', { method:'POST' });
+  if ((await request(`/api/products/${dateSlug}?region=us`)).product.restockEtaAt !== null || (await dateEvents()).length !== 1) throw new Error('Restock-date removal did not update confirmed state cleanly.');
+  await request('/api/notifications/preferences?region=us', { method:'PUT', body:JSON.stringify({ preferences:{ restockDate:false } }) });
+  await request(`/api/mock/product/${dateSlug}?region=us`, { method:'POST', body:JSON.stringify({ restockEtaAt:dateTwo }) });
+  await request('/api/check?region=us', { method:'POST' });
+  await request('/api/check?region=us', { method:'POST' });
+  const mutedDate = (await dateEvents())[0];
+  if ((await dateEvents()).length !== 2 || mutedDate.notificationDecision?.reason !== 'disabled') throw new Error('The global restock-date preference did not mute a confirmed date.');
+  await request(`/api/mock/product/${dateSlug}?region=us`, { method:'POST', body:JSON.stringify({ restockEtaAt:null }) });
+  await request('/api/check?region=us', { method:'POST' });
+  await request('/api/check?region=us', { method:'POST' });
+  const dateRule = await request(`/api/watch/${dateSlug}/rules?region=us`);
+  await request(`/api/watch/${dateSlug}/rules?region=us`, { method:'PUT', body:JSON.stringify({ rule:{ ...dateRule.rule, restockDate:true } }) });
+  await request(`/api/mock/product/${dateSlug}?region=us`, { method:'POST', body:JSON.stringify({ restockEtaAt:dateOne }) });
+  await request('/api/check?region=us', { method:'POST' });
+  await request('/api/check?region=us', { method:'POST' });
+  const overrideDate = (await dateEvents())[0];
+  if ((await dateEvents()).length !== 3 || !overrideDate.notificationDecision?.allowed) throw new Error('A per-watch restock-date override did not enable the alert.');
+  const dateActivity = await request(`/api/activity?scope=us&type=restock_date&search=${dateSlug}&limit=100`);
+  if (dateActivity.summary.restockDates !== 3 || dateActivity.summary.total !== 3) throw new Error('Restock-date Activity filtering or totals are wrong.');
+  const dateCsvResponse = await fetch(`${base}/api/activity/export?scope=us&type=restock_date&format=csv`);
+  const dateCsv = await dateCsvResponse.text();
+  if (!dateCsvResponse.ok || !dateCsv.includes('restockEtaAt') || !dateCsv.includes(dateOne)) throw new Error('Restock-date CSV export omitted the announced date.');
+  await request(`/api/mock/product/${dateSlug}?region=us`, { method:'POST', body:JSON.stringify({ status:'SoldOut', restockEtaAt:null }) });
+  await request('/api/check?region=us', { method:'POST' });
+  await request('/api/check?region=us', { method:'POST' });
+  await request(`/api/mock/product/${dateSlug}?region=us`, { method:'POST', body:JSON.stringify({ status:'Available', restockEtaAt:null }) });
+  await request('/api/check?region=us', { method:'POST' });
+  await request(`/api/mock/product/${dateSlug}?region=us`, { method:'POST', body:JSON.stringify({ status:'SoldOut', restockEtaAt:dateTwo }) });
+  await request('/api/check?region=us', { method:'POST' });
+  await request('/api/check?region=us', { method:'POST' });
+  if ((await dateEvents()).length !== 4 || (await dateEvents())[0].restockEtaAt !== dateTwo || (await dateEvents())[0].confirmation?.kind !== 'restock_eta') throw new Error('A restock date published with a sellout was missed.');
+  await request(`/api/mock/product/${dateSlug}?region=us`, { method:'POST', body:JSON.stringify({ status:'Available', restockEtaAt:null }) });
+  await request('/api/check?region=us', { method:'POST' });
+  await request('/api/notifications/preferences?region=us', { method:'PUT', body:JSON.stringify({ preferences:{ allActivity:true, restockDate:true } }) });
   const savedRules = await request('/api/watch/u7-pro-xgs/rules?region=us', {
     method:'PUT', body:JSON.stringify({ rule:{ restock:true, soldOut:false, priceChange:true, statusChange:false, priceDropOnly:true, targetPrice:250, immediateRestock:true } }),
   });
@@ -476,16 +532,17 @@ try {
     emailDetailLevel:'detailed', emailTheme:'dark', emailSubjectPrefix:'[GB Test]', emailDigestMaxItems:3,
     emailEmbedImages:true, emailExplainReason:true, emailPriceCalculations:true,
   }, secrets:{ secondaryBackupPassphrase:'v19 secondary recovery passphrase' } }) });
-  if (schedulingSave.config.notificationTimeZone !== 'UTC' || schedulingSave.config.notificationCooldownMinutes !== 7 || schedulingSave.config.historyRetentionDays !== 400 || schedulingSave.config.eventRetentionDays !== 730 || schedulingSave.config.secondaryBackupDir !== secondaryData || !schedulingSave.config.secondaryEncryptedExports || !schedulingSave.secretsConfigured.secondaryBackupPassphrase || !schedulingSave.config.operationalAlerts.lowDiskSpace || schedulingSave.config.emailDetailLevel !== 'detailed' || schedulingSave.config.emailDigestMaxItems !== 3 || schedulingSave.config.emailSubjectPrefix !== '[GB Test]') throw new Error('V1.4.1 delivery, email, recovery, or retention settings did not save.');
+  if (schedulingSave.config.notificationTimeZone !== 'UTC' || schedulingSave.config.notificationCooldownMinutes !== 7 || schedulingSave.config.historyRetentionDays !== 400 || schedulingSave.config.eventRetentionDays !== 730 || schedulingSave.config.secondaryBackupDir !== secondaryData || !schedulingSave.config.secondaryEncryptedExports || !schedulingSave.secretsConfigured.secondaryBackupPassphrase || !schedulingSave.config.operationalAlerts.lowDiskSpace || schedulingSave.config.emailDetailLevel !== 'detailed' || schedulingSave.config.emailDigestMaxItems !== 3 || schedulingSave.config.emailSubjectPrefix !== '[GB Test]') throw new Error('v1.4.2 delivery, email, recovery, or retention settings did not save.');
   await fetchJson('/api/config/validate', { method:'POST', body:JSON.stringify({ ...schedulingSave.config, emailSubjectPrefix:'[GearBeacon]\r\nBcc: attacker@example.test' }) }, 400);
   const deliveryPreview = await request('/api/notifications/preview?region=us&slug=u7-pro-xgs&eventType=restock');
   if (deliveryPreview.decision?.allowed !== true || deliveryPreview.delivery?.mode !== 'immediate-restock' || deliveryPreview.delivery?.timeZone !== 'UTC' || !deliveryPreview.copy?.title || !/^\[GB Test\]/.test(deliveryPreview.email?.subject || '') || !/Why you received this/i.test(deliveryPreview.email?.text || '')) throw new Error('Notification delivery or email preview did not honor saved settings.');
-  for (const type of ['restock','target_price','price_drop','sold_out','status_change','new_product','operational','test','digest']) {
+  for (const type of ['restock','restock_date','target_price','price_drop','sold_out','status_change','new_product','operational','test','digest']) {
     const response = await fetch(`${base}/api/notifications/email-preview?region=us&slug=u7-pro-xgs&eventType=${type}&theme=light&detailLevel=detailed&digestMaxItems=3`);
     const html = await response.text();
     if (!response.ok || !/<!doctype html>/i.test(html) || !/GearBeacon/i.test(html) || /<script/i.test(html)) throw new Error(`Email preview failed for ${type}.`);
     if (response.headers.get('x-frame-options')) throw new Error('Email preview cannot be framed by its authenticated Settings page.');
     if (!/frame-ancestors 'self'/.test(response.headers.get('content-security-policy') || '')) throw new Error('Email preview CSP is not restricted to the GearBeacon origin.');
+    if (type === 'restock_date' && !/Restock expected/.test(html)) throw new Error('Restock-date email preview omitted the date.');
     if (type === 'digest' && (!/And 3 more updates not shown/i.test(html) || (html.match(/U7 Pro XGS/g) || []).length !== 2)) throw new Error('Digest preview did not enforce maximum items and product deduplication.');
   }
   if (!validInlineImageUrl('https://images.svc.ui.com/product.png') || validInlineImageUrl('https://images.svc.ui.com.attacker.test/product.png') || validInlineImageUrl('http://images.svc.ui.com/product.png')) throw new Error('Inline email image host/protocol allowlist is unsafe.');
@@ -558,17 +615,17 @@ try {
   startServer(8899, localData);
   await waitFor('/api/status?region=us');
   const afterUpgrade = await request('/api/data/info?region=us');
-  if (afterUpgrade.backup.count <= beforeUpgrade || afterUpgrade.schemaVersion !== 15) throw new Error('Automatic V0.1.5 pre-update backup or schema migration failed.');
+  if (afterUpgrade.backup.count <= beforeUpgrade || afterUpgrade.schemaVersion !== 15) throw new Error('Automatic v0.1.5 pre-update backup or schema migration failed.');
   const migratedDb = new DatabaseSync(join(localData, 'gearbeacon.mock.sqlite3'));
   const migratedPushTable = migratedDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='push_tokens'").get();
   migratedDb.close();
-  if (migratedPushTable) throw new Error('Obsolete push storage returned during the V0.1.5 to V1.4.1 migration.');
+  if (migratedPushTable) throw new Error('Obsolete push storage returned during the v0.1.5 to v1.4.2 migration.');
   const updates = await request('/api/update/check?region=us');
   const installedVersion = (await request('/healthz')).packageVersion;
   if (updates.currentVersion !== installedVersion || updates.latestVersion !== installedVersion || updates.updateAvailable || updates.verified) throw new Error('Disabled update checks did not preserve the installed package version and unverified state.');
   await stopServer();
 
-  for (const historical of [{ version:'0.1.6', schema:5 }, { version:'0.1.7', schema:6 }, { version:'1.0.0', schema:7 }, { version:'1.0.1', schema:7 }, { version:'1.1.0', schema:8 }, { version:'1.2.0', schema:9 }, { version:'1.2.0', schema:10 }, { version:'1.2.0', schema:11 }, { version:'1.3.0', schema:13 }]) {
+  for (const historical of [{ version:'0.1.6', schema:5 }, { version:'0.1.7', schema:6 }, { version:'1.0.0', schema:7 }, { version:'1.0.1', schema:7 }, { version:'1.1.0', schema:8 }, { version:'1.2.0', schema:9 }, { version:'1.2.0', schema:10 }, { version:'1.2.0', schema:11 }, { version:'1.3.0', schema:13 }, { version:'1.4.1', schema:15 }]) {
     const backupCount = (await (async () => {
       const testDb = new DatabaseSync(join(localData, 'gearbeacon.mock.sqlite3'), { readOnly:true });
       const count = Number(testDb.prepare('SELECT COUNT(*) AS count FROM backup_log').get()?.count || 0);
@@ -578,15 +635,15 @@ try {
     startServer(8899, localData);
     await waitFor('/api/status?region=us');
     const migrated = await request('/api/data/info?region=us');
-    if (migrated.schemaVersion !== 15 || migrated.backup.count < 1) throw new Error(`Automatic V${historical.version} to V1.4.1 migration failed.`);
+    if (migrated.schemaVersion !== 15 || migrated.backup.count < 1) throw new Error(`Automatic v${historical.version} to v1.4.2 migration failed.`);
     const migratedCheck = await request('/api/check?region=us', { method:'POST', body:'{}' });
-    if (!migratedCheck.ok) throw new Error(`V${historical.version} monitoring did not work after migration.`);
+    if (!migratedCheck.ok) throw new Error(`v${historical.version} monitoring did not work after migration.`);
     const migratedWatch = await request('/api/watchlist?region=us');
-    if (!migratedWatch.products.some((product) => product.slug === 'u7-pro-xgs' && !product.variantId)) throw new Error(`V${historical.version} did not preserve the existing Any variant watch.`);
+    if (!migratedWatch.products.some((product) => product.slug === 'u7-pro-xgs' && !product.variantId)) throw new Error(`v${historical.version} did not preserve the existing Any variant watch.`);
     const migratedLog = new DatabaseSync(join(localData, 'gearbeacon.mock.sqlite3'), { readOnly:true });
     const loggedBackups = Number(migratedLog.prepare('SELECT COUNT(*) AS count FROM backup_log').get()?.count || 0);
     migratedLog.close();
-    if (loggedBackups <= backupCount) throw new Error(`V${historical.version} migration did not record its pre-update safety backup.`);
+    if (loggedBackups <= backupCount) throw new Error(`v${historical.version} migration did not record its pre-update safety backup.`);
     await stopServer();
   }
 
@@ -671,7 +728,7 @@ try {
   await fetchJson('/api/status', { headers:{ Cookie:proxyCookie, 'X-Forwarded-Host':'attacker.invalid' } }, 421);
   await fetchJson('/api/status', { headers:{ Cookie:proxyCookie, 'X-Forwarded-Host':'gearbeacon.test, attacker.invalid' } }, 421);
 
-  console.log('\nSELF-TEST PASSED: V1.4.1 confirmed transitions + searchable/exportable activity + secondary recovery/restore tests + diagnostics/support bundle + watch intelligence + notifications + private self-hosting security all work.');
+  console.log('\nSELF-TEST PASSED: v1.4.2 confirmed transitions + searchable/exportable activity + secondary recovery/restore tests + diagnostics/support bundle + watch intelligence + notifications + private self-hosting security all work.');
 } finally {
   await stopServer();
   await new Promise((resolve) => smtpServer.close(resolve));

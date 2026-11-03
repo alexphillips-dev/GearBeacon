@@ -1,4 +1,4 @@
-// GearBeacon V1.4.1 backend
+// GearBeacon v1.4.2 backend
 // Private, owner-operated stock monitoring for local and self-hosted installs.
 // @ts-nocheck
 const http = require('node:http');
@@ -17,7 +17,7 @@ const { createAutoBuy, AUTO_BUY_SCHEMA, neutralizeAutoBuyBackup } = require('./a
 const { createOwnerSecurity } = require('./security');
 const { secureDataDirectory, loadProtectedKey } = require('./key-protection');
 const { notificationFetch, normalizePrivateHosts, fetchWithTimeout } = require('./outbound');
-const APP_VERSION = '1.4.1';
+const APP_VERSION = '1.4.2';
 const DATABASE_SCHEMA_VERSION = 15;
 const STORE_BASE = 'https://store.ui.com';
 const REGIONS = {
@@ -82,7 +82,8 @@ const GITHUB_RELEASE_API = String(process.env.GEARBEACON_GITHUB_RELEASE_API !== 
 const AUTO_UPDATE_CHECKS = !['0', 'false', 'no'].includes(String(process.env.GEARBEACON_AUTO_UPDATE_CHECKS ?? '1').toLowerCase());
 let PUBLIC_BASE_URL = String(process.env.GEARBEACON_PUBLIC_BASE_URL || '').trim().replace(/\/$/, '');
 const MIN_CATALOG_RATIO = Math.min(0.95, Math.max(0.1, Number(process.env.GEARBEACON_MIN_CATALOG_RATIO || 0.55)));
-const STALE_AFTER_SECONDS = Math.max(POLL_SECONDS * 3, Number(process.env.GEARBEACON_STALE_AFTER_SECONDS || 180));
+const MIN_STALE_AFTER_SECONDS = Number(process.env.GEARBEACON_STALE_AFTER_SECONDS || 180);
+function staleAfterSeconds() { return Math.max(POLL_SECONDS * 3, MIN_STALE_AFTER_SECONDS); }
 let BACKUP_RETENTION = Math.max(1, Math.min(100, Number(process.env.GEARBEACON_BACKUP_RETENTION || 10)));
 let BACKUP_INTERVAL_HOURS = Math.max(0, Number(process.env.GEARBEACON_BACKUP_INTERVAL_HOURS || 24));
 let EVENT_RETENTION_DAYS = Math.max(0, Math.min(3650, Number(process.env.GEARBEACON_EVENT_RETENTION_DAYS || 365)));
@@ -222,6 +223,7 @@ function setMeta(key, value) {
 }
 const DEFAULT_NOTIFICATION_PREFERENCES = Object.freeze({
     restock: true,
+    restockDate: true,
     soldOut: false,
     priceChange: false,
     statusChange: false,
@@ -328,6 +330,7 @@ function updateNotificationPreferences(input) {
 const DEFAULT_WATCH_RULE = Object.freeze({
     enabled: true,
     restock: null,
+    restockDate: null,
     soldOut: null,
     priceChange: null,
     statusChange: null,
@@ -393,7 +396,7 @@ function normalizeWatchRule(input, base = DEFAULT_WATCH_RULE) {
     const normalized = { ...base, ...normalizeAlertDelivery(value, base) };
     if (typeof value.enabled === 'boolean')
         normalized.enabled = value.enabled;
-    for (const key of ['restock', 'soldOut', 'priceChange', 'statusChange']) {
+    for (const key of ['restock', 'restockDate', 'soldOut', 'priceChange', 'statusChange']) {
         if (value[key] === null || typeof value[key] === 'boolean')
             normalized[key] = value[key];
     }
@@ -1746,7 +1749,7 @@ function mockCatalog() {
                 imageUrl: p.imageUrl || null,
                 inStock: status === 'Available',
                 comingSoon: status === 'ComingSoon',
-                restockEtaAt: null,
+                restockEtaAt: minIso([override.restockEtaAt]),
                 soldOutAt: status === 'SoldOut' ? isoNow() : null,
                 url: `${REGIONS[region].origin}/${REGIONS[region].path}/products/${p.slug}`,
                 region,
@@ -2123,6 +2126,8 @@ function eventTriggerReason(type, alertKind, rule, watchedAtDetection) {
         return 'The price changed on a watched product.';
     if (type === 'restock')
         return rule?.immediateRestock ? 'Immediate restock alerts are enabled for this product.' : 'A watched product became available.';
+    if (type === 'restock_date')
+        return watchedAtDetection ? 'The Store published a restock date for a watched product that previously had no date.' : 'The Store published a restock date for a product that previously had no date.';
     if (type === 'sold_out')
         return 'A watched product became unavailable.';
     if (type === 'status_change')
@@ -2162,6 +2167,8 @@ function createEvent(type, previous, current, watchedAtDetection, confirmation =
         previousStatus: previous?.status || null,
         status: current.status,
         inStock: current.inStock,
+        restockEtaAt: current.restockEtaAt || null,
+        previousRestockEtaAt: previous?.restockEtaAt || null,
         watchedAtDetection,
         alertKind,
         triggerReason: eventTriggerReason(type, alertKind, rule, watchedAtDetection),
@@ -2208,13 +2215,17 @@ function notificationCopy(event) {
 function digestNotificationBody(event, region) {
     const lines = [];
     for (const item of event.events || []) {
-        const line = `${item.name}: ${item.status || item.type}${item.deliveryContext ? ` (${item.deliveryContext.message})` : ''}`;
+        const line = `${item.name}: ${item.type === 'restock_date' ? `restock expected ${formatRestockDate(item.restockEtaAt)}` : item.status || item.type}${item.deliveryContext ? ` (${item.deliveryContext.message})` : ''}`;
         if (lines.length >= 8 || lines.join(' · ').length + line.length > 1500)
             break;
         lines.push(line);
     }
     const remaining = (event.events?.length || 0) - lines.length;
     return `${lines.join(' · ')}${remaining ? ` · ${remaining} more updates in GearBeacon` : ''} · ${region}`;
+}
+function formatRestockDate(value) {
+    const date = new Date(value || '');
+    return Number.isNaN(date.valueOf()) ? 'date unavailable' : new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', year: 'numeric', month: 'short', day: 'numeric' }).format(date);
 }
 function originalNotificationCopy(event) {
     const regionKey = event.region || currentRegion();
@@ -2232,6 +2243,12 @@ function originalNotificationCopy(event) {
             title: `${event.name} sold out`,
             body: `${event.price ? `${event.price} · ` : ''}${region}`,
             ntfyTags: 'package,x',
+        };
+    if (event.type === 'restock_date')
+        return {
+            title: `${event.name} has a restock date`,
+            body: `Restock expected ${formatRestockDate(event.restockEtaAt)} · ${region}`,
+            ntfyTags: 'calendar,package',
         };
     if (event.type === 'price_change')
         return {
@@ -2303,7 +2320,7 @@ function notificationDecision(event, prefs = notificationPreferences(), ruleOver
         const entering = event.type === 'restock' || previous === null || previous > rule.targetPrice || event.conditionEntered;
         return { allowed: qualifies && entering, reason: qualifies && entering ? 'available-at-target' : 'condition-not-met', rule };
     }
-    const preferenceKey = ({ restock: 'restock', sold_out: 'soldOut', price_change: 'priceChange', status_change: 'statusChange' })[event.type];
+    const preferenceKey = ({ restock: 'restock', restock_date: 'restockDate', sold_out: 'soldOut', price_change: 'priceChange', status_change: 'statusChange' })[event.type];
     if (!preferenceKey)
         return { allowed: false, reason: 'unsupported-event', rule };
     let enabled = rule[preferenceKey] === null ? Boolean(prefs[preferenceKey]) : Boolean(rule[preferenceKey]);
@@ -2365,7 +2382,7 @@ function alertConfiguration(product = null, collection = null) {
         }
         else if (prefs.allActivity) {
             label = 'All activity alerts enabled';
-            events = ['restock', 'sold_out', 'price_change', 'status_change'];
+            events = ['restock', 'restock_date', 'sold_out', 'price_change', 'status_change'];
             reasons.push('All activity overrides event choices, targets, and individual pauses. Purchased watches and collection-only suppression still stop item alerts.');
         }
         else if (rulePaused(rule)) {
@@ -2391,6 +2408,8 @@ function alertConfiguration(product = null, collection = null) {
             }
             if (enabled('soldOut'))
                 events.push('sold_out');
+            if (enabled('restockDate'))
+                events.push('restock_date');
             if (enabled('statusChange'))
                 events.push('status_change');
             if (!events.length) {
@@ -2404,7 +2423,7 @@ function alertConfiguration(product = null, collection = null) {
     }
     reasons.push(policy.channels === null ? 'Delivery uses all enabled, configured server channels.' : `Selected server channels: ${policy.channels.join(', ') || 'none'}. Disabled or unconfigured channels cannot deliver. Adding a channel does not resend earlier events.`);
     if (policy.maxAlertAgeMinutes !== null)
-        reasons.push(`Restock, price-opportunity, and collection-ready alerts expire after ${policy.maxAlertAgeMinutes} minutes from detection. Activity history is retained.`);
+        reasons.push(`Restock, restock-date, price-opportunity, and collection-ready alerts expire after ${policy.maxAlertAgeMinutes} minutes from detection. Activity history is retained.`);
     if (state === 'active' && !channels.length) {
         state = 'no-channel';
         reasons.unshift(label + '.');
@@ -2580,15 +2599,26 @@ async function smtpResponse(reader, expectedCodes) {
 }
 async function connectSmtp() {
     const options = { host: SMTP_HOST, port: SMTP_PORT, servername: SMTP_HOST, rejectUnauthorized: SMTP_REJECT_UNAUTHORIZED };
+    // An inactivity timeout installed after connect cannot bound DNS/TCP/TLS setup.
+    const establish = (candidate, event) => new Promise((resolve, reject) => {
+        const timer = setTimeout(() => candidate.destroy(new Error('SMTP connection timed out.')), 12000);
+        const cleanup = () => { clearTimeout(timer); candidate.off(event, ready); candidate.off('error', failed); candidate.off('close', closed); };
+        const ready = () => { cleanup(); resolve(); };
+        const failed = (err) => { cleanup(); reject(err); };
+        const closed = () => failed(new Error('SMTP connection closed unexpectedly.'));
+        candidate.once(event, ready);
+        candidate.once('error', failed);
+        candidate.once('close', closed);
+    });
     let socket;
     try {
         if (SMTP_SECURE) {
             socket = tls.connect(options);
-            await new Promise((resolve, reject) => { socket.once('secureConnect', resolve); socket.once('error', reject); });
+            await establish(socket, 'secureConnect');
         }
         else {
             socket = net.connect(options);
-            await new Promise((resolve, reject) => { socket.once('connect', resolve); socket.once('error', reject); });
+            await establish(socket, 'connect');
         }
         socket.setTimeout(12000, () => socket.destroy(new Error('SMTP connection timed out.')));
         let reader = smtpReader(socket);
@@ -2605,7 +2635,7 @@ async function connectSmtp() {
             await command('STARTTLS', [220]);
             reader.detach();
             socket = tls.connect({ socket, servername: SMTP_HOST, rejectUnauthorized: SMTP_REJECT_UNAUTHORIZED });
-            await new Promise((resolve, reject) => { socket.once('secureConnect', resolve); socket.once('error', reject); });
+            await establish(socket, 'secureConnect');
             socket.setTimeout(12000, () => socket.destroy(new Error('SMTP connection timed out.')));
             reader = smtpReader(socket);
             ehlo = await command(`EHLO ${os.hostname().replace(/[^a-zA-Z0-9.-]/g, '-') || 'gearbeacon'}`, [250]);
@@ -2646,7 +2676,11 @@ async function sendSmtp(event) {
         const message = rendered.message.replace(/\r?\n/g, '\r\n').replace(/^\./gm, '..');
         socket.write(`${message}\r\n.\r\n`);
         await smtpResponse(reader, [250]);
-        await command('QUIT', [221]);
+        // DATA's final 250 accepted the message. Cleanup failure must not resend it.
+        try {
+            await command('QUIT', [221]);
+        }
+        catch { }
     }
     finally {
         socket.end();
@@ -2733,7 +2767,7 @@ function testEvent() {
     };
     return event;
 }
-const EMAIL_PREVIEW_TYPES = new Set(['restock', 'target_price', 'price_drop', 'price_change', 'sold_out', 'status_change', 'new_product', 'digest', 'operational', 'test']);
+const EMAIL_PREVIEW_TYPES = new Set(['restock', 'restock_date', 'target_price', 'price_drop', 'price_change', 'sold_out', 'status_change', 'new_product', 'digest', 'operational', 'test']);
 function previewNotificationEvent(slug, requestedType = 'restock') {
     if (!EMAIL_PREVIEW_TYPES.has(requestedType))
         throw new Error('Unsupported email preview type.');
@@ -2769,6 +2803,7 @@ function previewNotificationEvent(slug, requestedType = 'restock') {
         price: product?.price || '$199.00', priceValue: currentPriceValue,
         previousPrice: previousPriceValue === null ? null : `$${previousPriceValue.toFixed(2)}`, previousPriceValue, priceDifference, priceDifferencePercent,
         previousStatus: requestedType === 'status_change' ? 'ComingSoon' : requestedType === 'restock' ? 'SoldOut' : null,
+        previousRestockEtaAt: null, restockEtaAt: requestedType === 'restock_date' ? new Date(Date.now() + 21 * 86400000).toISOString() : product?.restockEtaAt || null,
         status: requestedType === 'sold_out' ? 'SoldOut' : requestedType === 'status_change' ? 'Available' : product?.status || 'Available',
         inStock: isAvailable, watchedAtDetection: Boolean(product ? state.watchlist.includes(product.slug) : true),
         targetPrice, immediateRestock: requestedType === 'restock',
@@ -2989,7 +3024,7 @@ function recoverFailedDeliveriesAfterOutage(region) {
     return queued;
 }
 function alertExpired(event, currentPolicy = eventAlertDelivery(event), now = Date.now()) {
-    if (!['restock', 'collection_ready'].includes(event.type) && !['target_price', 'price_drop'].includes(event.alertKind))
+    if (!['restock', 'restock_date', 'collection_ready'].includes(event.type) && !['target_price', 'price_drop'].includes(event.alertKind))
         return false;
     const limits = [event.deliveryPolicy?.maxAlertAgeMinutes, currentPolicy.maxAlertAgeMinutes].filter(value => Number.isInteger(value) && value > 0);
     return Boolean(limits.length && now - new Date(event.detectedAt).getTime() >= Math.min(...limits) * 60000);
@@ -3231,7 +3266,7 @@ function productInsights(slug, days = 30, now = Date.now()) {
         return { days: period, ...values, fullWindow: Boolean(historySince && historySince <= start && HISTORY_RETENTION_DAYS >= period) };
     });
     const restockSince = historySince && historySince > since ? historySince : since;
-    const restocks = historySince ? db.prepare("SELECT observed_at AS detectedAt FROM product_observations WHERE region=? AND slug=? AND observed_at>=? AND observed_at<=? AND change_type LIKE '%restock%' ORDER BY observed_at").all(region, slug, restockSince, until) : [];
+    const restocks = historySince ? db.prepare("SELECT observed_at AS detectedAt FROM product_observations WHERE region=? AND slug=? AND observed_at>=? AND observed_at<=? AND instr('+' || change_type || '+', '+restock+')>0 ORDER BY observed_at").all(region, slug, restockSince, until) : [];
     const target = watchRule(slug).targetPrice;
     const current = priceValue(product.price);
     return { days, since, until, historySince, currency: REGIONS[region].currency, exactPriceScope, prices, timeline: timeline.slice(-600), timelineTruncated: timeline.length > 600,
@@ -3483,6 +3518,7 @@ async function checkStore(reason = 'timer') {
                 const availabilityChanged = Boolean(previous.inStock) !== Boolean(product.inStock);
                 if (availabilityChanged && product.inStock) {
                     clearPendingTransition(product.slug, 'availability');
+                    clearPendingTransition(product.slug, 'restock_eta');
                     effective = { ...effective, inStock: true, status: product.status, comingSoon: product.comingSoon, restockEtaAt: product.restockEtaAt, soldOutAt: product.soldOutAt, unlisted: false };
                     changeTypes.push('restock');
                     queueEvent(createEvent('restock', previous, { ...effective, price: product.price }, watchedAtDetection, {
@@ -3492,7 +3528,7 @@ async function checkStore(reason = 'timer') {
                 else if (availabilityChanged) {
                     const pending = observePendingTransition(product.slug, 'availability', { inStock: false, status: product.status, comingSoon: product.comingSoon });
                     if (pending.confirmed) {
-                        effective = { ...effective, inStock: false, status: product.status, comingSoon: product.comingSoon, restockEtaAt: product.restockEtaAt, soldOutAt: product.soldOutAt || product.lastSeenAt, unlisted: false };
+                        effective = { ...effective, inStock: false, status: product.status, comingSoon: product.comingSoon, soldOutAt: product.soldOutAt || product.lastSeenAt, unlisted: false };
                         changeTypes.push('sold-out');
                         queueEvent(createEvent('sold_out', previous, effective, watchedAtDetection, pending.evidence));
                     }
@@ -3500,8 +3536,19 @@ async function checkStore(reason = 'timer') {
                 else {
                     clearPendingTransition(product.slug, 'availability');
                     effective.inStock = product.inStock;
-                    effective.restockEtaAt = product.restockEtaAt;
                     effective.soldOutAt = product.soldOutAt;
+                }
+                if ((!availabilityChanged || !product.inStock) && previous.restockEtaAt !== product.restockEtaAt) {
+                    const pending = observePendingTransition(product.slug, 'restock_eta', { restockEtaAt: product.restockEtaAt });
+                    if (pending.confirmed) {
+                        effective.restockEtaAt = product.restockEtaAt;
+                        changeTypes.push('restock-date');
+                        if (!previous.restockEtaAt && product.restockEtaAt)
+                            queueEvent(createEvent('restock_date', previous, effective, watchedAtDetection, pending.evidence));
+                    }
+                }
+                else if (!availabilityChanged || !product.inStock) {
+                    clearPendingTransition(product.slug, 'restock_eta');
                 }
                 if (!availabilityChanged && previous.status !== product.status) {
                     const pending = observePendingTransition(product.slug, 'status', { status: product.status, comingSoon: product.comingSoon });
@@ -3543,7 +3590,7 @@ async function checkStore(reason = 'timer') {
             for (const previous of Object.values(state.products)) {
                 if (incoming[previous.slug] || previous.unlisted)
                     continue;
-                clearPendingTransitions(previous.slug, ['availability', 'status', 'price']);
+                clearPendingTransitions(previous.slug, ['availability', 'status', 'price', 'restock_eta']);
                 const pending = observePendingTransition(previous.slug, 'unlisted', { status: 'Unlisted', unlisted: true });
                 if (!pending.confirmed)
                     continue;
@@ -3621,7 +3668,7 @@ async function checkStore(reason = 'timer') {
         monitor.lastError = err?.message || String(err);
         monitor.retryAfterAt = err?.retryAfterAt || null;
         const lastSuccessAge = monitor.lastSuccessAt ? (Date.now() - new Date(monitor.lastSuccessAt).getTime()) / 1000 : Infinity;
-        monitor.catalogHealth = lastSuccessAge > STALE_AFTER_SECONDS ? 'stale' : 'error';
+        monitor.catalogHealth = lastSuccessAge > staleAfterSeconds() ? 'stale' : 'error';
         console.error('[monitor] failed:', monitor.lastError);
         writeAppLog('error', 'monitor', `Store check failed for ${currentRegion()}.`, { reason, error: monitor.lastError, consecutiveFailures: monitor.consecutiveFailures });
         recordMonitorCheck('failed', startedAt, monitor.lastError);
@@ -4213,7 +4260,7 @@ function activityFilterSql(url) {
     const conditions = [`e.region IN (${regions.map(() => '?').join(',')})`];
     const parameters = [...regions];
     const type = String(url.searchParams.get('type') || 'all').toLowerCase();
-    const allowedTypes = ['restock', 'sold_out', 'price_change', 'status_change', 'new_product', 'collection_ready'];
+    const allowedTypes = ['restock', 'restock_date', 'sold_out', 'price_change', 'status_change', 'new_product', 'collection_ready'];
     if (type !== 'all') {
         if (!allowedTypes.includes(type))
             throw new Error('Activity type is not supported.');
@@ -4331,7 +4378,7 @@ function activitySummary(filter, ceiling) {
     SUM(e.type='restock') AS restocks,SUM(e.type='sold_out') AS soldOut,SUM(e.type='price_change') AS priceChanges,
     SUM(CASE WHEN e.type='price_change' AND ${difference}<0 THEN 1 ELSE 0 END) AS priceDrops,
     SUM(CASE WHEN e.type='price_change' AND ${difference}>0 THEN 1 ELSE 0 END) AS priceIncreases,
-    SUM(e.type='status_change') AS statusChanges,SUM(e.type='new_product') AS newProducts,SUM(e.type='collection_ready') AS collectionReady
+    SUM(e.type='status_change') AS statusChanges,SUM(e.type='restock_date') AS restockDates,SUM(e.type='new_product') AS newProducts,SUM(e.type='collection_ready') AS collectionReady
     FROM events e WHERE ${filter.where} AND e.rowid<=?`).get(...filter.parameters, ceiling);
     return { ...Object.fromEntries(Object.entries(counts).map(([key, value]) => [key, Number(value) || 0])), timeZone: filter.filters.timeZone, asOf: isoNow() };
 }
@@ -4413,8 +4460,8 @@ function csvCell(value) {
     return `"${text.replaceAll('"', '""')}"`;
 }
 function activityCsv(events) {
-    const columns = ['detectedAt', 'region', 'type', 'alertKind', 'name', 'slug', 'previousStatus', 'status', 'previousPrice', 'price', 'delivery', 'confirmationPolicy', 'confirmationObservations'];
-    const rows = events.map((event) => [event.detectedAt, event.region, event.type, event.alertKind, event.name, event.slug, event.previousStatus, event.status, event.previousPrice, event.price, event.serverAlert?.state, event.confirmation?.policy, event.confirmation?.observations]);
+    const columns = ['detectedAt', 'region', 'type', 'alertKind', 'name', 'slug', 'previousStatus', 'status', 'previousPrice', 'price', 'previousRestockEtaAt', 'restockEtaAt', 'delivery', 'confirmationPolicy', 'confirmationObservations'];
+    const rows = events.map((event) => [event.detectedAt, event.region, event.type, event.alertKind, event.name, event.slug, event.previousStatus, event.status, event.previousPrice, event.price, event.previousRestockEtaAt, event.restockEtaAt, event.serverAlert?.state, event.confirmation?.policy, event.confirmation?.observations]);
     return `${columns.map(csvCell).join(',')}\r\n${rows.map((row) => row.map(csvCell).join(',')).join('\r\n')}\r\n`;
 }
 function backupFileForTest(input = {}) {
@@ -4544,6 +4591,8 @@ async function runDiagnostics({ network = true } = {}) {
 function scrubSupportValue(value, key = '') {
     if (/password|secret|token|credential|session|cookie|authorization|path$|directory$|dir$/i.test(key))
         return '[redacted]';
+    if (/^(?:remoteAddress|address|ip|host|hostname|forwardedFor)$/i.test(key))
+        return '[redacted]';
     if (/^(?:name|slug|slugs|sku|variantId|variantSlug|variantTitle|variantKeys|parentSlug|sourceSlug|watchlist|watchRules|collections|collectionName|collectionId|readiness|inventoryHistory|candidate|product|products|productHistory)$/i.test(key))
         return '[redacted]';
     if (Array.isArray(value))
@@ -4558,6 +4607,7 @@ function scrubSupportValue(value, key = '') {
             .replace(/\b(?:https?|wss?):\/\/[^\s"'<>]+/ig, '[url redacted]')
             .replace(/\b[A-Z]:\\(?:[^\\\r\n]+\\)*[^\\\r\n]*/ig, '[local path redacted]')
             .replace(/(^|[\s("'=])\/(?:Users|home|var|data|mnt|srv|opt|tmp|private|Library)(?:\/[^\s"',;)}]+)*/g, '$1[local path redacted]')
+            .replace(/(?<![\w:])\[?(?:[a-f\d]{0,4}:){2,}[a-f\d:.]*(?:%[\w.-]+)?\]?/ig, (candidate) => net.isIP(candidate.replace(/^\[|\]$/g, '').replace(/\.+$/, '').split('%')[0]) ? '[address redacted]' : candidate)
             .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[address redacted]')
             .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/ig, '[address redacted]');
     return value;
@@ -4726,12 +4776,53 @@ function normalizeImportedSnapshot(snapshot) {
         const region = REGIONS[snapshot.region] ? snapshot.region : currentRegion();
         regions[region] = normalizeRegion(snapshot);
     }
+    validateSnapshotProducts(regions);
     validateSnapshotCollections(regions);
     validateSnapshotInsights(regions);
     return {
         regions,
         settings: snapshot.settings && typeof snapshot.settings === 'object' && !Array.isArray(snapshot.settings) ? snapshot.settings : {},
     };
+}
+function validateSnapshotProducts(regions) {
+    const text = (value, limit = 1000) => typeof value === 'string' && value.length > 0 && value.length <= limit && !/[\x00-\x1f\x7f]/.test(value);
+    for (const [region, value] of Object.entries(regions)) {
+        for (const [slug, product] of Object.entries(value.products)) {
+            if (!product || typeof product !== 'object' || Array.isArray(product) || !text(slug, 500) || product.slug !== slug
+                || !text(product.name) || !text(product.category) || !text(product.status, 100) || typeof product.inStock !== 'boolean'
+                || (product.region !== undefined && product.region !== region))
+                throw new Error('Backup contains an invalid product identity or availability.');
+            for (const key of ['comingSoon', 'unlisted'])
+                if (product[key] !== undefined && typeof product[key] !== 'boolean')
+                    throw new Error('Backup contains invalid product flags.');
+            for (const key of ['price', 'variantId', 'variantSlug', 'variantTitle', 'sku', 'parentSlug']) {
+                if (product[key] != null && typeof product[key] !== 'string')
+                    throw new Error('Backup contains invalid product details.');
+            }
+            for (const key of ['lastSeenAt', 'lastChangedAt', 'firstDiscoveredAt', 'restockEtaAt', 'soldOutAt']) {
+                if (product[key] != null && (typeof product[key] !== 'string' || !Number.isFinite(Date.parse(product[key]))))
+                    throw new Error('Backup contains invalid product timestamps.');
+            }
+            for (const key of ['url', 'imageUrl']) {
+                if (product[key] == null)
+                    continue;
+                try {
+                    if (typeof product[key] !== 'string')
+                        throw new Error();
+                    const url = new URL(product[key]);
+                    if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password)
+                        throw new Error();
+                }
+                catch {
+                    throw new Error('Backup contains an invalid product URL.');
+                }
+            }
+            if (product.parentSlug != null && (!text(product.parentSlug, 500) || !Object.hasOwn(value.products, product.parentSlug)))
+                throw new Error('Backup contains an unknown product parent.');
+            if (product.variantKeys !== undefined && (!Array.isArray(product.variantKeys) || product.variantKeys.some(key => typeof key !== 'string' || !Object.hasOwn(value.products, key))))
+                throw new Error('Backup contains invalid product variants.');
+        }
+    }
 }
 function validateSnapshotCollections(regions) {
     // Preview and restore both validate before making any changes to a region.
@@ -5428,7 +5519,7 @@ function outboundConnections() {
     ];
 }
 function apiStatus() {
-    const stale = !monitor.lastSuccessAt || (Date.now() - new Date(monitor.lastSuccessAt).getTime()) / 1000 > STALE_AFTER_SECONDS;
+    const stale = !monitor.lastSuccessAt || (Date.now() - new Date(monitor.lastSuccessAt).getTime()) / 1000 > staleAfterSeconds();
     return {
         name: 'GearBeacon',
         version: APP_VERSION,
@@ -5454,7 +5545,7 @@ function apiStatus() {
         health: {
             ok: Boolean(monitor.lastSuccessAt) && !stale && !monitor.lastError,
             stale,
-            staleAfterSeconds: STALE_AFTER_SECONDS,
+            staleAfterSeconds: staleAfterSeconds(),
             minCatalogRatio: MIN_CATALOG_RATIO,
         },
         ...monitor,
@@ -6732,7 +6823,9 @@ async function handleRegionApi(req, res, url) {
         const price = body?.price === undefined ? (mockOverrides[slug]?.price ?? source.price) : String(body.price);
         if (body?.variants !== undefined && (!Array.isArray(body.variants) || body.variants.length > 100))
             return sendJson(res, 400, { error: 'Provide at most 100 mock variants.' });
-        mockOverrides[slug] = { status, price, present: body?.present !== false, ...(body?.variants !== undefined ? { variants: body.variants } : {}) };
+        if (body?.restockEtaAt !== undefined && body.restockEtaAt !== null && (typeof body.restockEtaAt !== 'string' || Number.isNaN(new Date(body.restockEtaAt).valueOf())))
+            return sendJson(res, 400, { error: 'Mock restock date must be a valid date or null.' });
+        mockOverrides[slug] = { status, price, present: body?.present !== false, restockEtaAt: body?.restockEtaAt === undefined ? mockOverrides[slug]?.restockEtaAt || null : body.restockEtaAt, ...(body?.variants !== undefined ? { variants: body.variants } : {}) };
         return sendJson(res, 200, { ok: true, slug, ...mockOverrides[slug] });
     }
     if (MOCK_MODE && req.method === 'POST' && url.pathname === '/api/mock/fault') {
@@ -6779,7 +6872,7 @@ const server = http.createServer(async (req, res) => {
         if (url.pathname === '/readyz') {
             const ready = MOCK_MODE || ACTIVE_REGIONS.every((region) => {
                 const item = monitors[region];
-                return item.lastSuccessAt && !item.lastError && (Date.now() - new Date(item.lastSuccessAt).getTime()) / 1000 <= STALE_AFTER_SECONDS;
+                return item.lastSuccessAt && !item.lastError && (Date.now() - new Date(item.lastSuccessAt).getTime()) / 1000 <= staleAfterSeconds();
             });
             return sendJson(res, ready ? 200 : 503, { ok: ready, version: APP_VERSION });
         }
@@ -6829,7 +6922,7 @@ async function start() {
     }
     initializeOwnerAuthentication();
     console.log('');
-    console.log(`  GearBeacon V${APP_VERSION}`);
+    console.log(`  GearBeacon v${APP_VERSION}`);
     console.log('  Know the second it\'s back.');
     console.log('');
     console.log(`  Regions:     ${ACTIVE_REGIONS.map((region) => REGIONS[region].label).join(', ')}`);
@@ -6865,7 +6958,7 @@ async function start() {
     scheduleBackups();
     scheduleNotificationWorker();
     scheduleUpdateCheck();
-    writeAppLog('info', 'app', `GearBeacon V${APP_VERSION} started.`, { regions: ACTIVE_REGIONS, accessMode: ACCESS_MODE, platform: `${process.platform}/${process.arch}` });
+    writeAppLog('info', 'app', `GearBeacon v${APP_VERSION} started.`, { regions: ACTIVE_REGIONS, accessMode: ACCESS_MODE, platform: `${process.platform}/${process.arch}` });
 }
 function shutdown(signal) {
     if (updateCheckTimer)

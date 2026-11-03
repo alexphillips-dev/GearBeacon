@@ -1,11 +1,11 @@
 {
   "name": "GearBeacon",
-  "latestVersion": "1.4.1",
-  "publishedAt": "2026-09-25T00:00:00Z",
-  "downloadUrl": "https://github.com/alexphillips-dev/GearBeacon/releases/tag/v1.4.1",
-  "releasePageUrl": "https://github.com/alexphillips-dev/GearBeacon/releases/tag/v1.4.1",
+  "latestVersion": "1.4.2",
+  "publishedAt": "2026-11-03T00:00:00Z",
+  "downloadUrl": "https://github.com/alexphillips-dev/GearBeacon/releases/tag/v1.4.2",
+  "releasePageUrl": "https://github.com/alexphillips-dev/GearBeacon/releases/tag/v1.4.2",
   "minimumSchemaVersion": 4,
   "maximumSchemaVersion": 15,
   "minimumNodeVersion": "22.13.0",
-  "releaseNotes": "GearBeacon 1.4.1 includes all changes since 1.4.0: failed-delivery retry and dismissal controls with one bounded recovery cycle after an outage; atomic Store observations, activity, delivery jobs, watch and rule changes, and collection purchase actions; Store response-body timeouts; validated primary backups, rollback-safe restore, and installation-scoped cleanup of secondary copies and abandoned temporary files; Windows checkout vault DPAPI and ACL protection; reliable Windows service web replacement; and Operations refresh on reconnection. Schema v15 and export format v10 are unchanged. Read the complete release notes for recovery, upgrade, and optional companion guidance."
+  "releaseNotes": "GearBeacon v1.4.2 includes every change since v1.4.1: fixed Watchlist auto-buy action placement; independent restock-date confirmation and alerts; exact restock insights; polling-aware health; safe product restore validation and IPv6 support-bundle redaction; bounded SMTP connection and TLS setup with accepted-message deduplication; native service permissions, build identity and Windows exit reporting; updated development and security tooling. Schema v15 and export format v10 are unchanged. See the curated release notes for upgrade guidance."
 }

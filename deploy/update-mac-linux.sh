@@ -62,6 +62,8 @@ else sudo systemctl stop "$SERVICE"; fi
 sudo install -m 0755 "$TMP_DIR/$NAME/gearbeacon" "$INSTALL/gearbeacon"
 sudo rm -rf "$INSTALL/web"
 sudo cp -R "$TMP_DIR/$NAME/web" "$INSTALL/web"
+sudo find "$INSTALL/web" -type d -exec chmod 0755 {} +
+sudo find "$INSTALL/web" -type f -exec chmod 0644 {} +
 sudo install -m 0644 "$TMP_DIR/$NAME/release-manifest.json" "$INSTALL/release-manifest.json"
 if test -f "$TMP_DIR/$NAME/build-info.json"; then sudo install -m 0644 "$TMP_DIR/$NAME/build-info.json" "$INSTALL/build-info.json"; else sudo rm -f "$INSTALL/build-info.json"; fi
 if [ "$PLATFORM" = macos ]; then sudo launchctl bootstrap system /Library/LaunchDaemons/com.gearbeacon.server.plist; else sudo systemctl start "$SERVICE"; fi
@@ -73,7 +75,7 @@ while test "$(date +%s)" -lt "$deadline"; do
   app_version=$(printf '%s' "$health" | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
   if test -z "$observed"; then observed=$app_version; fi
   if test "$observed" = "$VERSION" && test "$app_version" = "$BASE_VERSION" && printf '%s' "$health" | grep -Eq '"name"[[:space:]]*:[[:space:]]*"GearBeacon"' && printf '%s' "$health" | grep -Eq '"ok"[[:space:]]*:[[:space:]]*true'; then
-    echo "GearBeacon V$VERSION verified: local startup health and expected version. Data was preserved."
+    echo "GearBeacon v$VERSION verified: local startup health and expected version. Data was preserved."
     exit 0
   fi
   sleep 1

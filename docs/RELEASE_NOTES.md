@@ -1,45 +1,39 @@
-# GearBeacon 1.4.1 — Delivery recovery and safer state changes
+# GearBeacon v1.4.2 — Reliable actions, monitoring, delivery, and deployment
 
-This patch includes every change since the last main release, v1.4.0. GearBeacon remains a private, single-owner, self-hosted UniFi Store monitor. Monitoring and notification delivery continue on the server while the browser is closed.
+This patch includes every change since the last main release, v1.4.1. GearBeacon remains a private, single-owner, self-hosted UniFi Store monitor. Monitoring and notification delivery continue on the server while the browser is closed.
 
-## Notification recovery and Operations
+## Watchlist and restock dates
 
-- **Resolve failed deliveries:** Settings > Operations > Delivery now offers Retry failed, Dismiss, and Dismiss all failed. The attention banner opens that section. Dismissal clears the active warning and keeps the failed attempt in Activity and the delivery log; it does not send or recall a message.
-- **Recover after a connection outage:** after a failed Store check, the next successful, complete check requeues eligible network-related terminal delivery failures, including interrupted notification responses, for one more bounded retry cycle. The recovery window survives partial catalogs and service restarts. Expired alerts and channels that are no longer allowed remain ineligible. Credential or other permanent failures still need correction and manual retry.
-- **Stay current without losing focus:** Operations refreshes counts and warnings during background polling and after the connection returns while preserving keyboard focus.
+- Set up auto-buy stays directly above Alert rules, Purchased, and Remove in a shared bottom action area. Collection chips and variable product details stay above the actions. Grid, compact, and mobile layouts retain all controls.
+- Watched products announce a newly published restock date after two matching complete Store observations, including dates published alongside a sellout. Global and per-watch controls apply to server channels, browser notifications, grouped messages, and email. Changed or removed dates also require confirmation.
+- Restock dates are confirmed independently from sellout status, including when the date first appears or changes on the second sellout check. Insights count actual restocks without counting date announcements as stock availability.
+- Health freshness follows the configured polling interval after settings changes and startup.
 
-See [notification delivery and recovery](https://github.com/alexphillips-dev/GearBeacon/blob/v1.4.1/docs/ALERT_DELIVERY.md) for the controls, retry limits, and manual recovery path.
+## Delivery, restore, and privacy
 
-## Monitoring, watches, and purchase state
+- SMTP connection and TLS setup have bounded deadlines so a stalled mail server cannot block the delivery worker indefinitely. A successful final DATA response counts as accepted even if QUIT fails, preventing that cleanup failure from resending a message.
+- Restore preview and import reject malformed product records before creating a backup or changing application state. Valid legacy snapshots remain supported.
+- Support bundles redact IPv6 addresses and address fields alongside existing IPv4 redaction.
 
-- The Store request timeout now covers response-body parsing, so a stalled response cannot hold the monitor loop indefinitely.
-- Each successful Store check commits product state, observation evidence, Activity events, and queued delivery jobs together. A failed commit cannot leave a recorded stock event with stale product state.
-- Adding a watch and its alert rule now commits as one operation. Single and bulk watch removals, bulk pause/resume/purchased/wanted actions, product alert settings, and auto-buy arming commit their related database changes together. If a write fails, the request leaves watches, rules, collection purchase state, and delivery state unchanged.
-- Removed a redundant delayed whole-state save after watch changes. It could previously fail after an otherwise successful request when another SQLite writer held a lock.
+## Native deployment and tooling
 
-## Backups, restore, and local security
+- Linux/macOS installation and updates explicitly set readable web-file permissions under restrictive administrator umasks, while private data permissions remain separate.
+- Native installers preserve build-info.json so prerelease versions, update channels, and source commits remain identifiable. Reinstallation removes stale metadata when the package does not include it.
+- Windows Scheduled Task launchers forward the application exit code. Existing task installations need the updated installer rerun; replacing application files alone does not update the launcher.
+- Updated pinned CI/security actions, Playwright, axe-core, and container security packages. Added deterministic regression coverage for these monitoring, delivery, restore, privacy, and deployment fixes.
+- Displayed versions, changelog headings, update messages, and GitHub release titles consistently use a lowercase `v` prefix. Container builds install the fixed Alpine musl, musl-utils, and zlib packages alongside OpenSSL updates.
 
-- Primary SQLite backups become visible only after validation; failed copies are removed. A secondary-copy failure does not invalidate a successful primary backup.
-- Backup retention and abandoned-temp cleanup recognize only GearBeacon-owned copies. Secondary copies now carry an installation ID, saved before the first primary snapshot so the copy remains discoverable after restore. One installation leaves another installation's files alone. Old copies recorded in backup history remain available; unrecorded older copies may need manual cleanup. Abandoned primary and secondary temporary files are removed only when at least a day old and their creating process has exited.
-- Secondary retention leaves unrelated files in a shared destination alone. GearBeacon no longer changes permissions on an existing secondary directory; plaintext copies receive owner-only file permissions on Unix.
-- Portable restore rejects incompatible regions before changing purchase state and rolls back all regions and settings together if the restore fails.
-- The optional Windows checkout companion now protects its vault with private ACLs and an account-scoped DPAPI key. A writable open migrates an older raw key without replacing its underlying key bytes. The vault must stay with its original Windows account or use the documented recovery process.
+## Upgrading from v1.4.1
 
-## Windows installation and diagnostics
+1. Prepare and verify a backup before replacing application files. Retain the compatible database and matching installation key for rollback.
+2. Install the matching v1.4.2 server files or image. If you use the optional checkout companion, update it from the matching Source archive and keep its private vault with the original account.
+3. Restart GearBeacon and hard-refresh the dashboard. Rerun the matching Windows installer if the Scheduled Task launcher needs updating.
+4. SQLite schema v15 and portable export format v10 remain unchanged. Existing watches, rules, collections, history, settings, encrypted integrations, and owner access are retained.
 
-- Reinstalling the Windows service now replaces the web assets without nesting another web directory or keeping obsolete pages.
-- Source launchers no longer display a stale version. Malformed API paths return a client error.
-- Added deterministic coverage for watch and rule write failures, backup ownership and cleanup, restore rollback, outage recovery, Windows vault migration, service web replacement, and update startup behavior. CI includes the Windows checkout vault test.
+Source installations require Node.js 22.13 or newer. The optional auto-buy feature remains experimental and requires explicit owner authorization, a reusable saved payment method, and a separately running companion. Automated checkout validation uses isolated fixtures; real-account compatibility remains dependent on owner setup. This change does not initiate an update or purchase.
 
-## Upgrading from v1.4.0
+See [the changelog](CHANGELOG.md) for earlier versions and [.github/RELEASE_CHECKLIST.md](../.github/RELEASE_CHECKLIST.md) for candidate and stable publication requirements.
 
-1. In Settings > General, choose Prepare safe update and confirm the backup before replacing application files. Keep a compatible database and the separate installation key for rollback.
-2. Install the matching 1.4.1 server files or image and restart GearBeacon. If you use the optional checkout companion, update it from the matching 1.4.1 Source archive and keep its private vault with the original Windows account.
-3. Hard-refresh the dashboard. Review Settings > Operations > Delivery for failures left by an outage; correct permanent channel errors before using Retry failed.
-4. GearBeacon remains on SQLite schema v15 and portable export format v10. This patch adds no schema migration or intentional sign-out. Existing watches, rules, collections, history, settings, encrypted integrations, and owner access are retained.
-
-Source installations require Node.js 22.13 or newer. Standalone packages include their server runtime. The optional auto-buy feature remains experimental: it requires an existing reusable saved card, explicit owner authorization, and a separately running companion. Authenticated live checkout compatibility remains unverified with a real owner account; automated tests use isolated fixtures. No automatic update or purchase is performed by this patch.
-
-[Full comparison: v1.4.0…v1.4.1](https://github.com/alexphillips-dev/GearBeacon/compare/v1.4.0...v1.4.1)
+[Full comparison: v1.4.1…v1.4.2](https://github.com/alexphillips-dev/GearBeacon/compare/v1.4.1...v1.4.2)
 
 GearBeacon remains independent from Ubiquiti. UniFi and Ubiquiti are trademarks of Ubiquiti Inc.

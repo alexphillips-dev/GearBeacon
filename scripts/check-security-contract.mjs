@@ -36,6 +36,10 @@ for (const setting of ['server.headersTimeout = 15_000;', 'server.requestTimeout
 if (/COPY --chown=node:node/.test(dockerfile) || !/COPY --chown=root:root backend\/dist/.test(dockerfile) || !/^USER node$/m.test(dockerfile)) {
   throw new Error('Container application files must be root-owned while the process remains unprivileged.');
 }
+const upgradedContainerPackages = new Set((dockerfile.match(/^RUN apk upgrade --no-cache ([^\r\n\\]+)/m)?.[1] || '').trim().split(/\s+/));
+for (const name of ['libcrypto3', 'libssl3', 'musl', 'musl-utils', 'zlib']) {
+  if (!upgradedContainerPackages.has(name)) throw new Error(`Container builds must install Alpine security updates for ${name}.`);
+}
 for (const pattern of [/read_only:\s*true/, /cap_drop:\s*\r?\n\s*- ALL/, /no-new-privileges:true/, /pids_limit:\s*256/, /\/tmp:rw,nosuid,nodev,noexec/]) {
   requireMatch(compose, pattern, 'Compose must keep the read-only, capability-free, no-new-privileges runtime contract.');
 }

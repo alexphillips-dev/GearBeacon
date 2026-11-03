@@ -13,16 +13,20 @@ const run = (command, args, expectedText) => {
 };
 
 if (process.platform === 'win32') {
-  run('pwsh', ['-NoProfile', '-NonInteractive', '-File', 'deploy/update-windows.ps1', '-Version', '1.4.1'], 'BackupConfirmed');
+  run('pwsh', ['-NoProfile', '-NonInteractive', '-File', 'deploy/update-windows.ps1', '-Version', '1.4.2'], 'BackupConfirmed');
   const result=spawnSync('pwsh',['-NoProfile','-NonInteractive','-File','scripts/update-helper-windows-test.ps1'],{cwd:root,encoding:'utf8',windowsHide:true});
   if (result.status!==0) throw new Error(`${result.stdout || ''}\n${result.stderr || ''}`);
 } else {
-  run('sh', ['deploy/update-mac-linux.sh', '1.4.1'], '--backup-confirmed');
-  run('sh', ['deploy/update-docker.sh', '1.4.1'], '--backup-confirmed');
+  run('sh', ['deploy/update-mac-linux.sh', '1.4.2'], '--backup-confirmed');
+  run('sh', ['deploy/update-docker.sh', '1.4.2'], '--backup-confirmed');
 }
 
 const fixtures=spawnSync(process.execPath,['scripts/update-helper-unix-test.mjs'],{cwd:root,encoding:'utf8',windowsHide:true});
 if (fixtures.status!==0) throw new Error(`${fixtures.stdout || ''}\n${fixtures.stderr || ''}`);
 console.log(fixtures.stdout.trim());
+
+const installers=spawnSync(process.execPath,['scripts/service-install-test.mjs'],{cwd:root,encoding:'utf8',windowsHide:true});
+if (installers.status!==0) throw new Error(installers.stdout + '\n' + installers.stderr);
+console.log(installers.stdout.trim());
 
 console.log('Update helper safety checks passed.');

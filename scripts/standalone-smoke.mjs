@@ -26,7 +26,7 @@ try {
     const detail = spawnError ? `spawn error: ${spawnError.message}` : exit ? `process exited: ${JSON.stringify(exit)}` : 'startup timed out after 30 seconds';
     throw new Error(`Standalone did not start correctly (${detail}).`);
   }
-  if (status.version !== release.latestVersion || status.storage?.schemaVersion !== release.maximumSchemaVersion) throw new Error(`Standalone release identity mismatch: expected V${release.latestVersion} / schema v${release.maximumSchemaVersion}, received V${status.version} / schema v${status.storage?.schemaVersion}.`);
+  if (status.version !== release.latestVersion || status.storage?.schemaVersion !== release.maximumSchemaVersion) throw new Error(`Standalone release identity mismatch: expected v${release.latestVersion} / schema v${release.maximumSchemaVersion}, received v${status.version} / schema v${status.storage?.schemaVersion}.`);
   const dashboard = await fetch(`http://127.0.0.1:${port}/`);
   if (!dashboard.ok || !(await dashboard.text()).includes('Guided first run')) throw new Error('Standalone dashboard assets were not served.');
   const operations = await (await fetch(`http://127.0.0.1:${port}/api/operations`)).json();

@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22.16.0'
           cache: npm
@@ -31,10 +31,10 @@ jobs:
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           BASE_VERSION="${TAG_VERSION%%[-+]*}"
           APP_VERSION=$(node -p "require('./backend/package.json').version")
-          test "$BASE_VERSION" = "$APP_VERSION" || { echo "Tag $GITHUB_REF_NAME does not match application V$APP_VERSION." >&2; exit 1; }
+          test "$BASE_VERSION" = "$APP_VERSION" || { echo "Tag $GITHUB_REF_NAME does not match application v$APP_VERSION." >&2; exit 1; }
           npm run build
           npm run check
-          grep -Fq "## V${APP_VERSION} " docs/CHANGELOG.md || { echo "docs/CHANGELOG.md has no V${APP_VERSION} entry." >&2; exit 1; }
+          grep -Fq "## v${APP_VERSION} " docs/CHANGELOG.md || { echo "docs/CHANGELOG.md has no v${APP_VERSION} entry." >&2; exit 1; }
           node -e "const m=require('./release-manifest.json'); if (!m.releaseNotes?.trim()) throw new Error('Release notes are empty')"
           if [[ "$GITHUB_REF_NAME" == *-* ]]; then TARGET=dev; else TARGET=main; fi
           git fetch --no-tags origin "$TARGET"
@@ -63,12 +63,12 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0
-      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: standalone-*
           path: release-assets
           merge-multiple: true
-      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: source
           path: release-assets
@@ -88,9 +88,9 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft >/tmp/gearbeacon-release-state 2>/dev/null; then
             test "$(cat /tmp/gearbeacon-release-state)" = true || { echo 'A published release already exists for this tag.' >&2; exit 1; }
             gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
-            gh release edit "$GITHUB_REF_NAME" --notes-file docs/RELEASE_NOTES.md
+            gh release edit "$GITHUB_REF_NAME" --title "GearBeacon v${GITHUB_REF_NAME#v}" --notes-file docs/RELEASE_NOTES.md
           else
-            gh release create "$GITHUB_REF_NAME" release-assets/* --draft --title "GearBeacon V${GITHUB_REF_NAME#v}" --notes-file docs/RELEASE_NOTES.md "${PRERELEASE[@]}"
+            gh release create "$GITHUB_REF_NAME" release-assets/* --draft --title "GearBeacon v${GITHUB_REF_NAME#v}" --notes-file docs/RELEASE_NOTES.md "${PRERELEASE[@]}"
           fi
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1

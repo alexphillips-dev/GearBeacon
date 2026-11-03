@@ -42,7 +42,8 @@ export async function testActivityDisplay({ evaluate, waitForBrowser, assertAcce
         {...base,id:'display-now-available',name:'Camera launch · Exact variant with a long product name',previousStatus:'ComingSoon',previousStateDurationSeconds:779580,context:{...context,watch:{watched:false,parentWatched:true,collections:[]},identity:{variantId:'discovery-variant',variantTitle:'Launch variant',sku:'DISCOVERY-V'}}},
         {...base,id:'display-now-parent',name:'Camera launch',previousStatus:'Coming soon',previousStateDurationSeconds:779580,context},
         {...base,id:'display-legacy-restock',name:'Older restock without a previous status',previousStatus:null,context},
-        {...base,id:'display-soon-status',name:'Existing listing changes to coming soon',type:'status_change',status:'ComingSoon',inStock:false,context:{...context,current:{...context.current,status:'Coming soon',inStock:false}}}
+        {...base,id:'display-soon-status',name:'Existing listing changes to coming soon',type:'status_change',status:'ComingSoon',inStock:false,context:{...context,current:{...context.current,status:'Coming soon',inStock:false}}},
+        {...base,id:'display-restock-date',name:'Restock date announced',type:'restock_date',status:'SoldOut',inStock:false,restockEtaAt:'2027-02-10T00:00:00.000Z',previousRestockEtaAt:null,context}
       );
     })()`);
     await evaluate('refreshActivity(1,{reset:true})');
@@ -50,7 +51,9 @@ export async function testActivityDisplay({ evaluate, waitForBrowser, assertAcce
       const rows=[...document.querySelectorAll('#activityList .event')];
       return rows.map(row=>({id:row.dataset.activityEvent,badge:row.querySelector('.event-discovery')?.textContent || '',meta:row.querySelector('.event-meta').textContent,current:row.querySelector('[data-activity-context=current]').textContent,label:row.getAttribute('aria-label'),title:row.querySelector('.event-discovery')?.title}));
     })()`);
-    assert(discovery.length===12 && discovery.filter(row=>row.badge).length===4,'Discovery badges marked unrelated events or grouped parent and variant cards');
+    assert(discovery.length===13 && discovery.filter(row=>row.badge).length===4,'Discovery badges marked unrelated events or grouped parent and variant cards');
+    const restockDate=discovery.find(row=>row.id==='display-restock-date');
+    assert(restockDate.meta.includes('Restock expected') && restockDate.meta.includes('2027') && !restockDate.meta.includes('Previous state') && restockDate.label.includes('Restock expected'),'Restock-date Activity omitted the announced date or invented a no-date duration');
     for (const id of ['display-new-soon','display-new-stock']) {
       const row=discovery.find(row=>row.id===id),status=id.endsWith('soon')?'Coming soon':'In stock';
       assert(row.badge==='NEW TO STORE' && row.meta.includes(`New listing · ${status}`) && row.current===`Still ${status.toLowerCase()}` && row.label.includes(row.badge) && row.label.includes(row.title),`New listing lacks its original availability, current status, or accessible discovery description: ${JSON.stringify(row)}`);

@@ -199,8 +199,8 @@ try {
   await assertAccessible('Owner setup screen');
   await evaluate(`(() => {
     document.getElementById('setupToken').value = 'v19-browser-setup-token';
-    document.getElementById('authPassword').value = 'V1.4.1 browser owner password';
-    document.getElementById('authPasswordConfirm').value = 'V1.4.1 browser owner password';
+    document.getElementById('authPassword').value = 'v1.4.2 browser owner password';
+    document.getElementById('authPasswordConfirm').value = 'v1.4.2 browser owner password';
     document.getElementById('authForm').requestSubmit();
   })()`);
   await waitForBrowser("!document.getElementById('appShell').classList.contains('hidden') && app.products.length >= 5", 'Authenticated dashboard did not load');
@@ -392,6 +392,7 @@ try {
 
   await evaluate("openProductDialog('u7-pro-xgs')");
   await waitForBrowser("!document.getElementById('productDialog').classList.contains('hidden') && document.getElementById('productRuleForm')", 'Product details or rule editor did not open');
+  assert(await evaluate("Boolean(document.getElementById('productRuleForm').elements.restockDate) && document.getElementById('productRuleForm').elements.restockDate.value === 'inherit'"), 'Restock-date watch override is missing or does not inherit the global setting');
   const copiedProductDetails = await evaluate(`(async () => {
     window.__gearbeaconCopies=[];
     Object.defineProperty(navigator, 'clipboard', { configurable:true, value:{ writeText:async (value) => window.__gearbeaconCopies.push(value) } });
@@ -411,8 +412,8 @@ try {
     assert(await evaluate("document.getElementById('productDialogBackdrop').matches(':hover')"), `Pointer did not reach the product dialog backdrop in ${theme} mode.`);
     assert(hoveredBackdrop === normalBackdrop && hoveredBackdrop === 'rgba(0, 0, 0, 0.58)', `Product dialog backdrop changed on hover in ${theme} mode: ${normalBackdrop} -> ${hoveredBackdrop}`);
   }
-  await evaluate(`(() => { const form=document.getElementById('productRuleForm'); form.elements.targetPrice.value='250'; form.elements.immediateRestock.checked=true; form.requestSubmit(); })()`);
-  await waitForBrowser("app.products.find((product) => product.slug === 'u7-pro-xgs')?.watchRule?.targetPrice === 250", 'Product-specific alert rule did not save');
+  await evaluate(`(() => { const form=document.getElementById('productRuleForm'); form.elements.targetPrice.value='250'; form.elements.immediateRestock.checked=true; form.elements.restockDate.value='false'; form.requestSubmit(); })()`);
+  await waitForBrowser("app.products.find((product) => product.slug === 'u7-pro-xgs')?.watchRule?.targetPrice === 250 && app.products.find((product) => product.slug === 'u7-pro-xgs')?.watchRule?.restockDate === false", 'Product-specific alert rule or restock-date override did not save');
   await evaluate("document.getElementById('closeProductDialog').click(); toggleWatch('uvc-ai-turret')");
   await waitForBrowser("app.products.find((product) => product.slug === 'uvc-ai-turret')?.watched === true", 'Second product watch action failed');
 
@@ -634,6 +635,7 @@ try {
   await evaluate("document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabNotifications').click()");
   await waitForBrowser("!document.getElementById('settingsPanelNotifications').hidden && document.getElementById('settingsPanelData').hidden", 'Notification settings tab failed');
   await assertAccessible('Notification settings');
+  assert(await evaluate("document.getElementById('notifyRestockDate').checked && Boolean(document.querySelector('#activityType option[value=restock_date]')) && Boolean(document.querySelector('#emailPreviewType option[value=restock_date]'))"), 'Restock-date alert controls are missing or off by default');
   assert(await evaluate("Boolean(document.getElementById('notifyAllActivity')) && !document.getElementById('notifyAllActivity').checked"), 'All-activity notification setting is missing or not safely disabled by default');
   await evaluate("document.getElementById('notifyAllActivity').click(); document.getElementById('saveNotificationPrefs').click()");
   await waitForBrowser("app.notificationPreferences?.allActivity === true && document.getElementById('notifyAllActivity').checked", 'All-activity notification setting did not save');
@@ -664,7 +666,7 @@ try {
   await evaluate("document.getElementById('closeProductDialog').click(); document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabData').click()");
   await waitForBrowser("!document.getElementById('settingsPanelData').hidden && document.getElementById('settingsPanelNotifications').hidden", 'Data settings tab failed');
   const recoverySettings = await evaluate("({ activityRetention:document.getElementById('configEventRetention').value, secondaryDirectory:document.getElementById('configSecondaryBackupDir').value, encrypted:document.getElementById('configSecondaryEncrypted').checked, hasPrimaryTest:Boolean(document.getElementById('testPrimaryBackup')), hasSecondaryTest:Boolean(document.getElementById('testSecondaryBackup')) })");
-  assert(recoverySettings.activityRetention === '365' && recoverySettings.secondaryDirectory === '' && !recoverySettings.encrypted && recoverySettings.hasPrimaryTest && recoverySettings.hasSecondaryTest, `V1.4.1 recovery settings are incomplete: ${JSON.stringify(recoverySettings)}`);
+  assert(recoverySettings.activityRetention === '365' && recoverySettings.secondaryDirectory === '' && !recoverySettings.encrypted && recoverySettings.hasPrimaryTest && recoverySettings.hasSecondaryTest, `v1.4.2 recovery settings are incomplete: ${JSON.stringify(recoverySettings)}`);
   const browserBackup = await evaluate(`(async () => {
     const backup = await api('/api/data/export/encrypted', { method:'POST', body:JSON.stringify({ passphrase:'browser backup passphrase' }) });
     const preview = await api('/api/data/preview', { method:'POST', body:JSON.stringify({ backup, passphrase:'browser backup passphrase' }) });
@@ -730,7 +732,7 @@ try {
 
   await evaluate("document.getElementById('logoutBtn').click()");
   await waitForBrowser("!document.getElementById('authGate').classList.contains('hidden')", 'Browser logout did not return to the owner gate');
-  await evaluate("(() => { document.getElementById('authPassword').value='V1.4.1 browser owner password'; document.getElementById('authForm').requestSubmit(); })()");
+  await evaluate("(() => { document.getElementById('authPassword').value='v1.4.2 browser owner password'; document.getElementById('authForm').requestSubmit(); })()");
   await waitForBrowser("!document.getElementById('appShell').classList.contains('hidden') && app.auth.authenticated", 'Browser login after logout failed');
   await evaluate("document.querySelector('[data-tab=\"settings\"]').click(); document.getElementById('settingsTabSecurity').click()");
   await evaluate("document.querySelector('[data-settings-subtab=\"security/sessions\"]').click()");
