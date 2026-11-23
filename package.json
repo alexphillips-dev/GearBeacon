@@ -16,7 +16,7 @@
     "test:regressions": "node --no-warnings scripts/audit-regression-test.mjs"
   },
   "devDependencies": {
-    "axe-core": "4.14.0",
+    "axe-core": "4.14.1",
     "postject": "1.0.0-alpha.6",
     "typescript": "5.8.3"
   }
